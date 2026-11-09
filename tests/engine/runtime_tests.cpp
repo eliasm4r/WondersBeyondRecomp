@@ -410,6 +410,42 @@ void test_read_directory_forms() {
     fs::remove_all(parent, error);
 }
 
+void test_file_attributes() {
+    namespace fs = std::filesystem;
+    std::error_code error;
+    fs::path parent = fs::temp_directory_path(error) / "wp_file_attribute_tests";
+    fs::remove_all(parent, error);
+    fs::path nand = parent / "nand";
+    CHECK(wp::nand::mount(nand.string()));
+    fs::create_directories(nand / "tmp", error);
+    write_file(nand / "tmp" / "save", "x");
+    int32_t file_system = wp::ios::open("/dev/fs", 0);
+    const uint32_t request = 0x80206000;
+    const uint32_t input = 0x80206100;
+    const uint32_t output = 0x80206200;
+    auto get_attributes = [&](const char* path) {
+        std::memset(wp::host(input), 0, 64);
+        std::memcpy(wp::host(input), path, std::strlen(path) + 1);
+        std::memset(wp::host(output), 0xCC, 80);
+        wp::wr32(request, 6);
+        wp::wr32(request + 8, static_cast<uint32_t>(file_system));
+        wp::wr32(request + 12, 6);
+        wp::wr32(request + 16, input);
+        wp::wr32(request + 20, 64);
+        wp::wr32(request + 24, output);
+        wp::wr32(request + 28, 74);
+        uint64_t ticks = 0;
+        return wp::ios::send(request, ticks);
+    };
+    CHECK(get_attributes("/tmp/save") == 0);
+    CHECK(wp::rd32(output) == 0x1000 && wp::rd16(output + 4) == 0x3031);
+    CHECK(std::strcmp(reinterpret_cast<const char*>(wp::host(output + 6)), "/tmp/save") == 0);
+    CHECK(wp::rd8(output + 70) == 3 && wp::rd8(output + 71) == 3 && wp::rd8(output + 72) == 3 && wp::rd8(output + 73) == 0);
+    CHECK(wp::rd8(output + 74) == 0xCC);
+    CHECK(get_attributes("/tmp/missing") < 0);
+    fs::remove_all(parent, error);
+}
+
 void test_pad_mapping() {
     using namespace wp::padmap;
     Mapping automatic_mapping;
@@ -781,13 +817,11 @@ void test_key_defaults() {
     CHECK(format(keys.of(Action::Shake)) == "MouseMiddle,LeftShift");
     CHECK(format(keys.of(Action::SwingUp)) == "WheelUp,T");
     CHECK(format(keys.of(Action::SwingDown)) == "WheelDown,G");
-    CHECK(format(keys.of(Action::Grip)) == "Tab");
     CHECK(format(keys.of(Action::Screenshot)) == "F9");
     CHECK(action(Action::Screenshot).buttons == 0);
     CHECK(setting_key(static_cast<size_t>(Action::Screenshot)) == "keys.screenshot");
     CHECK(action(Action::A).buttons == wp::input::kButtonA);
     CHECK(action(Action::TiltDown).buttons == wp::input::kMotionTiltDown);
-    CHECK(action(Action::Grip).buttons == 0);
     CHECK(format(keys.of(Action::MouseMotion)) == "Z");
     CHECK(action(Action::MouseMotion).buttons == 0);
     wp::input::MouseMotionState mouse;
@@ -810,7 +844,7 @@ void test_key_defaults() {
         CHECK(!keys.codes[i].empty());
         CHECK(setting_key(i) == std::string("keys.") + action(i).name);
     }
-    std::map<std::string, std::string> file = {{"keys.a", "K,Wrong"}, {"keys.grip", ""}, {"keys.b", "F12"}};
+    std::map<std::string, std::string> file = {{"keys.a", "K,Wrong"}, {"keys.screenshot", ""}, {"keys.b", "F12"}};
     std::vector<std::string> invalid;
     Bindings loaded = load(
         [&](const std::string& key) {
@@ -827,7 +861,7 @@ void test_key_defaults() {
         },
         invalid);
     CHECK(format(loaded.of(Action::A)) == "K");
-    CHECK(loaded.of(Action::Grip).empty());
+    CHECK(loaded.of(Action::Screenshot).empty());
     CHECK(loaded.of(Action::B).empty());
     CHECK(format(loaded.of(Action::Home)) == "H");
     CHECK(invalid.size() == 2 && invalid[0] == "keys.a: Wrong" && invalid[1] == "keys.b: F12");
@@ -841,7 +875,7 @@ void test_settings_file_keys() {
     }
     wp::settings::load(path);
     CHECK(wp::settings::text("keys.a", nullptr) == "K, MouseX1");
-    CHECK(wp::settings::text("keys.grip", nullptr) == "Tab");
+    CHECK(wp::settings::text("keys.screenshot", nullptr) == "F9");
     CHECK(wp::settings::text("video.scale", nullptr) == "1");
     std::ifstream file(path, std::ios::binary);
     std::stringstream contents;
@@ -1296,6 +1330,7 @@ int main() {
     test_adopt_root_files();
     test_title_data_directory();
     test_read_directory_forms();
+    test_file_attributes();
     test_pad_mapping();
     test_custom_texture_hash();
     test_custom_texture_names();

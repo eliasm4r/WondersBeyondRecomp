@@ -28,7 +28,6 @@ constexpr ActionInfo kActions[kActionCount] = {
     {"tilt_right", input::kMotionTiltRight, "E"},
     {"tilt_up", input::kMotionTiltUp, "R"},
     {"tilt_down", input::kMotionTiltDown, "F"},
-    {"grip", 0, "Tab"},
     {"screenshot", 0, "F9"},
     {"mouse_motion", 0, "Z"},
 };

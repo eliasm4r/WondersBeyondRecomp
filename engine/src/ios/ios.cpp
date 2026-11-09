@@ -91,6 +91,10 @@ constexpr uint64_t kSplitComponentTicks = 340;
 constexpr uint32_t kFsPathOffset = 6;
 constexpr uint32_t kFsPathSize = 64;
 constexpr uint32_t kFsNameSize = 13;
+constexpr uint32_t kFsAttributesSize = kFsPathOffset + kFsPathSize + 4;
+constexpr uint32_t kTitleOwner = 0x1000;
+constexpr uint16_t kTitleGroup = 0x3031;
+constexpr uint8_t kReadWrite = 3;
 
 struct Device {
     std::string path;
@@ -253,10 +257,22 @@ int32_t fs_command(uint32_t command, uint32_t input, uint32_t output, uint64_t& 
         ticks += kSuperblockWriteTicks;
         return nand::rename(read_string(input, kFsPathSize), read_string(input + kFsPathSize, kFsPathSize));
     case kFsGetAttributes: {
+        // Same layout as the CreateFile input: owner id, group id, path, then owner, group and other access and the
+        // attribute byte. Files keep no metadata here, so every file reads as the title's own, readable and writable:
+        // with the access bytes left unset, the SDK's safe open could refuse to write a save.
         std::string path = read_string(input, kFsPathSize);
         ticks += lookup_ticks(path, true);
-        std::memset(host(output), 0, 12);
-        return nand::exists(path) ? 0 : nand::kNotFound;
+        if (!nand::exists(path)) {
+            return nand::kNotFound;
+        }
+        std::memset(host(output), 0, kFsAttributesSize);
+        wr32(output, kTitleOwner);
+        wr16(output + 4, kTitleGroup);
+        std::memcpy(host(output + kFsPathOffset), path.c_str(), std::min<size_t>(path.size(), kFsPathSize - 1));
+        wr8(output + kFsPathOffset + kFsPathSize, kReadWrite);
+        wr8(output + kFsPathOffset + kFsPathSize + 1, kReadWrite);
+        wr8(output + kFsPathOffset + kFsPathSize + 2, kReadWrite);
+        return 0;
     }
     default:
         log_once("ioctl", "/dev/fs", command);
@@ -430,6 +446,11 @@ int32_t send(uint32_t request, uint64_t& ticks) {
     default:
         std::fprintf(stderr, "IOS request %u on %s\n", command, device_name(descriptor).c_str());
         break;
+    }
+    if (result < 0 && command != kOpen && (file || file_system)) {
+        // Save problems show up here first; the argument is the ioctl number for /dev/fs.
+        std::fprintf(stderr, "IOS request %u (%#x) on %s failed (%d)", command, rd32(request + 12), device_name(descriptor).c_str(), result);
+        std::fputc(10, stderr);
     }
     wr32(request + 4, static_cast<uint32_t>(result));
     return result;

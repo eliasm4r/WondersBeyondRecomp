@@ -61,3 +61,16 @@ Every change that alters runtime behavior is recorded here with what was verifie
 - Change (`engine/src/gpu/gx_render.cpp`, `engine/src/gpu/gx_render_common.cpp`): draws hold their own reference on each view until the batch is replaced; the key (`gx::texture_key`) puts each field in its own bits (address 24, width and height 10 each, format 4, mip levels 4, palette 12).
 - Verified: `test_texture_keys`; with the debug layer, which stops on any invalid call, 3 runs of 200 s through the scene into gameplay; one run of 5 minutes on the NVIDIA driver. One run of 200 s crashed once in `save_context` from the decrementer, at 131 s; it did not happen again in 4 more runs and is not explained yet.
 - Crash reports now list the host frames of the crashing thread (module+offset) and stderr is unbuffered, so a redirected report is complete.
+
+## EFB copies to a null buffer
+
+Some of the game's render targets are created without memory (their buffer pointer stays 0, see 0x80070fc0), yet
+the game still copies the screen into them every frame (GXCopyTex from 0x80071204). Dolphin keeps EFB copies on the
+GPU by default, so nothing happens there. Writing them back to RAM overwrote the OS globals, and a full-screen copy
+reached the interrupt table at 0x80003040: the next interrupt jumped to texture data and the game crashed at the
+start of gameplay. Copies whose destination is below 0x80004000 now stay texture-only.
+
+## Draw done and tokens
+
+They no longer wait for pending EFB copies to reach RAM. Waiting made the game miss vsyncs and drop to 15 fps in
+scenes with many copies; a texture that reads a pending copy still waits for it.

@@ -141,17 +141,8 @@ void note_wheel(int delta) {
 
 namespace {
 
-bool sideways_grip(bool read_toggle) {
-    static bool flipped = false;
-    static bool toggle_held = false;
-    if (read_toggle) {
-        bool toggle = any_pressed(bindings().of(keymap::Action::Grip));
-        if (toggle && !toggle_held) {
-            flipped = !flipped;
-        }
-        toggle_held = toggle;
-    }
-    return game::description().sideways_grip != flipped;
+bool sideways_grip() {
+    return game::description().sideways_grip;
 }
 
 Sample gamepad_sample(uint32_t channel, bool sideways) {
@@ -254,7 +245,7 @@ Sample device_sample(uint32_t channel) {
         int elapsed = by_frames ? static_cast<int>(gx::frames_drawn() * 1000 / 60)
                                 : static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - origin).count());
         if (channel != 0) {
-            return gamepad_sample(channel, sideways_grip(false));
+            return gamepad_sample(channel, sideways_grip());
         }
         return scripted(script, elapsed);
     }
@@ -279,7 +270,7 @@ Sample device_sample(uint32_t channel) {
         return result;
     }
     if (channel != 0) {
-        return gamepad_sample(channel, sideways_grip(false));
+        return gamepad_sample(channel, sideways_grip());
     }
     if (window == nullptr) {
         return result;
@@ -296,7 +287,7 @@ Sample device_sample(uint32_t channel) {
             result.buttons |= keymap::action(i).buttons;
         }
     }
-    bool sideways = sideways_grip(true);
+    bool sideways = sideways_grip();
     if (sideways) {
         uint32_t keys_held = result.buttons;
         result.buttons &= ~(kButtonUp | kButtonDown | kButtonLeft | kButtonRight);

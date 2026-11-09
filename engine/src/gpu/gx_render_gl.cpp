@@ -1438,6 +1438,9 @@ void take_copy_statistics(uint32_t& write_backs, double& wait_seconds) {
     g_write_back_seconds = 0.0;
 }
 
+// OS globals and exception vectors: no texture lives below the start of the game code.
+constexpr uint32_t kLowMemoryEnd = 0x4000;
+
 bool guest_range_valid(uint32_t address, size_t size) {
     return static_cast<size_t>(address & kAddressMask) + size <= kPhysicalSize;
 }
@@ -1532,7 +1535,9 @@ bool queue_write_back(uint32_t address, uint32_t stride, int x, int y, int width
     uint32_t row_bytes = stride * 32;
     uint32_t bytes = block_bytes(texture_format);
     size_t span = static_cast<size_t>(blocks_y - 1) * row_bytes + blocks_x * bytes;
-    if (blocks_x * bytes > row_bytes || !guest_range_valid(address, span)) {
+    // The game copies some render targets to a null buffer. Dolphin keeps EFB copies on the GPU by default, so this never
+    // hurt there; writing them to RAM overwrote the OS globals and interrupt table. Such copies stay texture-only.
+    if (blocks_x * bytes > row_bytes || !guest_range_valid(address, span) || (address & kAddressMask) < kLowMemoryEnd) {
         return false;
     }
     if (!run_copy(g_device.write_back, logical_width, logical_height, x, y, width, height, format, intensity, alpha, depth, filter)) {

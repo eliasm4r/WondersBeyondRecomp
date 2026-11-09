@@ -30,7 +30,6 @@ enum class Action {
     TiltRight,
     TiltUp,
     TiltDown,
-    Grip,
     Screenshot,
     MouseMotion,
     Count,

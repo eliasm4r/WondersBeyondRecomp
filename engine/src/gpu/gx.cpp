@@ -1179,11 +1179,11 @@ void load_bp(uint32_t word) {
         return;
     }
     g_bp[reg] = (g_bp[reg] & ~mask) | (value & mask);
+    // Draw done and tokens do not wait for EFB copies to reach RAM: waiting there made the game miss vsyncs and
+    // drop to 15 fps in scenes with many copies. Copies land within two frames, or before a texture reads them.
     if (reg == kBpDrawDone && (value & 2)) {
-        render::finish_copies();
         g_finish_pending = true;
     } else if (reg == kBpToken || reg == kBpTokenInterrupt) {
-        render::finish_copies();
         g_token = value & 0xFFFF;
         if (reg == kBpTokenInterrupt) {
             g_token_pending = true;
