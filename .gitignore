@@ -51,3 +51,4 @@ __pycache__/
 /analysis/
 /settings.local.json
 /*.bat
+/*.whl
