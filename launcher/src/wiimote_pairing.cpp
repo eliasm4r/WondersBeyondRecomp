@@ -137,7 +137,7 @@ namespace {
 constexpr const char* kRule =
     "KERNEL==\"hidraw*\", KERNELS==\"0005:057E:0306.*\", MODE=\"0666\"\n"
     "KERNEL==\"hidraw*\", KERNELS==\"0005:057E:0330.*\", MODE=\"0666\"\n";
-constexpr const char* kRuleFile = "/etc/udev/rules.d/60-wiipartyrecomp-wiimote.rules";
+constexpr const char* kRuleFile = "/etc/udev/rules.d/60-wondersbeyondrecomp-wiimote.rules";
 
 std::string bluetoothctl(const std::vector<std::string>& arguments) {
     std::string program = find_program("bluetoothctl");

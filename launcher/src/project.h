@@ -33,8 +33,8 @@ struct Project {
     double free_gigabytes() const;
 };
 
-constexpr const char* kGame = "wiiparty";
-constexpr const char* kInstallFolderName = "WiiPartyRecomp";
+constexpr const char* kGame = "pokepark2";
+constexpr const char* kInstallFolderName = "WondersBeyondRecomp";
 
 bool find_checkout(std::filesystem::path& root);
 std::filesystem::path default_install_folder();

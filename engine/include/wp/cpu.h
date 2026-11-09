@@ -42,6 +42,8 @@ void set_decrementer(Cpu& c, uint32_t value);
 uint32_t get_decrementer(Cpu& c);
 
 extern uint32_t g_poll_counter;
+void observe(uint32_t address);
+int64_t observed_ms_ago(uint32_t address);
 void poll_interrupts(Cpu& c);
 
 #define WP_POLL(c)                                          \

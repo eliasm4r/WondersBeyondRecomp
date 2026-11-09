@@ -12,22 +12,6 @@ namespace wp::options {
 
 enum class Action { Up, Down, Previous, Next, Close };
 
-struct HintRow {
-    std::string name;
-    std::string keys;
-    std::string icon;
-};
-
-std::vector<HintRow> hint_rows(const keymap::Bindings& bindings, ui::Language language);
-
-class InstructionWatch {
-public:
-    bool update(const std::vector<std::string>& modules, const char* instruction, const char* minigame_prefix);
-
-private:
-    bool after_minigame_ = false;
-};
-
 enum class Part { None, Label, Previous, Value, Next, Close };
 
 struct Hover {

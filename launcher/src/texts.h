@@ -191,9 +191,7 @@ struct Texts {
     const char* pad_left_trigger;
     const char* pad_right_trigger;
     const char* dolphin_title;
-    const char* dolphin_both;
     const char* dolphin_save;
-    const char* dolphin_miis;
     const char* dolphin_none;
     const char* dolphin_import;
     const char* dolphin_choose;

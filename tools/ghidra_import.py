@@ -25,7 +25,7 @@ def main():
     command = [
         str(GHIDRA),
         str(projects),
-        "wiiparty",
+        "pokepark2",
         "-import", str(dol),
         "-loader", "BinaryLoader",
         "-loader-baseAddr", "0x0",
@@ -41,7 +41,7 @@ def main():
     export = [
         str(GHIDRA),
         str(projects),
-        "wiiparty",
+        "pokepark2",
         "-process", "main.dol",
         "-noanalysis",
         "-scriptPath", str(SCRIPTS),

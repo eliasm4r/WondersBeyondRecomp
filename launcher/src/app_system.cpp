@@ -310,11 +310,11 @@ void App::uninstall(bool keep_data) {
         if (!keep_data) {
             fs::remove_all(root, error);
         } else {
-            const fs::path kept[] = {fs::path("games") / "wiiparty" / "nand", fs::path("games") / "wiiparty" / "backups",
-                                     fs::path("games") / "wiiparty" / "settings.ini", fs::path("games") / "wiiparty" / "textures",
+            const fs::path kept[] = {fs::path("games") / "pokepark2" / "nand", fs::path("games") / "pokepark2" / "backups",
+                                     fs::path("games") / "pokepark2" / "settings.ini", fs::path("games") / "pokepark2" / "textures",
                                      fs::path("screenshots")};
             fs::path games = root / "games";
-            fs::path game = games / "wiiparty";
+            fs::path game = games / "pokepark2";
             for (const auto& entry : fs::directory_iterator(root, error)) {
                 if (entry.path() != games && entry.path().filename() != "screenshots") {
                     fs::remove_all(entry.path(), error);

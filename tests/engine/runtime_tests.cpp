@@ -22,7 +22,6 @@
 #include "wp/input.h"
 #include "wp/ios.h"
 #include "wp/keymap.h"
-#include "wp/mii.h"
 #include "wp/modules.h"
 #include "wp/nand.h"
 #include "wp/options.h"
@@ -278,7 +277,7 @@ void test_save_backups() {
     CHECK(wp::saves::back_up(nand, relative, backups, 5, start).result == Result::NoSave);
     CHECK(wp::saves::list(backups).empty());
 
-    write_file(save / "wiiparty.bin", "first");
+    write_file(save / "GD0", "first");
     write_file(save / "banner.bin", "banner");
     std::string problem;
     CHECK(wp::saves::validate(save, problem));
@@ -286,48 +285,48 @@ void test_save_backups() {
     CHECK(first.result == Result::Created);
     CHECK(wp::saves::list(backups).size() == 1);
     CHECK(wp::saves::same_contents(save, first.backup / relative));
-    CHECK(read_file(first.backup / relative / "wiiparty.bin") == "first");
+    CHECK(read_file(first.backup / relative / "GD0") == "first");
 
     CHECK(wp::saves::back_up(nand, relative, backups, 5, start + 10).result == Result::Unchanged);
     CHECK(wp::saves::list(backups).size() == 1);
 
-    write_file(save / "wiiparty.bin", "second");
+    write_file(save / "GD0", "second");
     wp::saves::Outcome same_second = wp::saves::back_up(nand, relative, backups, 5, start);
     CHECK(same_second.result == Result::Created);
     std::vector<wp::saves::Backup> listed = wp::saves::list(backups);
     CHECK(listed.size() == 2 && listed.front().path == same_second.backup && listed.back().path == first.backup);
 
     for (int i = 0; i < 4; i++) {
-        write_file(save / "wiiparty.bin", "round " + std::to_string(i));
+        write_file(save / "GD0", "round " + std::to_string(i));
         CHECK(wp::saves::back_up(nand, relative, backups, 3, start + 100 + i).result == Result::Created);
     }
     listed = wp::saves::list(backups);
     CHECK(listed.size() == 3);
-    CHECK(listed.size() == 3 && read_file(listed[0].path / relative / "wiiparty.bin") == "round 3");
-    CHECK(listed.size() == 3 && read_file(listed[2].path / relative / "wiiparty.bin") == "round 1");
+    CHECK(listed.size() == 3 && read_file(listed[0].path / relative / "GD0") == "round 3");
+    CHECK(listed.size() == 3 && read_file(listed[2].path / relative / "GD0") == "round 1");
     CHECK(!fs::exists(first.backup) && !fs::exists(same_second.backup));
-    CHECK(read_file(save / "wiiparty.bin") == "round 3");
+    CHECK(read_file(save / "GD0") == "round 3");
 
-    write_file(save / "wiiparty.bin", "current");
+    write_file(save / "GD0", "current");
     wp::saves::Backup oldest = listed.back();
     CHECK(wp::saves::saved_relative(oldest) == relative);
     wp::saves::Outcome restored = wp::saves::restore(nand, backups, oldest, 3, start + 200);
     CHECK(restored.result == Result::Created);
-    CHECK(read_file(save / "wiiparty.bin") == "round 1");
+    CHECK(read_file(save / "GD0") == "round 1");
     CHECK(read_file(save / "banner.bin") == "banner");
     listed = wp::saves::list(backups);
-    CHECK(listed.size() == 3 && read_file(listed[0].path / relative / "wiiparty.bin") == "current");
+    CHECK(listed.size() == 3 && read_file(listed[0].path / relative / "GD0") == "current");
     CHECK(!fs::exists(fs::path(save) += ".replaced") && !fs::exists(fs::path(save) += ".restoring"));
     CHECK(wp::saves::restore(nand, backups, listed[0], 3, start + 300).result == Result::Created);
-    CHECK(read_file(save / "wiiparty.bin") == "current");
+    CHECK(read_file(save / "GD0") == "current");
     CHECK(wp::saves::restore(nand, backups, listed[0], 3, start + 400).result == Result::Unchanged);
     listed = wp::saves::list(backups);
-    CHECK(listed.size() == 3 && read_file(listed[0].path / relative / "wiiparty.bin") == "round 1");
+    CHECK(listed.size() == 3 && read_file(listed[0].path / relative / "GD0") == "round 1");
 
     wp::saves::Backup empty{"2026-01-01_00-00-00", backups / "2026-01-01_00-00-00"};
     fs::create_directories(empty.path);
     CHECK(wp::saves::restore(nand, backups, empty, 3, start + 500).result == Result::Failed);
-    CHECK(read_file(save / "wiiparty.bin") == "current");
+    CHECK(read_file(save / "GD0") == "current");
     fs::create_directories(backups / "notes");
     fs::create_directories(backups / "2026-01-01_00-00-00.partial");
     CHECK(wp::saves::list(backups).size() == 4);
@@ -340,19 +339,19 @@ void test_adopt_root_files() {
     fs::path nand = fs::temp_directory_path(error) / "wp_adopt_tests";
     fs::remove_all(nand, error);
     fs::path relative = wp::saves::save_relative(0x53555050);
-    write_file(nand / "wiiparty.bin", "misplaced");
+    write_file(nand / "GD0", "misplaced");
     write_file(nand / "banner.bin", "banner");
     write_file(nand / "shared2" / "sys" / "SYSCONF", "config");
     std::vector<std::string> moved = wp::saves::adopt_root_files(nand, relative);
     CHECK(moved.size() == 2);
-    CHECK(read_file(nand / relative / "wiiparty.bin") == "misplaced");
+    CHECK(read_file(nand / relative / "GD0") == "misplaced");
     CHECK(read_file(nand / relative / "banner.bin") == "banner");
-    CHECK(!fs::exists(nand / "wiiparty.bin") && !fs::exists(nand / "banner.bin"));
+    CHECK(!fs::exists(nand / "GD0") && !fs::exists(nand / "banner.bin"));
     CHECK(read_file(nand / "shared2" / "sys" / "SYSCONF") == "config");
-    write_file(nand / "wiiparty.bin", "stale");
+    write_file(nand / "GD0", "stale");
     CHECK(wp::saves::adopt_root_files(nand, relative).empty());
-    CHECK(read_file(nand / relative / "wiiparty.bin") == "misplaced");
-    CHECK(read_file(nand / "wiiparty.bin") == "stale");
+    CHECK(read_file(nand / relative / "GD0") == "misplaced");
+    CHECK(read_file(nand / "GD0") == "stale");
     fs::remove_all(nand, error);
 }
 
@@ -365,6 +364,49 @@ void test_title_data_directory() {
     wp::wr32(0x80000000, 0x53555050);
     CHECK(wp::nand::mount(nand.string()));
     CHECK(fs::is_directory(nand / "title" / "00010000" / "53555050" / "data"));
+    fs::remove_all(parent, error);
+}
+
+void test_read_directory_forms() {
+    namespace fs = std::filesystem;
+    std::error_code error;
+    fs::path parent = fs::temp_directory_path(error) / "wp_read_directory_tests";
+    fs::remove_all(parent, error);
+    fs::path nand = parent / "nand";
+    CHECK(wp::nand::mount(nand.string()));
+    fs::create_directories(nand / "tmp" / "list", error);
+    for (const char* name : {"a", "b", "c"}) {
+        write_file(nand / "tmp" / "list" / name, "x");
+    }
+    int32_t file_system = wp::ios::open("/dev/fs", 0);
+    const uint32_t path = 0x80202000;
+    const uint32_t vectors = 0x80203000;
+    const uint32_t count = 0x80204000;
+    const uint32_t sentinel = 0x80204100;
+    const uint32_t maximum = 0x80204200;
+    const uint32_t names = 0x80205000;
+    std::memcpy(wp::host(path), "/tmp/list", 10);
+
+    wp::wr32(vectors, path);
+    wp::wr32(vectors + 4, 64);
+    wp::wr32(vectors + 8, count);
+    wp::wr32(vectors + 12, 4);
+    wp::wr32(vectors + 16, sentinel);
+    wp::wr32(sentinel, 0xDEADBEEF);
+    CHECK(wp::ios::ioctlv(file_system, 4, 1, 1, vectors) == 0);
+    CHECK(wp::rd32(count) == 3);
+    CHECK(wp::rd32(sentinel) == 0xDEADBEEF);
+
+    wp::wr32(maximum, 2);
+    wp::wr32(vectors + 8, maximum);
+    wp::wr32(vectors + 12, 4);
+    wp::wr32(vectors + 16, names);
+    wp::wr32(vectors + 20, 2 * 13);
+    wp::wr32(vectors + 24, count);
+    wp::wr32(vectors + 28, 4);
+    CHECK(wp::ios::ioctlv(file_system, 4, 2, 2, vectors) == 0);
+    CHECK(wp::rd32(count) == 2);
+    CHECK(wp::rd8(names) != 0 && wp::rd8(names + 13) != 0);
     fs::remove_all(parent, error);
 }
 
@@ -473,9 +515,9 @@ void test_custom_texture_index() {
     std::error_code error;
     std::filesystem::path root = std::filesystem::temp_directory_path(error) / "wp_custom_textures_test";
     std::filesystem::remove_all(root, error);
-    std::filesystem::create_directories(root / "SUPP01" / "menus", error);
-    std::ofstream(root / "SUPP01" / "menus" / "tex1_4x4_cbf59c5116ff32b4_4.png") << "x";
-    std::ofstream(root / "SUPP01" / "notes.txt") << "x";
+    std::filesystem::create_directories(root / "S2LP01" / "menus", error);
+    std::ofstream(root / "S2LP01" / "menus" / "tex1_4x4_cbf59c5116ff32b4_4.png") << "x";
+    std::ofstream(root / "S2LP01" / "notes.txt") << "x";
     ct::Index scanned;
     CHECK(scanned.scan(root) == 1);
     CHECK(scanned.find("tex1_4x4_cbf59c5116ff32b4_4") != nullptr);
@@ -489,7 +531,7 @@ void test_custom_texture_index() {
     uint32_t height = 0;
     CHECK(ct::decode_png(png, decoded, width, height));
     CHECK(width == 3 && height == 2 && decoded == pixels);
-    CHECK(!ct::decode_png(root / "SUPP01" / "menus" / "tex1_4x4_cbf59c5116ff32b4_4.png", decoded, width, height));
+    CHECK(!ct::decode_png(root / "S2LP01" / "menus" / "tex1_4x4_cbf59c5116ff32b4_4.png", decoded, width, height));
     CHECK(width == 3 && height == 2 && decoded == pixels);
     std::filesystem::remove_all(root, error);
 }
@@ -811,9 +853,9 @@ void test_screenshot_names() {
     time.tm_hour = 9;
     time.tm_min = 5;
     time.tm_sec = 3;
-    CHECK(wp::screenshot::file_name("wiiparty", time, 1) == "wiiparty_2026-09-06_09-05-03.png");
-    CHECK(wp::screenshot::file_name("wiiparty", time, 2) == "wiiparty_2026-09-06_09-05-03_2.png");
-    CHECK(wp::screenshot::file_name("wiiparty", time, 13) == "wiiparty_2026-09-06_09-05-03_13.png");
+    CHECK(wp::screenshot::file_name("pokepark2", time, 1) == "pokepark2_2026-09-06_09-05-03.png");
+    CHECK(wp::screenshot::file_name("pokepark2", time, 2) == "pokepark2_2026-09-06_09-05-03_2.png");
+    CHECK(wp::screenshot::file_name("pokepark2", time, 13) == "pokepark2_2026-09-06_09-05-03_13.png");
     time.tm_mon = 11;
     time.tm_mday = 31;
     time.tm_hour = 23;
@@ -866,110 +908,6 @@ void test_live_settings() {
     CHECK(!mute());
     CHECK(scale() == 1);
     std::remove(path);
-}
-
-void test_controls_hint() {
-    for (wp::ui::Language language : {wp::ui::Language::English, wp::ui::Language::Spanish, wp::ui::Language::Galician}) {
-        wp::ui::set_language(language);
-        for (const char* key : {"hint.title", "hint.pointer", "hint.mouse", "hint.dpad", "hint.shake", "hint.swing", "hint.tilt", "hint.mouse_motion", "input.controls_hint"}) {
-            CHECK(std::string(key) != wp::ui::label(key));
-        }
-    }
-    wp::ui::set_language(wp::ui::Language::English);
-    std::vector<wp::options::HintRow> rows = wp::options::hint_rows(wp::keymap::defaults(), wp::ui::Language::English);
-    CHECK(rows.size() == 12);
-    CHECK(rows[0].name == "Pointer");
-    CHECK(rows[1].name == "A" && rows[1].keys == "Enter/Space/MouseLeft");
-    CHECK(rows[7].keys == "Up/W  Down/S  Left/A  Right/D");
-    CHECK(rows[0].icon.empty() && rows[1].icon == "a" && rows[5].icon == "plus" && rows[7].icon == "dpad" && rows[8].icon.empty());
-    wp::keymap::Bindings bindings = wp::keymap::defaults();
-    bindings.codes[static_cast<size_t>(wp::keymap::Action::Shake)].clear();
-    bindings.codes[static_cast<size_t>(wp::keymap::Action::B)] = {'X'};
-    rows = wp::options::hint_rows(bindings, wp::ui::Language::English);
-    CHECK(wp::options::hint_rows(bindings, wp::ui::Language::Spanish)[0].name == "Puntero");
-    CHECK(rows.size() == 11);
-    CHECK(rows[2].name == "B" && rows[2].keys == "X");
-
-    wp::options::InstructionWatch watch;
-    CHECK(!watch.update({}, "inst", "mg"));
-    CHECK(!watch.update({"menu"}, "inst", "mg"));
-    CHECK(watch.update({"inst"}, "inst", "mg"));
-    CHECK(!watch.update({"mg223"}, "inst", "mg"));
-    CHECK(!watch.update({"inst"}, "inst", "mg"));
-    CHECK(!watch.update({}, "inst", "mg"));
-    CHECK(!watch.update({"inst"}, "inst", "mg"));
-    CHECK(!watch.update({"mr031"}, "inst", "mg"));
-    CHECK(watch.update({"inst"}, "inst", "mg"));
-    CHECK(!watch.update({"inst"}, nullptr, nullptr));
-}
-
-void test_mii_database() {
-    auto sample = [](const char* text, uint32_t identifier) {
-        wp::mii::Record record{};
-        for (size_t i = 0; text[i] && i < 10; i++) {
-            record[2 + i * 2] = 0;
-            record[3 + i * 2] = static_cast<uint8_t>(text[i]);
-        }
-        for (size_t i = 0; i < 4; i++) {
-            record[0x18 + i] = static_cast<uint8_t>(identifier >> (24 - 8 * i));
-        }
-        record[0x1C] = 7;
-        return record;
-    };
-    wp::mii::Database database;
-    CHECK(database.count() == 0);
-    CHECK(wp::mii::name(sample("Tester", 1)) == "Tester");
-    CHECK(!wp::mii::occupied(wp::mii::Record{}));
-    size_t first = database.add(sample("Ana", 0x80000001));
-    size_t second = database.add(sample("Luis", 0x80000002));
-    CHECK(first == 0 && second == 1);
-    CHECK(database.count() == 2);
-    CHECK(std::memcmp(database.at(0).data() + 0x1C, database.at(1).data() + 0x1C, 4) == 0);
-    CHECK(std::memcmp(database.at(0).data() + 0x18, database.at(1).data() + 0x18, 4) != 0);
-    std::vector<uint8_t> bytes = database.bytes();
-    CHECK(bytes.size() == wp::mii::kFileSize);
-    CHECK(bytes[0] == 'R' && bytes[3] == 'D');
-    uint16_t stored = static_cast<uint16_t>((bytes[wp::mii::kChecksumOffset] << 8) | bytes[wp::mii::kChecksumOffset + 1]);
-    CHECK(stored == wp::mii::crc16(bytes.data(), wp::mii::kChecksumOffset));
-    wp::mii::Database loaded;
-    CHECK(loaded.parse(bytes));
-    CHECK(loaded.count() == 2);
-    CHECK(wp::mii::name(loaded.at(1)) == "Luis");
-    bytes[10] ^= 1;
-    CHECK(!loaded.parse(bytes));
-    database.remove(0);
-    CHECK(database.count() == 1);
-    CHECK(database.add(sample("Eva", 0x80000003)) == 0);
-    const char* path = "wp_mii_test.dat";
-    CHECK(database.save(path));
-    wp::mii::Database reloaded;
-    CHECK(reloaded.load(path) && reloaded.existed() && reloaded.count() == 2);
-    std::remove(path);
-    CHECK(wp::mii::crc16(reinterpret_cast<const uint8_t*>("123456789"), 9) == 0x31C3);
-    {
-        std::vector<uint8_t> single(wp::mii::kRecordSize);
-        CHECK(wp::mii::import_records(single).empty());
-        wp::mii::Record one = sample("Imp", 0x80000010);
-        single.assign(one.begin(), one.end());
-        CHECK(wp::mii::import_records(single).size() == 1);
-        std::vector<uint8_t> stored_data = single;
-        uint16_t crc = wp::mii::crc16(single.data(), single.size());
-        stored_data.push_back(static_cast<uint8_t>(crc >> 8));
-        stored_data.push_back(static_cast<uint8_t>(crc));
-        std::vector<wp::mii::Record> imported = wp::mii::import_records(stored_data);
-        CHECK(imported.size() == 1 && wp::mii::name(imported[0]) == "Imp");
-        std::vector<uint8_t> two = single;
-        two.insert(two.end(), single.begin(), single.end());
-        CHECK(wp::mii::import_records(two).size() == 2);
-        CHECK(wp::mii::import_records(database.bytes()).size() == 2);
-        CHECK(wp::mii::import_records(std::vector<uint8_t>(10, 1)).empty());
-    }
-    for (wp::ui::Language language : {wp::ui::Language::English, wp::ui::Language::Spanish, wp::ui::Language::Galician}) {
-        for (const char* key : {"mii.title", "mii.intro", "mii.online", "mii.online_detail", "mii.open_online", "mii.import", "mii.import_detail", "mii.choose_file",
-                                "mii.import_done", "mii.import_failed", "mii.import_all", "mii.none", "mii.count", "mii.damaged", "mii.delete"}) {
-            CHECK(std::string(key) != wp::ui::label(key, language));
-        }
-    }
 }
 
 void test_pad_motion() {
@@ -1343,6 +1281,7 @@ int main() {
     test_save_backups();
     test_adopt_root_files();
     test_title_data_directory();
+    test_read_directory_forms();
     test_pad_mapping();
     test_custom_texture_hash();
     test_custom_texture_names();
@@ -1355,8 +1294,6 @@ int main() {
     test_screenshot_names();
     test_live_settings();
     test_options_menu();
-    test_controls_hint();
-    test_mii_database();
     test_pad_motion();
     test_options_repeat_and_layout();
     test_options_render();

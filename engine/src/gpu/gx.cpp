@@ -87,7 +87,9 @@ constexpr uint32_t kCpControl = 0xCC000002;
 constexpr uint32_t kPeControl = 0xCC00100A;
 constexpr uint16_t kPeTokenEnable = 0x0001;
 constexpr uint16_t kPeFinishEnable = 0x0002;
+constexpr uint16_t kPeTokenClear = 0x0004;
 constexpr uint16_t kPeFinishClear = 0x0008;
+constexpr uint32_t kPeToken = 0xCC00100E;
 constexpr uint32_t kCpFifoEndLow = 0xCC000024;
 constexpr uint32_t kCpDistanceLow = 0xCC000030;
 constexpr uint32_t kCpWritePointerLow = 0xCC000034;
@@ -99,6 +101,8 @@ constexpr uint32_t kFifoPointerMask = 0x03FFFFE0;
 constexpr uint32_t kFifoPhysicalMask = 0x03FFFFFF;
 constexpr uint32_t kCopyToFramebuffer = 1u << 14;
 constexpr uint32_t kBpDrawDone = 0x45;
+constexpr uint32_t kBpToken = 0x47;
+constexpr uint32_t kBpTokenInterrupt = 0x48;
 constexpr uint32_t kCopyClear = 1u << 11;
 constexpr uint32_t kPixelFormatRgba6Z24 = 1;
 constexpr uint32_t kPixelFormatZ24 = 3;
@@ -1153,6 +1157,8 @@ void execute_copy(uint32_t value) {
 }
 
 std::atomic<bool> g_finish_pending{false};
+std::atomic<bool> g_token_pending{false};
+std::atomic<uint32_t> g_token{0};
 
 void load_bp(uint32_t word) {
     uint32_t reg = word >> 24;
@@ -1173,6 +1179,12 @@ void load_bp(uint32_t word) {
     if (reg == kBpDrawDone && (value & 2)) {
         render::finish_copies();
         g_finish_pending = true;
+    } else if (reg == kBpToken || reg == kBpTokenInterrupt) {
+        render::finish_copies();
+        g_token = value & 0xFFFF;
+        if (reg == kBpTokenInterrupt) {
+            g_token_pending = true;
+        }
     } else if (reg == kBpCopyExecute) {
         execute_copy(g_bp[reg]);
     } else if (reg == kBpInvalidateTexture) {
@@ -1436,8 +1448,17 @@ bool take_finish_interrupt() {
     return g_finish_pending.exchange(false);
 }
 
+bool take_token_interrupt() {
+    bool pending = (register16(kPeControl) & kPeTokenEnable) && g_token_pending.exchange(false);
+    store16(kPeToken, static_cast<uint16_t>(g_token.load()));
+    return pending;
+}
+
 void write_pixel_engine_control(uint16_t value) {
     store16(kPeControl, value & (kPeTokenEnable | kPeFinishEnable));
+    if (value & kPeTokenClear) {
+        g_token_pending = false;
+    }
     if (value & kPeFinishClear) {
         g_finish_pending = false;
     }

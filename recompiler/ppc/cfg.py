@@ -26,21 +26,21 @@ def destination(instr):
     return None
 
 
-def resolve_constant(instrs, index, register, depth=0):
+def resolve_constant(instrs, index, register, depth=0, lookback=CONSTANT_LOOKBACK):
     if depth > 4:
         return None
-    for k in range(index - 1, max(index - CONSTANT_LOOKBACK, -1), -1):
+    for k in range(index - 1, max(index - lookback, -1), -1):
         instr = instrs[k]
         if destination(instr) != register:
             continue
         if instr.mn == "addis":
-            base = 0 if instr.ra == 0 else resolve_constant(instrs, k, instr.ra, depth + 1)
+            base = 0 if instr.ra == 0 else resolve_constant(instrs, k, instr.ra, depth + 1, lookback)
             return None if base is None else (base + (instr.simm << 16)) & 0xFFFFFFFF
         if instr.mn == "addi":
-            base = 0 if instr.ra == 0 else resolve_constant(instrs, k, instr.ra, depth + 1)
+            base = 0 if instr.ra == 0 else resolve_constant(instrs, k, instr.ra, depth + 1, lookback)
             return None if base is None else (base + instr.simm) & 0xFFFFFFFF
         if instr.mn == "ori":
-            base = resolve_constant(instrs, k, instr.rs, depth + 1)
+            base = resolve_constant(instrs, k, instr.rs, depth + 1, lookback)
             return None if base is None else base | instr.uimm
         return None
     return None
@@ -74,7 +74,7 @@ def find_jump_table(instrs, index, dol):
         return None
     base = None
     for register in (instrs[load].ra, instrs[load].rb):
-        base = resolve_constant(instrs, load, register)
+        base = resolve_constant(instrs, load, register, lookback=load + 1)
         if base is not None:
             break
     if base is None:
@@ -84,6 +84,8 @@ def find_jump_table(instrs, index, dol):
     targets = []
     for n in range(limit):
         word = dol.word_at(base + 4 * n)
+        if word == 0 and count is None:
+            continue
         valid = word is not None and word % 4 == 0 and dol.code_section_end(word) is not None
         if not valid:
             if count is not None:

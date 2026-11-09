@@ -18,7 +18,7 @@ constexpr const char* kArchiveFile = ".launcher-payload.tar.gz";
 
 constexpr const char* kRebuildTriggers[] = {
     "CMakeLists.txt",
-    "games/wiiparty/CMakeLists.txt",
+    "games/pokepark2/CMakeLists.txt",
     "engine/include/wp/cpu.h",
     "engine/include/wp/modules.h",
     "engine/include/wp/threads.h",

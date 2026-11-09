@@ -28,6 +28,7 @@ namespace {
 constexpr uint32_t kMsrExternalInterrupt = 0x8000;
 constexpr uint32_t kInterruptTable = 0x80003040;
 constexpr uint32_t kVideoInterrupt = 24;
+constexpr uint32_t kTokenInterrupt = 18;
 constexpr uint32_t kFinishInterrupt = 19;
 constexpr uint32_t kSerialInterrupt = 20;
 constexpr uint32_t kVideoInterruptRegisters[] = {0xCC002030, 0xCC002034};
@@ -183,7 +184,11 @@ void poll_interrupts(Cpu& c) {
         }
         deliver_external_interrupt(c, index);
     }
-    if (gx::take_finish_interrupt()) {
+    bool finished = gx::take_finish_interrupt();
+    if (gx::take_token_interrupt()) {
+        deliver_external_interrupt(c, kTokenInterrupt);
+    }
+    if (finished) {
         deliver_external_interrupt(c, kFinishInterrupt);
     }
     for (int delivered = 0; delivered < 3; delivered++) {

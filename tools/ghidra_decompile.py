@@ -16,7 +16,7 @@ def main():
     command = [
         str(GHIDRA),
         str(PROJECTS),
-        "wiiparty",
+        "pokepark2",
         "-process", "main.dol",
         "-noanalysis",
         "-readOnly",

@@ -10,8 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "recompiler"))
 import game
 
 GAME = game.load()
-SOURCE = GAME.resources / "wiiparty.svg"
-TARGET = GAME.resources / "wiiparty.ico"
+SOURCE = GAME.resources / "pokepark2.svg"
+TARGET = GAME.resources / "pokepark2.ico"
 SIZES = [16, 20, 24, 32, 40, 48, 64, 96, 128, 256]
 
 

@@ -26,37 +26,16 @@ namespace wp::input {
 namespace {
 
 constexpr auto kWheelSwing = std::chrono::milliseconds(120);
-constexpr int64_t kNoticePulsePeriod = 500;
-constexpr int64_t kNoticePulseLength = 100;
 std::atomic<int64_t> g_wheel_up{0};
 std::atomic<int64_t> g_wheel_down{0};
+constexpr int64_t kNoticePulsePeriod = 500;
+constexpr int64_t kNoticePulseLength = 100;
+constexpr int64_t kNoticeRecent = 300;
 std::atomic<bool> g_blocked{false};
 std::atomic<bool> g_release_wait[4] = {};
 
 int64_t now_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-}
-
-bool sideways_minigame() {
-    static const settings::LiveFlag automatic("input.auto_grip", "WP_AUTO_ORIENTATION");
-    if (!automatic()) {
-        return false;
-    }
-    static int64_t next = 0;
-    static bool cached = false;
-    int64_t now = now_ms();
-    if (now >= next) {
-        next = now + 100;
-        cached = false;
-        const game::Description& game = game::description();
-        for (size_t i = 0; i < game.sideways_module_count; i++) {
-            if (module_loaded(game.sideways_modules[i])) {
-                cached = true;
-                break;
-            }
-        }
-    }
-    return cached;
 }
 
 bool pressed(int key) {
@@ -172,7 +151,7 @@ bool sideways_grip(bool read_toggle) {
         }
         toggle_held = toggle;
     }
-    return sideways_minigame() != flipped;
+    return game::description().sideways_grip != flipped;
 }
 
 Sample gamepad_sample(uint32_t channel, bool sideways) {
@@ -366,13 +345,13 @@ Sample device_sample(uint32_t channel) {
 }
 
 bool skipping_notice() {
-    static const settings::LiveFlag setting("system.skip_notices", "WP_SKIP_NOTICES");
     static const bool scripted_input = std::getenv("WP_INPUT_SCRIPT") || std::getenv("WP_INPUT_BUTTONS");
-    const char* module = game::description().notice_module;
-    if (scripted_input || !setting() || !module || !module_loaded(module)) {
+    uint32_t notice = game::description().notice_function;
+    if (scripted_input || notice == 0) {
         return false;
     }
-    return now_ms() % kNoticePulsePeriod < kNoticePulseLength;
+    int64_t ago = observed_ms_ago(notice);
+    return ago >= 0 && ago < kNoticeRecent && now_ms() % kNoticePulsePeriod < kNoticePulseLength;
 }
 
 void set_blocked(bool blocked) {

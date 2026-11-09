@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 
 namespace wp::game {
 
@@ -11,11 +12,8 @@ struct Description {
     const char* nand_directory;
     const char* settings_file;
     const char* textures_directory;
-    const char* notice_module;
-    const char* const* sideways_modules;
-    size_t sideways_module_count;
-    const char* instruction_module;
-    const char* minigame_prefix;
+    bool sideways_grip;
+    uint32_t notice_function;
 };
 
 const Description& description();

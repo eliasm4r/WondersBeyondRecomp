@@ -8,6 +8,7 @@ namespace wp::gx {
 void push(uint64_t value, unsigned bytes);
 void process();
 bool take_finish_interrupt();
+bool take_token_interrupt();
 void write_pixel_engine_control(uint16_t value);
 void request_capture();
 uint64_t frames_drawn();

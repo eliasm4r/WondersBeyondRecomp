@@ -21,11 +21,11 @@
 
 namespace {
 
-constexpr const char* kReleasesUrl = "https://api.github.com/repos/arelkair/wiiparty-recomp/releases?per_page=30";
+constexpr const char* kReleasesUrl = "https://api.github.com/repos/eliasm4r/WondersBeyondRecomp/releases?per_page=30";
 #ifdef _WIN32
-constexpr const char* kAssetName = "wiipartyrecomp-launcher.exe";
+constexpr const char* kAssetName = "wondersbeyondrecomp-launcher.exe";
 #else
-constexpr const char* kAssetName = "wiipartyrecomp-launcher-x86_64.AppImage";
+constexpr const char* kAssetName = "wondersbeyondrecomp-launcher-x86_64.AppImage";
 #endif
 
 struct Json {
@@ -301,7 +301,7 @@ bool fetch(const std::string& url, const wchar_t* accept, Sink sink, std::string
         return false;
     }
     std::wstring object = std::wstring(path, parts.dwUrlPathLength) + std::wstring(extra, parts.dwExtraInfoLength);
-    Handle session{WinHttpOpen(L"wiipartyrecomp-launcher", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0)};
+    Handle session{WinHttpOpen(L"wondersbeyondrecomp-launcher", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0)};
     if (!session.value) {
         error = "network unavailable";
         return false;

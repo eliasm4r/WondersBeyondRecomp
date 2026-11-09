@@ -445,12 +445,6 @@ bool App::consume(const SDL_Event& event) {
         g_wake_pending = false;
         return true;
     }
-    if (event.type == SDL_EVENT_DROP_FILE && page_ == Page::Miis && event.drop.data) {
-        std::lock_guard<std::mutex> lock(picked_mutex_);
-        picked_mii_ = event.drop.data;
-        ui::request_frames(2);
-        return true;
-    }
     if (event.type == SDL_EVENT_SYSTEM_THEME_CHANGED || event.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED) {
         apply_theme();
         return false;
@@ -600,13 +594,13 @@ void App::sidebar(float height) {
     const ui::Palette& p = ui::palette();
     ImVec2 origin = ImGui::GetMainViewport()->Pos + ImVec2(0, titlebar::height());
     float inner = kSidebarWidth - 40.0f;
-    ui::die(origin + ImVec2(px(24), px(28)), px(40));
+    ui::logo(origin + ImVec2(px(24), px(28)), px(40));
     ImGui::SetCursorScreenPos(origin + ImVec2(px(76), px(30)));
-    ui::text("Wii Party", Font::Semibold, 16.0f, p.text);
+    ui::text("PokePark 2", Font::Semibold, 16.0f, p.text);
     ImGui::SetCursorScreenPos(origin + ImVec2(px(76), px(51)));
     ui::text("Recomp", Font::Regular, ui::size::kDetail, p.secondary);
     const Texts& t = texts();
-    const char* names[] = {t.game, t.settings, t.saves, t.controls, t.page_textures, wp::ui::label("mii.title"), t.page_captures, t.page_system, t.licenses};
+    const char* names[] = {t.game, t.settings, t.saves, t.controls, t.page_textures, t.page_captures, t.page_system, t.licenses};
     float top = px(100);
     float step = px(36) + px(2);
     ImGuiID indicator = ImHashStr("nav-indicator");
@@ -632,7 +626,7 @@ void App::page(float width, float height) {
     ImVec2 origin = ImGui::GetCursorScreenPos();
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(px(kPagePaddingX), px(kPagePaddingTop) + std::round((1.0f - shown) * px(10))));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ui::palette().background);
-    bool scrolls = page_ == Page::Settings || page_ == Page::Saves || page_ == Page::Controls || page_ == Page::Textures || page_ == Page::Miis || page_ == Page::Captures ||
+    bool scrolls = page_ == Page::Settings || page_ == Page::Saves || page_ == Page::Controls || page_ == Page::Textures || page_ == Page::Captures ||
                    page_ == Page::System;
     ImGui::BeginChild(static_cast<int>(page_) + 100, ImVec2(width, height), ImGuiChildFlags_AlwaysUseWindowPadding,
                       scrolls ? ImGuiWindowFlags_None : ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
@@ -653,9 +647,6 @@ void App::page(float width, float height) {
         break;
     case Page::Textures:
         textures_page(content);
-        break;
-    case Page::Miis:
-        miis_page(content);
         break;
     case Page::Captures:
         captures_page(content);
@@ -712,10 +703,10 @@ void App::play_panel(float width, float height) {
     ImVec2 start = ImGui::GetCursorScreenPos();
     float hero = px(72 + 28 + 48 + 6 + 20 + 24 + 32 + 48) + (project_.outdated() ? px(36 + 96) : 0.0f);
     ImGui::SetCursorScreenPos(ImVec2(start.x, start.y + std::max(0.0f, std::round((height - px(40) - hero) * 0.42f))));
-    ui::die(ImGui::GetCursorScreenPos(), px(72));
+    ui::logo(ImGui::GetCursorScreenPos(), px(72));
     ImGui::Dummy(ImVec2(px(72), px(72)));
     ui::gap(28);
-    ui::text("Wii Party", Font::Semibold, ui::size::kDisplay, p.text);
+    ui::text("PokePark 2", Font::Semibold, ui::size::kDisplay, p.text);
     ui::gap(6);
     ui::text(t.status_ready, Font::Regular, ui::size::kLead, p.secondary);
     if (disc_line_.empty()) {
@@ -778,10 +769,10 @@ void App::install_panel(float width) {
     const ui::Palette& p = ui::palette();
     const Texts& t = texts();
     ImVec2 start = ImGui::GetCursorScreenPos();
-    ui::die(start, px(56));
+    ui::logo(start, px(56));
     ImGui::Dummy(ImVec2(px(56), px(56)));
     ui::gap(24);
-    ui::text("Wii Party", Font::Semibold, ui::size::kDisplay, p.text);
+    ui::text("PokePark 2", Font::Semibold, ui::size::kDisplay, p.text);
     ui::gap(6);
     ui::text(t.status_install, Font::Regular, ui::size::kLead, p.secondary, width);
     ui::gap(28);
@@ -1032,14 +1023,14 @@ void App::settings_page(float width) {
         std::filesystem::path icon = std::filesystem::absolute(project_.root / "games" / kGame / "res" / (std::string(kGame) + ".svg"), missing);
         if (ui::button(t.shortcut_launcher, Kind::Secondary, 110.0f)) {
             std::string error;
-            launcher_message_failed_ = !create_desktop_shortcut(launcher_path(), launcher_path().parent_path(), icon, "Wii Party Recomp", error);
+            launcher_message_failed_ = !create_desktop_shortcut(launcher_path(), launcher_path().parent_path(), icon, "WondersBeyondRecomp", error);
             launcher_message_ = launcher_message_failed_ ? format(t.shortcut_failed, error) : std::string(t.shortcut_done);
         }
         ImGui::SetCursorScreenPos(ImVec2(at.x + px(120), at.y));
         if (ui::button(t.shortcut_game, Kind::Secondary, 110.0f, std::filesystem::exists(project_.executable(), missing))) {
             std::string error;
             launcher_message_failed_ = !create_desktop_shortcut(std::filesystem::absolute(project_.executable(), missing),
-                                                                std::filesystem::absolute(project_.root, missing), icon, "Wii Party", error);
+                                                                std::filesystem::absolute(project_.root, missing), icon, "PokePark 2", error);
             launcher_message_ = launcher_message_failed_ ? format(t.shortcut_failed, error) : std::string(t.shortcut_done);
         }
     });
@@ -1659,7 +1650,7 @@ void App::create_report() {
     std::filesystem::path path = folder / (std::string("report-") + stamp + ".txt");
     std::ofstream out(path, std::ios::binary);
     std::string id = project_.disc_id();
-    out << "Wii Party Recomp report\n\n";
+    out << "WondersBeyondRecomp report\n\n";
     out << "Launcher: " << WP_LAUNCHER_VERSION << " (build " << WP_LAUNCHER_BUILD << "), files " << payload_revision() << "\n";
     out << "Platform: " << SDL_GetPlatform() << ", " << SDL_GetNumLogicalCPUCores() << " logical cores, " << SDL_GetSystemRAM() << " MB RAM\n";
     out << "Disc: " << (id.empty() ? "(not extracted)" : id + " " + region_name(id)) << "\n";
@@ -1689,7 +1680,7 @@ void App::create_report() {
     launcher_message_failed_ = !out;
     launcher_message_ = format(t.report_done, utf8_of(path.filename()));
     SDL_OpenURL(folder_url(folder).c_str());
-    SDL_OpenURL("https://github.com/arelkair/wiiparty-recomp/issues/new");
+    SDL_OpenURL("https://github.com/eliasm4r/WondersBeyondRecomp/issues/new");
 }
 
 void App::textures_page(float width) {

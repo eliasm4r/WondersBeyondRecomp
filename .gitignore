@@ -50,3 +50,4 @@ __pycache__/
 /toolchain/
 /analysis/
 /settings.local.json
+/*.bat

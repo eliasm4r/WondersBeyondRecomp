@@ -26,7 +26,7 @@ std::filesystem::path prefs_file() {
 }
 
 std::filesystem::path installed_prefs_file() {
-    char* folder = SDL_GetPrefPath("wiiparty-recomp", "launcher");
+    char* folder = SDL_GetPrefPath("pokepark2-recomp", "launcher");
     std::filesystem::path path = folder ? path_from(folder) / "launcher.ini" : std::filesystem::path("launcher.ini");
     SDL_free(folder);
     return path;
@@ -39,7 +39,7 @@ std::string registry_value(const char* key) {
     wchar_t value[1024];
     DWORD size = sizeof(value);
     std::wstring name(key, key + std::char_traits<char>::length(key));
-    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\wiiparty-recomp\\launcher", name.c_str(), RRF_RT_REG_SZ, nullptr, value, &size) == ERROR_SUCCESS) {
+    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\pokepark2-recomp\\launcher", name.c_str(), RRF_RT_REG_SZ, nullptr, value, &size) == ERROR_SUCCESS) {
         std::filesystem::path text(value);
         return utf8_of(text);
     }

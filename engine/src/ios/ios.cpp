@@ -264,11 +264,12 @@ int32_t fs_command(uint32_t command, uint32_t input, uint32_t output, uint64_t& 
     }
 }
 
-int32_t fs_vector_command(uint32_t command, uint32_t input_count, uint32_t vectors) {
+int32_t fs_vector_command(uint32_t command, uint32_t input_count, uint32_t output_count, uint32_t vectors) {
     if (command == kFsReadDirectory) {
         std::string path = read_string(rd32(vectors), kFsPathSize);
-        uint32_t names = rd32(vectors + (input_count) * kVectorSize);
-        uint32_t count_address = rd32(vectors + (input_count + 1) * kVectorSize);
+        bool listing = output_count > 1;
+        uint32_t names = listing ? rd32(vectors + input_count * kVectorSize) : 0;
+        uint32_t count_address = rd32(vectors + (input_count + (listing ? 1 : 0)) * kVectorSize);
         uint32_t maximum = input_count > 1 ? rd32(rd32(vectors + kVectorSize)) : 0;
         uint32_t count = 0;
         std::error_code error;
@@ -279,6 +280,9 @@ int32_t fs_vector_command(uint32_t command, uint32_t input_count, uint32_t vecto
                 std::memcpy(host(names + count * kFsNameSize), name.c_str(), name.size() + 1);
             }
             count++;
+        }
+        if (names != 0 && maximum != 0 && count > maximum) {
+            count = maximum;
         }
         wr32(count_address, count);
         return 0;
@@ -479,7 +483,7 @@ int32_t ioctl(int32_t descriptor, uint32_t command, uint32_t input, uint32_t, ui
     return 0;
 }
 
-int32_t ioctlv(int32_t descriptor, uint32_t command, uint32_t input_count, uint32_t, uint32_t vectors) {
+int32_t ioctlv(int32_t descriptor, uint32_t command, uint32_t input_count, uint32_t output_count, uint32_t vectors) {
     const std::string device = device_name(descriptor);
     if (device == "/dev/es" && command == kEsGetTitleDir) {
         uint32_t input = rd32(vectors);
@@ -504,7 +508,7 @@ int32_t ioctlv(int32_t descriptor, uint32_t command, uint32_t input_count, uint3
         return 0;
     }
     if (device == "/dev/fs") {
-        return fs_vector_command(command, input_count, vectors);
+        return fs_vector_command(command, input_count, output_count, vectors);
     }
     log_once("ioctlv", device, command);
     return 0;

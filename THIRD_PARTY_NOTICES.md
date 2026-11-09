@@ -53,7 +53,7 @@ All components adapted from the **Dolphin Emulator** originate from a source sna
 - **Upstream Origin:** `Source/Core/Core/DSP/` core infrastructure, interpreter modules, and standalone data blobs.
 - **Copyright:** Copyright 2004-2018 Dolphin Emulator Project / Duddie & Tratax.
 - **License Compliance:** `SPDX-License-Identifier: GPL-2.0-or-later`.
-- **Ingested Assets:** Includes `dsp_rom.bin` and `dsp_coef.bin` (Version 0.4 free alternative ROMs created by Dolphin contributors). Embedded as clean native C++ resources into `games/wiiparty/res/wiiparty.rc`. Contains zero Nintendo code.
+- **Ingested Assets:** Includes `dsp_rom.bin` and `dsp_coef.bin` (Version 0.4 free alternative ROMs created by Dolphin contributors). Embedded as clean native C++ resources into `games/pokepark2/res/pokepark2.rc`. Contains zero Nintendo code.
 - **Engineering Changes:** 
   - Completely purged the upstream DSP JIT engine; forced exclusive lockstep execution of the interpreter directly on the main CPU thread.
   - Patched signed integer overflows (undefined behavior at `-O2` optimization flags) in `GetMultiplyProduct` inside `DSPInterpreter.cpp`.
@@ -130,13 +130,13 @@ The launcher is a single static executable. CMake downloads each library below a
 - **mingw-w64 winpthreads:** threading runtime of the MinGW-w64 GCC toolchain, linked statically. **MIT-style license** (`launcher/licenses/winpthreads.txt`). Copyright (c) 2011 mingw-w64 project.
 - **GCC runtime libraries (libstdc++, libgcc):** linked statically. **GPL-3.0 with the GCC Runtime Library Exception 3.1** (`launcher/licenses/gcc-runtime-library-exception.txt`).
 
-### Linux AppImage (release asset `wiipartyrecomp-launcher-x86_64.AppImage`)
+### Linux AppImage (release asset `wondersbeyondrecomp-launcher-x86_64.AppImage`)
 Built by `tools/make_appimage.py`; nothing of it is stored in this repository. It holds the Linux launcher (the libraries above, with libstdc++ and libgcc linked statically; glibc stays the system's), the project icon and a desktop entry, packed by:
 - **appimagetool 1.9.1** (https://github.com/AppImage/appimagetool, SHA-256 checked): build tool only, not included in the file. **MIT License**.
 - **AppImage type2-runtime 20251108** (https://github.com/AppImage/type2-runtime, SHA-256 checked): the small program at the start of the file that mounts it. **MIT License**. It is built on Alpine Linux 3.21 and statically linked with **libfuse 3.15.0** (**LGPL-2.1**, with the runtime's patch to `mount.c`), **squashfuse 0.5.2** (**BSD 2-Clause**), **zstd** (**BSD 3-Clause**), **zlib** (**zlib License**), **mimalloc** (**MIT**) and **musl libc** (**MIT**).
-- **Corresponding source:** the release file `wiipartyrecomp-sources.zip` also carries the unmodified source releases of type2-runtime 20251108 (with its build scripts and the libfuse patch) and libfuse 3.15.0. `--appimage-extract` unpacks the launcher as a plain file, so the runtime can be replaced.
+- **Corresponding source:** the release file `wondersbeyondrecomp-sources.zip` also carries the unmodified source releases of type2-runtime 20251108 (with its build scripts and the libfuse patch) and libfuse 3.15.0. `--appimage-extract` unpacks the launcher as a plain file, so the runtime can be replaced.
 
-### Offline Tools Pack (release asset `wiipartyrecomp-offline-windows.zip`)
+### Offline Tools Pack (release asset `wondersbeyondrecomp-offline-windows.zip`)
 Built by `tools/make_offline_pack.py`; nothing of it is stored in this repository. It redistributes, unmodified, the same official releases the launcher downloads (each checked against the SHA-256 in `launcher/src/toolchain.cpp`) plus the SDL3 development package used by `tools/fetch_sdl.py`:
 - **nodtool 1.4.4:** MIT License or Apache License 2.0.
 - **Python 3.12.10 (embeddable):** Python Software Foundation License.
@@ -144,7 +144,7 @@ Built by `tools/make_offline_pack.py`; nothing of it is stored in this repositor
 - **Ninja 1.13.2:** Apache License 2.0.
 - **SDL 3.4.16 (MinGW development package):** zlib License.
 - **MinGW-w64 distro 20.0 by nuwen.net (Stephan T. Lavavej):** only its compiler part is kept: GCC 15.2.0 and binutils 2.45.1 (**GPL-3.0**, GCC runtime libraries under the **GCC Runtime Library Exception 3.1**), GMP 6.3.0, MPFR 4.2.2 and MPC 1.3.1 built into GCC (**LGPL-3.0**), ISL 0.24 (**MIT**) and the MinGW-w64 11.0.1 runtime (permissive licences). The distro's other programs and libraries are removed.
-- **Corresponding source:** published with every release that carries the pack, as `wiipartyrecomp-sources.zip`: the official, unmodified source releases of GCC, binutils, GMP, MPFR, MPC, ISL and MinGW-w64 at those versions, and the distro's build scripts (`scripts-20.0`, which also stay inside the pack). The pack's `OFFLINE-PACK.txt` lists every file with its origin and SHA-256.
+- **Corresponding source:** published with every release that carries the pack, as `wondersbeyondrecomp-sources.zip`: the official, unmodified source releases of GCC, binutils, GMP, MPFR, MPC, ISL and MinGW-w64 at those versions, and the distro's build scripts (`scripts-20.0`, which also stay inside the pack). The pack's `OFFLINE-PACK.txt` lists every file with its origin and SHA-256.
 
 ---
 
@@ -166,6 +166,6 @@ Before any external file or code snippet is introduced into this repository, the
 The following materials are strictly prohibited from entering this repository under any circumstances:
 - Code originating from `InputEvelution/wp` without signed, verifiable owner authorization.
 - Development leaks, proprietary platform SDK components, or unverified source code.
-- Original Wii Party game resources (`main.dol`, `.rel` modules, ISO dumps, textures, models, audio).
+- Original PokePark 2 game resources (`main.dol`, `.rel` modules, ISO dumps, textures, models, audio).
 
-*Note: The local paths `games/wiiparty/disc/`, `games/wiiparty/extracted/`, and `reference/` must remain permanently enforced in `.gitignore` [3].*
+*Note: The local paths `games/pokepark2/disc/`, `games/pokepark2/extracted/`, and `reference/` must remain permanently enforced in `.gitignore` [3].*

@@ -1,6 +1,6 @@
 get_filename_component(WP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 find_package(Git REQUIRED)
-execute_process(COMMAND "${GIT_EXECUTABLE}" ls-files -- CMakeLists.txt LICENSE THIRD_PARTY_NOTICES.md engine recompiler games/wiiparty third_party tests tools/fetch_sdl.py
+execute_process(COMMAND "${GIT_EXECUTABLE}" ls-files -- CMakeLists.txt LICENSE THIRD_PARTY_NOTICES.md engine recompiler games/pokepark2 third_party tests tools/fetch_sdl.py
                 WORKING_DIRECTORY "${WP_ROOT}" OUTPUT_VARIABLE WP_SOURCE_LIST OUTPUT_STRIP_TRAILING_WHITESPACE)
 execute_process(COMMAND "${GIT_EXECUTABLE}" describe --always --dirty
                 WORKING_DIRECTORY "${WP_ROOT}" OUTPUT_VARIABLE WP_SOURCE_REVISION OUTPUT_STRIP_TRAILING_WHITESPACE)

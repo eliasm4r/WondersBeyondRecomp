@@ -131,7 +131,7 @@ def falls_through(instr):
     return instr.mn != "rfi"
 
 
-def render_function(start, instrs, entries, dol, stats, replacements, save_context, set_jump):
+def render_function(start, instrs, entries, dol, stats, replacements, save_context, set_jump, observed=frozenset()):
     if start in replacements:
         return render_replacement(start, replacements[start], stats)
     end = start + 4 * len(instrs)
@@ -139,6 +139,8 @@ def render_function(start, instrs, entries, dol, stats, replacements, save_conte
     labels = cfg.find_labels(instrs, start, end, tables)
     emitter = Emitter(start, end, entries, tables, save_context, set_jump)
     lines = [f"void {function_name(start)}(wp::Cpu& c) {{", f"    WP_ENTER({u32(start)});", "    [[maybe_unused]] uint32_t ea = 0;", "    [[maybe_unused]] uint32_t q = 0;"]
+    if start in observed:
+        lines.append(f"    wp::observe({u32(start)});")
     body = []
     for instr in instrs:
         if instr.addr in labels:
@@ -210,6 +212,7 @@ def main():
     parser.add_argument("--dolphin-symbols", default=str(current.dolphin_symbols))
     parser.add_argument("--module-targets", default=str(current.module_targets))
     parser.add_argument("--replacements", default=str(current.analysis / "hle_functions.csv"))
+    parser.add_argument("--observed", default=str(current.analysis / "observed_functions.csv"))
     parser.add_argument("--output", default=str(current.dol_code))
     args = parser.parse_args()
 
@@ -218,6 +221,7 @@ def main():
     names = load_names([args.dolphin_symbols, args.symbols])
     save_context = next((address for address, name in names.items() if name == "OSSaveContext"), None)
     set_jump = next((address for address, name in names.items() if name == "setjmp"), None)
+    observed = frozenset(load_extra_targets(args.observed))
     entries = discover_entries(dol, load_functions(args.functions), load_extra_targets(args.module_targets))
     bodies = build_bodies(dol, entries)
     entries = sorted(bodies)
@@ -227,7 +231,7 @@ def main():
     chunks = []
     current = []
     for start in entries:
-        current.extend(render_function(start, bodies[start], entry_set, dol, stats, replacements, save_context, set_jump))
+        current.extend(render_function(start, bodies[start], entry_set, dol, stats, replacements, save_context, set_jump, observed))
         current.append("")
         if len(current) >= LINES_PER_FILE:
             chunks.append(current)

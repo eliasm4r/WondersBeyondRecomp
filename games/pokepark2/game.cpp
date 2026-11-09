@@ -11,11 +11,8 @@ constexpr Description kDescription = {
     "games/pokepark2/nand",
     "games/pokepark2/settings.ini",
     "games/pokepark2/textures",
-    nullptr,
-    nullptr,
-    0,
-    nullptr,
-    nullptr,
+    true,
+    0x80210d90,
 };
 
 }

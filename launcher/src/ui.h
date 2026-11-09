@@ -78,7 +78,7 @@ void progress_bar(ImGuiID id, float fraction, float width, float height);
 void spinner(ImVec2 center, float radius, ImU32 color);
 void check_mark(ImVec2 center, float size, ImU32 color);
 void cross_mark(ImVec2 center, float size, ImU32 color);
-void die(ImVec2 origin, float size);
+void logo(ImVec2 origin, float size);
 void chevron(ImVec2 center, float size, ImU32 color, bool down);
 
 }

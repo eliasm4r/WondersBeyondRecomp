@@ -37,8 +37,9 @@ LONG WINAPI report_crash(EXCEPTION_POINTERS* info) {
     std::fprintf(stderr, "crash: exception %08lx at host address %p (module offset %llx)", record->ExceptionCode, record->ExceptionAddress,
                  static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(record->ExceptionAddress) - reinterpret_cast<uintptr_t>(GetModuleHandle(nullptr))));
     if (record->NumberParameters >= 2 && (record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION)) {
-        std::fprintf(stderr, ", %s address %p", record->ExceptionInformation[0] ? "writing" : "reading",
-                     reinterpret_cast<void*>(record->ExceptionInformation[1]));
+        std::fprintf(stderr, ", %s address %p (guest memory offset %llx)", record->ExceptionInformation[0] ? "writing" : "reading",
+                     reinterpret_cast<void*>(record->ExceptionInformation[1]),
+                     static_cast<unsigned long long>(record->ExceptionInformation[1] - reinterpret_cast<uintptr_t>(wp::g_memory)));
     }
     std::fputc(10, stderr);
     wp::print_guest_registers();

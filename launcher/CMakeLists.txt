@@ -66,11 +66,9 @@ add_executable(launcher WIN32
     src/app_controls.cpp
     src/app_dolphin.cpp
     src/app_captures.cpp
-    src/app_miis.cpp
     src/app_system.cpp
     ${WP_ENGINE}/src/platform/settings.cpp
     ${WP_ENGINE}/src/platform/options.cpp
-    ${WP_ENGINE}/src/platform/mii.cpp
     ${WP_ENGINE}/src/platform/ui_text.cpp
     ${WP_ENGINE}/src/platform/save_backup.cpp
     ${WP_ENGINE}/src/input/keymap.cpp
@@ -78,7 +76,7 @@ add_executable(launcher WIN32
 
 include(cmake/embed.cmake)
 
-set_target_properties(launcher PROPERTIES OUTPUT_NAME wiipartyrecomp-launcher)
+set_target_properties(launcher PROPERTIES OUTPUT_NAME wondersbeyondrecomp-launcher)
 target_include_directories(launcher PRIVATE ${WP_ENGINE}/include src)
 target_include_directories(launcher SYSTEM PRIVATE ${WP_ENGINE}/../third_party/stb)
 target_compile_definitions(launcher PRIVATE WP_LAUNCHER_VERSION="${WP_LAUNCHER_VERSION}" WP_LAUNCHER_BUILD="${WP_LAUNCHER_BUILD}")
@@ -86,7 +84,14 @@ target_compile_options(launcher PRIVATE -Wall -Wextra)
 target_link_libraries(launcher PRIVATE imgui)
 
 if(WIN32)
-    target_sources(launcher PRIVATE res/launcher.rc)
+    # windres hands its include paths to the preprocessor unquoted, so it is run from res/ without them.
+    set(WP_LAUNCHER_RC "${CMAKE_CURRENT_BINARY_DIR}/launcher_rc.o")
+    add_custom_command(OUTPUT "${WP_LAUNCHER_RC}"
+        COMMAND "${CMAKE_RC_COMPILER}" -O coff -i launcher.rc -o "${WP_LAUNCHER_RC}"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/res"
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/res/launcher.rc" "${CMAKE_CURRENT_SOURCE_DIR}/../games/pokepark2/res/pokepark2.ico"
+        VERBATIM)
+    target_sources(launcher PRIVATE "${WP_LAUNCHER_RC}")
     target_link_libraries(launcher PRIVATE dwmapi winhttp ole32 uuid shell32 bthprops dxgi)
     target_link_options(launcher PRIVATE -static $<$<CONFIG:Release>:-s>)
 else()

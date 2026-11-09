@@ -13,9 +13,9 @@ root = Path(__file__).resolve().parent.parent
 work = root / "build" / "offline"
 downloads = work / "downloads"
 stage = work / "stage"
-launcher = root / "build" / "launcher" / "wiipartyrecomp-launcher.exe"
-output = root / "build" / "wiipartyrecomp-offline-windows.zip"
-sources_output = root / "build" / "wiipartyrecomp-sources.zip"
+launcher = root / "build" / "launcher" / "wondersbeyondrecomp-launcher.exe"
+output = root / "build" / "wondersbeyondrecomp-offline-windows.zip"
+sources_output = root / "build" / "wondersbeyondrecomp-sources.zip"
 SDL_FILE = "SDL3-devel-3.4.16-mingw.tar.gz"
 SDL_URL = f"https://github.com/libsdl-org/SDL/releases/download/release-3.4.16/{SDL_FILE}"
 SDL_SHA256 = "c7ef65bd72eabac6e5b535411dbd8d5824d0aab24fd62ff8812666b336f18a9c"
@@ -49,9 +49,9 @@ GPL_SOURCES = [
     ("https://github.com/AppImage/type2-runtime/archive/refs/tags/20251108.tar.gz", "type2-runtime-20251108.tar.gz"),
 ]
 
-NOTICE = """Wii Party Recomp - offline tools pack for Windows
+NOTICE = """WondersBeyondRecomp - offline tools pack for Windows
 
-Unzip this folder anywhere and open wiipartyrecomp-launcher.exe. The launcher uses the
+Unzip this folder anywhere and open wondersbeyondrecomp-launcher.exe. The launcher uses the
 tools in the tools folder next to it and never downloads them. Turn on Offline mode in
 Settings so the launcher also skips the update check.
 
@@ -76,7 +76,7 @@ Licences:
   below, unmodified, and the build scripts of the distro (also in
   tools/mingw/MinGW/scripts-20.0).
 - The same file also carries the source of the AppImage runtime at the start of
-  wiipartyrecomp-launcher-x86_64.AppImage: type2-runtime 20251108 (MIT License, with its
+  wondersbeyondrecomp-launcher-x86_64.AppImage: type2-runtime 20251108 (MIT License, with its
   build scripts and its libfuse patch) and libfuse 3.15.0 (GNU LGPL version 2.1), which
   the runtime links statically.
 {source_list}
@@ -193,8 +193,8 @@ def main():
     listed.append(f"- SDL 3.4.16 development package: {SDL_URL} (SHA-256 {SDL_SHA256})")
     shutil.copy2(launcher, stage / launcher.name)
     (stage / "OFFLINE-PACK.txt").write_text(notice, encoding="utf-8", newline="\r\n")
-    zip_folder(stage, output, "wiipartyrecomp", zipfile.ZIP_DEFLATED)
-    zip_folder(sources_stage, sources_output, "wiipartyrecomp-sources", zipfile.ZIP_STORED)
+    zip_folder(stage, output, "wondersbeyondrecomp", zipfile.ZIP_DEFLATED)
+    zip_folder(sources_stage, sources_output, "wondersbeyondrecomp-sources", zipfile.ZIP_STORED)
     return 0
 
 

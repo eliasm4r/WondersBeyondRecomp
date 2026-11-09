@@ -559,38 +559,10 @@ void cross_mark(ImVec2 center, float value, ImU32 ink) {
     list->AddLine(center + ImVec2(-h, h), center + ImVec2(h, -h), ink, px(1.8f));
 }
 
-void die(ImVec2 origin, float value) {
+void logo(ImVec2 origin, float value) {
     ImDrawList* list = ImGui::GetWindowDrawList();
-    float radius = value * 0.215f;
-    ImVec2 end = origin + ImVec2(value, value);
-    int first = list->VtxBuffer.Size;
-    list->AddRectFilled(origin, end, IM_COL32(255, 255, 255, 255), radius);
-    ImGui::ShadeVertsLinearColorGradientKeepAlpha(list, first, list->VtxBuffer.Size, origin, ImVec2(origin.x, end.y), IM_COL32(255, 111, 180, 255),
-                                                  IM_COL32(212, 20, 111, 255));
-    ImVec2 center = origin + ImVec2(value * 0.5f, value * 0.5f);
-    float angle = 14.0f * 3.14159265f / 180.0f;
-    float cosine = std::cos(angle);
-    float sine = std::sin(angle);
-    auto place = [&](float x, float y) { return ImVec2(center.x + x * cosine - y * sine, center.y + x * sine + y * cosine); };
-    float half = value * 0.285f;
-    float corner = half * 0.48f;
-    auto face = [&](ImVec2 offset, ImU32 fill) {
-        const float corners[4][3] = {{half - corner, half - corner, 0.0f}, {-(half - corner), half - corner, 0.5f}, {-(half - corner), -(half - corner), 1.0f}, {half - corner, -(half - corner), 1.5f}};
-        for (const auto& c : corners) {
-            for (int step = 0; step <= 6; step++) {
-                float a = (c[2] + step / 12.0f) * 3.14159265f;
-                list->PathLineTo(place(c[0] + std::cos(a) * corner, c[1] + std::sin(a) * corner) + offset);
-            }
-        }
-        list->PathFillConvex(fill);
-    };
-    face(ImVec2(0, value * 0.035f), IM_COL32(106, 0, 53, 70));
-    face(ImVec2(0, 0), IM_COL32(250, 249, 252, 255));
-    float pip = value * 0.063f;
-    float spacing = half * 0.52f;
-    for (int i = -1; i <= 1; i++) {
-        list->AddCircleFilled(place(spacing * i, spacing * i), pip, IM_COL32(27, 27, 38, 255), 24);
-    }
+    list->AddRectFilled(origin, origin + ImVec2(value, value), IM_COL32(46, 125, 50, 255), value * 0.19f);
+    list->AddCircleFilled(origin + ImVec2(value * 0.5f, value * 0.5f), value * 0.28f, IM_COL32(253, 216, 53, 255), 48);
 }
 
 }

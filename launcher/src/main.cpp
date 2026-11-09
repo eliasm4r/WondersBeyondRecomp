@@ -65,22 +65,22 @@ int main(int argc, char** argv) {
             screenshot_prefix = argv[++i];
         }
     }
-    SDL_SetAppMetadata("Wii Party Recomp", WP_LAUNCHER_VERSION, "io.github.arelkair.wiipartyrecomp");
+    SDL_SetAppMetadata("WondersBeyondRecomp", WP_LAUNCHER_VERSION, "io.github.eliasm4r.wondersbeyondrecomp");
     SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON, "1");
     SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON_SMALL, "1");
     if (!SDL_Init(SDL_INIT_VIDEO)) {
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Wii Party Recomp", SDL_GetError(), nullptr);
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "WondersBeyondRecomp", SDL_GetError(), nullptr);
         return 1;
     }
     float scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
     if (scale <= 0.0f) {
         scale = 1.0f;
     }
-    SDL_Window* window = SDL_CreateWindow("Wii Party Recomp", static_cast<int>(1040 * scale), static_cast<int>(712 * scale),
+    SDL_Window* window = SDL_CreateWindow("WondersBeyondRecomp", static_cast<int>(1040 * scale), static_cast<int>(712 * scale),
                                           SDL_WINDOW_BORDERLESS | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN | SDL_WINDOW_HIGH_PIXEL_DENSITY);
     SDL_Renderer* renderer = window ? SDL_CreateRenderer(window, nullptr) : nullptr;
     if (!renderer) {
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Wii Party Recomp", SDL_GetError(), nullptr);
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "WondersBeyondRecomp", SDL_GetError(), nullptr);
         return 1;
     }
     SDL_SetWindowMinimumSize(window, static_cast<int>(820 * scale), static_cast<int>(592 * scale));

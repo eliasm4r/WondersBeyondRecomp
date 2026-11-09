@@ -1,6 +1,0 @@
-name
-OSRealModeCall
-OSLoadContext
-OSSwitchFiber
-OSPanic
-longjmp

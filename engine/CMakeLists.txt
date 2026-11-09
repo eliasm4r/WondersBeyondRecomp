@@ -38,7 +38,6 @@ add_library(wp_engine STATIC
     src/platform/settings.cpp
     src/platform/ui_text.cpp
     src/platform/options.cpp
-    src/platform/mii.cpp
     src/platform/options_window.cpp
 )
 if(WIN32)

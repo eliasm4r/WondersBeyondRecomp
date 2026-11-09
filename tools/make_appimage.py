@@ -9,7 +9,7 @@ import urllib.request
 from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent
-output = root / "build" / "wiipartyrecomp-launcher-x86_64.AppImage"
+output = root / "build" / "wondersbeyondrecomp-launcher-x86_64.AppImage"
 TOOL_URL = "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage"
 TOOL_SHA256 = "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
 RUNTIME_URL = "https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64"
@@ -17,10 +17,10 @@ RUNTIME_SHA256 = "2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec26
 
 DESKTOP = """[Desktop Entry]
 Type=Application
-Name=Wii Party Recomp
-Comment=Build and play Wii Party from your own disc
-Exec=wiipartyrecomp-launcher
-Icon=wiipartyrecomp
+Name=WondersBeyondRecomp
+Comment=Build and play PokePark 2 from your own disc
+Exec=wondersbeyondrecomp-launcher
+Icon=wondersbeyondrecomp
 Terminal=false
 Categories=Game;
 """
@@ -49,16 +49,16 @@ def main():
         return 1
     subprocess.run(["cmake", "-S", str(root / "launcher"), "-B", str(arguments.build), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-UWP_LAUNCHER_VERSION", "-UWP_LAUNCHER_BUILD"], check=True)
     subprocess.run(["cmake", "--build", str(arguments.build)], check=True)
-    downloads = Path(tempfile.gettempdir()) / "wiipartyrecomp-appimage"
+    downloads = Path(tempfile.gettempdir()) / "wondersbeyondrecomp-appimage"
     tool = fetch(TOOL_URL, TOOL_SHA256, downloads)
     runtime = fetch(RUNTIME_URL, RUNTIME_SHA256, downloads)
     with tempfile.TemporaryDirectory() as work:
         app = Path(work) / "AppDir"
         (app / "usr" / "bin").mkdir(parents=True)
-        shutil.copy2(arguments.build / "wiipartyrecomp-launcher", app / "usr" / "bin" / "wiipartyrecomp-launcher")
-        os.symlink("usr/bin/wiipartyrecomp-launcher", app / "AppRun")
-        (app / "wiipartyrecomp-launcher.desktop").write_text(DESKTOP, encoding="utf-8")
-        shutil.copy2(root / "games" / "wiiparty" / "res" / "wiiparty.svg", app / "wiipartyrecomp.svg")
+        shutil.copy2(arguments.build / "wondersbeyondrecomp-launcher", app / "usr" / "bin" / "wondersbeyondrecomp-launcher")
+        os.symlink("usr/bin/wondersbeyondrecomp-launcher", app / "AppRun")
+        (app / "wondersbeyondrecomp-launcher.desktop").write_text(DESKTOP, encoding="utf-8")
+        shutil.copy2(root / "games" / "pokepark2" / "res" / "pokepark2.svg", app / "wondersbeyondrecomp.svg")
         output.unlink(missing_ok=True)
         environment = dict(os.environ, ARCH="x86_64", APPIMAGE_EXTRACT_AND_RUN="1")
         subprocess.run([str(tool), "--no-appstream", "--runtime-file", str(runtime), str(app), str(output)], check=True, env=environment)
