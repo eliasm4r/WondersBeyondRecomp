@@ -16,8 +16,12 @@ const size_t g_name_count = 0;
 namespace wp::game {
 
 const Description& description() {
-    static const Description kDescription = {"Engine tests", "engine_tests", "", "", "", "", false, 0};
+    static const Description kDescription = {"Engine tests", "engine_tests", "", "", "", "", false};
     return kDescription;
+}
+
+HleFunction replacement(const char*) {
+    return nullptr;
 }
 
 }

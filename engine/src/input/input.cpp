@@ -28,10 +28,10 @@ namespace {
 constexpr auto kWheelSwing = std::chrono::milliseconds(120);
 std::atomic<int64_t> g_wheel_up{0};
 std::atomic<int64_t> g_wheel_down{0};
-constexpr int64_t kNoticePulsePeriod = 500;
-constexpr int64_t kNoticePulseLength = 100;
-constexpr int64_t kNoticeRecent = 300;
 std::atomic<bool> g_blocked{false};
+std::atomic<bool> g_auto_confirm{false};
+constexpr int64_t kConfirmPeriod = 500;
+constexpr int64_t kConfirmLength = 100;
 std::atomic<bool> g_release_wait[4] = {};
 
 int64_t now_ms() {
@@ -344,14 +344,8 @@ Sample device_sample(uint32_t channel) {
     return result;
 }
 
-bool skipping_notice() {
-    static const bool scripted_input = std::getenv("WP_INPUT_SCRIPT") || std::getenv("WP_INPUT_BUTTONS");
-    uint32_t notice = game::description().notice_function;
-    if (scripted_input || notice == 0) {
-        return false;
-    }
-    int64_t ago = observed_ms_ago(notice);
-    return ago >= 0 && ago < kNoticeRecent && now_ms() % kNoticePulsePeriod < kNoticePulseLength;
+void set_auto_confirm(bool enabled) {
+    g_auto_confirm = enabled;
 }
 
 void set_blocked(bool blocked) {
@@ -374,7 +368,7 @@ Sample sample(uint32_t channel) {
     if (waiting) {
         g_release_wait[channel] = false;
     }
-    if (channel == 0 && skipping_notice()) {
+    if (channel == 0 && g_auto_confirm.load() && now_ms() % kConfirmPeriod < kConfirmLength) {
         result.buttons |= kButtonA;
     }
     return result;

@@ -3,3 +3,4 @@ OSRealModeCall
 OSLoadContext
 OSSwitchFiber
 OSPanic
+SequencerBootUpdate

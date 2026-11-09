@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "wp/hle.h"
+
 namespace wp::game {
 
 struct Description {
@@ -13,9 +15,11 @@ struct Description {
     const char* settings_file;
     const char* textures_directory;
     bool sideways_grip;
-    uint32_t notice_function;
 };
 
 const Description& description();
+
+// The game's own handler for a function listed in hle_functions.csv, or nullptr.
+HleFunction replacement(const char* name);
 
 }

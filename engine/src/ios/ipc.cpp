@@ -104,11 +104,14 @@ void update_interrupts() {
     }
 }
 
+// The Wii's NAND is slow (about 5 ms per 16 KB written); the game only waits on it, so it answers this many times sooner.
+constexpr uint64_t kIosSpeedup = 100;
+
 void execute(uint32_t address) {
     uint64_t ticks = 0;
     int32_t result = ios::send(address, ticks);
     if (result != ios::kDeferred) {
-        reply(address, result, ticks);
+        reply(address, result, ticks / kIosSpeedup);
     }
 }
 

@@ -44,6 +44,7 @@ namespace {
 constexpr size_t kFlushThreshold = 1u << 20;
 constexpr size_t kMaxQueuedBytes = size_t{64} << 20;
 std::atomic<size_t> g_queued_bytes{0};
+std::atomic<bool> g_screen_hidden{false};
 
 size_t private_memory_mb() {
 #ifdef _WIN32
@@ -1134,7 +1135,9 @@ void execute_copy(uint32_t value) {
                 g_fps_start = now;
             }
         }
-        render::copy_to_framebuffer(x, y, width, height, (g_bp[0x43] & 7) == kPixelFormatZ24, copy_filter(value));
+        if (!g_screen_hidden.load()) {
+            render::copy_to_framebuffer(x, y, width, height, (g_bp[0x43] & 7) == kPixelFormatZ24, copy_filter(value));
+        }
     } else {
         uint32_t source = g_bp[0x49];
         uint32_t size = g_bp[0x4A];
@@ -1462,6 +1465,10 @@ void write_pixel_engine_control(uint16_t value) {
     if (value & kPeFinishClear) {
         g_finish_pending = false;
     }
+}
+
+void set_screen_hidden(bool hidden) {
+    g_screen_hidden = hidden;
 }
 
 uint64_t frames_drawn() {

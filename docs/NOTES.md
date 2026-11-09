@@ -36,11 +36,18 @@ Every change that alters runtime behavior is recorded here with what was verifie
 - Tables without a bound may contain null entries (0x8042c5e0: six handlers, two zeros, two more handlers). Null entries are skipped instead of ending the table; the table still ends at the first non-null word that is not code.
 - `tools/classify_jumps.py`: of the 384 indirect jumps left, 382 load a function pointer, one is `__ptmf_scall` and one jumps to an argument; none is an undetected switch.
 
-## Skipping the Wii Remote strap notice
+## Boot straight to the title
 
-- The strap notice is the scene `nsNile::nsScene::SceneSpecializerStrap`. While it is shown, 0x80210d90 runs every frame; it stops once A is pressed.
-- Change: `analysis/observed_functions.csv` lists 0x80210d90, so the recompiler adds `wp::observe()` at its entry. While it ran in the last 300 ms, player 1's input holds A for 100 ms every 500 ms (`engine/src/input/input.cpp`). Scripted input (`WP_INPUT_SCRIPT`) turns this off.
-- Verified: headless runs of 20 s. With the skip, the workload changes after about 5 s (batches per frame drop from about 125 to 80), as when A is pressed by hand. Without it (scripted input), it stays on the notice (about 120 batches) for the whole run.
+- `nsNile::nsSequence::SequencerBoot` (update 0x801314b0, state at +4) plays Strap (scene 1, the Wii Remote strap notice), then CheckData (scene 3) only when the save is not ready, then Hold (scene 2, how to hold the Wii Remote), then returns 2 for the title. Scene table: 0x80469cc8, 0x68 bytes per scene.
+- Strap and Hold cannot be skipped: Strap starts loading the save and the common data, and skipping Hold crashed the sound thread right after the title started (`DVDConvertPathToEntrynum` called with 7 as the path).
+- Change: the update is replaced (`SequencerBootUpdate` in `hle_functions.csv`, handler in `games/pokepark2/game.cpp`). It runs the same scenes, but while Strap and Hold run the engine keeps the screen black (`gx::set_screen_hidden`, no copy to the shown frame) and player 1 taps A (`input::set_auto_confirm`). CheckData is left visible, as it can ask about the save.
+- Verified: headless runs at 1x; frames are black until the title, which appears with its intro; no crash in 40 s.
+
+## IOS reply speed
+
+- Most of the boot time was the game copying data to `/tmp/Pokemon/*.dan` on the NAND, with replies delayed like the real NAND (about 5 ms per 16 KB cluster written).
+- Change (`engine/src/ios/ipc.cpp`): reply delays are divided by 100; replies keep their order.
+- Verified: the title shows 5.3-5.4 s after start instead of 15.4 s (3 runs).
 
 ## Removed Wii Party features
 

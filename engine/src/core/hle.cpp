@@ -6,6 +6,7 @@
 #include <string>
 
 #include "wp/format.h"
+#include "wp/game.h"
 #include "wp/threads.h"
 #include "wp/runtime.h"
 
@@ -59,6 +60,9 @@ const Replacement kReplacements[] = {
 HleFunction find_replacement(const char* name) {
     if (std::strncmp(name, kSilentPrefix, std::strlen(kSilentPrefix)) == 0) {
         return return_zero;
+    }
+    if (HleFunction function = game::replacement(name)) {
+        return function;
     }
     for (const Replacement& replacement : kReplacements) {
         if (std::strcmp(replacement.name, name) == 0) {

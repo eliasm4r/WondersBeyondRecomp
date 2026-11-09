@@ -48,6 +48,8 @@ struct Sample {
 
 bool connected(uint32_t channel);
 Sample sample(uint32_t channel);
+// Player 1 taps A by itself, to get through a screen that waits for it.
+void set_auto_confirm(bool enabled);
 bool wakes_remote(uint32_t channel);
 void note_wheel(int delta);
 const keymap::Bindings& bindings();

@@ -331,41 +331,6 @@ uint64_t wall_clock_ticks() {
     return static_cast<uint64_t>(static_cast<int64_t>(now) - kSecondsFrom1970To2000 + offset) * kTimeBaseHz;
 }
 
-namespace {
-
-struct Observed {
-    std::atomic<uint32_t> address{0};
-    std::atomic<int64_t> last_ms{0};
-};
-
-Observed g_observed[16];
-
-int64_t steady_ms() {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-}
-
-}
-
-void observe(uint32_t address) {
-    for (Observed& slot : g_observed) {
-        uint32_t expected = 0;
-        if (slot.address.load() == address || slot.address.compare_exchange_strong(expected, address)) {
-            slot.last_ms = steady_ms();
-            return;
-        }
-    }
-}
-
-int64_t observed_ms_ago(uint32_t address) {
-    for (const Observed& slot : g_observed) {
-        if (slot.address.load() == address) {
-            int64_t last = slot.last_ms.load();
-            return last == 0 ? -1 : steady_ms() - last;
-        }
-    }
-    return -1;
-}
-
 uint64_t time_base() {
     using clock = std::chrono::steady_clock;
     static const clock::time_point origin = clock::now();
