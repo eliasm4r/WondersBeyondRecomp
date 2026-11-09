@@ -1,0 +1,7 @@
+name = "PokePark 2: Wonders Beyond"
+id = "S2LP01"
+executable = "pokepark2"
+disc = "disc/pokepark2.rvz"
+
+[sdk]
+os_save_context = 0x8028f2e0

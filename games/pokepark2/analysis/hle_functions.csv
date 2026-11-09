@@ -1,0 +1,5 @@
+name
+OSRealModeCall
+OSLoadContext
+OSSwitchFiber
+OSPanic
