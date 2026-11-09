@@ -300,10 +300,15 @@ uint64_t g_decrementer_deadline = 0;
 
 }
 
+bool decrementer_imminent();
+
 void set_decrementer(Cpu& c, uint32_t value) {
     c.spr[22] = value;
     g_decrementer_deadline = time_base() + ((value & 0x80000000u) ? 0 : value);
     g_decrementer_armed = true;
+    if (decrementer_imminent()) {
+        g_poll_counter = 1;
+    }
 }
 
 uint32_t get_decrementer(Cpu&) {
@@ -311,6 +316,14 @@ uint32_t get_decrementer(Cpu&) {
         return 0x7FFFFFFFu;
     }
     return static_cast<uint32_t>(static_cast<int64_t>(g_decrementer_deadline) - static_cast<int64_t>(time_base()));
+}
+
+// On the console a decrementer that is due fires before the interrupted code runs any further. The game relies on
+// it: its 60 Hz input alarm and its 30 Hz frame alarm are due together, and the frame must see the input tick,
+// or it alternates between one and three logic steps and skips every other frame (15 fps).
+bool decrementer_imminent() {
+    constexpr uint64_t kWindow = kTimeBaseHz / 10000;
+    return g_decrementer_armed && time_base() + kWindow >= g_decrementer_deadline;
 }
 
 bool decrementer_due() {

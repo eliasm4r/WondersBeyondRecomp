@@ -651,7 +651,8 @@ struct CopiedTexture {
 };
 
 struct PendingWriteBack {
-    ID3D11Texture2D* staging = nullptr;
+    uint32_t atlas_x = 0;
+    uint32_t atlas_y = 0;
     uint32_t address = 0;
     uint32_t start = 0;
     uint32_t end = 0;
@@ -683,7 +684,10 @@ struct Device {
     ID3D11Texture2D* write_back = nullptr;
     ID3D11ShaderResourceView* write_back_view = nullptr;
     ID3D11RenderTargetView* write_back_target = nullptr;
-    std::vector<ID3D11Texture2D*> free_staging;
+    ID3D11Texture2D* staging_atlas = nullptr;
+    uint32_t atlas_x = 0;
+    uint32_t atlas_y = 0;
+    uint32_t atlas_row = 0;
     std::vector<PendingWriteBack> write_backs;
     uint32_t frame_width = 0;
     uint32_t frame_height = 0;
@@ -1487,34 +1491,43 @@ bool create_copy_texture(ID3D11Texture2D*& texture, ID3D11ShaderResourceView*& v
            SUCCEEDED(g_device.device->CreateRenderTargetView(texture, nullptr, &target));
 }
 
-ID3D11Texture2D* take_staging() {
-    if (!g_device.free_staging.empty()) {
-        ID3D11Texture2D* texture = g_device.free_staging.back();
-        g_device.free_staging.pop_back();
-        return texture;
-    }
-    D3D11_TEXTURE2D_DESC description{};
-    g_device.write_back->GetDesc(&description);
-    description.BindFlags = 0;
-    description.Usage = D3D11_USAGE_STAGING;
-    description.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-    ID3D11Texture2D* texture = nullptr;
-    if (FAILED(g_device.device->CreateTexture2D(&description, nullptr, &texture))) {
-        return nullptr;
-    }
-    return texture;
-}
-
-constexpr size_t kMaxPendingWriteBacks = 32;
+constexpr uint32_t kAtlasSize = 2048;
 void complete_write_backs(bool wait);
+
+// Every pending copy shares one staging texture: reading them back costs one GPU synchronisation per frame instead of
+// one per copy, which took most of a frame in scenes with dozens of copies.
+bool reserve_staging(uint32_t width, uint32_t height, uint32_t& x, uint32_t& y) {
+    if (!g_device.staging_atlas) {
+        D3D11_TEXTURE2D_DESC description{};
+        g_device.write_back->GetDesc(&description);
+        description.Width = kAtlasSize;
+        description.Height = kAtlasSize;
+        description.BindFlags = 0;
+        description.Usage = D3D11_USAGE_STAGING;
+        description.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        if (FAILED(g_device.device->CreateTexture2D(&description, nullptr, &g_device.staging_atlas))) {
+            return false;
+        }
+    }
+    if (g_device.atlas_x + width > kAtlasSize) {
+        g_device.atlas_x = 0;
+        g_device.atlas_y += g_device.atlas_row;
+        g_device.atlas_row = 0;
+    }
+    if (g_device.atlas_y + height > kAtlasSize) {
+        complete_write_backs(true);
+    }
+    x = g_device.atlas_x;
+    y = g_device.atlas_y;
+    g_device.atlas_x += width;
+    g_device.atlas_row = std::max(g_device.atlas_row, height);
+    return true;
+}
 
 bool queue_write_back(uint32_t address, uint32_t stride, int x, int y, int width, int height, uint32_t logical_width, uint32_t logical_height, uint32_t format,
                       bool intensity, bool alpha, bool depth, const CopyFilter& filter) {
     if (!g_device.write_back && !create_copy_texture(g_device.write_back, g_device.write_back_view, g_device.write_back_target, kEfbWidth, kEfbHeight)) {
         return false;
-    }
-    if (g_device.write_backs.size() >= kMaxPendingWriteBacks) {
-        complete_write_backs(true);
     }
     uint32_t texture_format = copy_texture_format(format);
     Layout layout = layout_for(texture_format);
@@ -1528,17 +1541,13 @@ bool queue_write_back(uint32_t address, uint32_t stride, int x, int y, int width
     if (blocks_x * bytes > row_bytes || !guest_range_valid(address, span) || (address & kAddressMask) < kLowMemoryEnd) {
         return false;
     }
-    if (!run_copy(g_device.write_back_target, logical_width, logical_height, x, y, width, height, format, intensity, alpha, depth, filter)) {
-        return false;
-    }
-    ID3D11Texture2D* staging = take_staging();
-    if (!staging) {
+    PendingWriteBack pending;
+    if (!reserve_staging(logical_width, logical_height, pending.atlas_x, pending.atlas_y) ||
+        !run_copy(g_device.write_back_target, logical_width, logical_height, x, y, width, height, format, intensity, alpha, depth, filter)) {
         return false;
     }
     D3D11_BOX box{0, 0, 0, logical_width, logical_height, 1};
-    g_device.context->CopySubresourceRegion(staging, 0, 0, 0, 0, g_device.write_back, 0, &box);
-    PendingWriteBack pending;
-    pending.staging = staging;
+    g_device.context->CopySubresourceRegion(g_device.staging_atlas, 0, pending.atlas_x, pending.atlas_y, 0, g_device.write_back, 0, &box);
     pending.address = address;
     pending.start = address & kAddressMask;
     pending.end = pending.start + static_cast<uint32_t>(span);
@@ -1551,23 +1560,12 @@ bool queue_write_back(uint32_t address, uint32_t stride, int x, int y, int width
     return true;
 }
 
-bool write_back(const PendingWriteBack& pending, bool wait) {
+void write_back(const PendingWriteBack& pending, const D3D11_MAPPED_SUBRESOURCE& mapped) {
     Layout layout = layout_for(pending.texture_format);
     uint32_t blocks_x = (pending.logical_width + layout.block_width - 1) / layout.block_width;
     uint32_t blocks_y = (pending.logical_height + layout.block_height - 1) / layout.block_height;
     uint32_t bytes = block_bytes(pending.texture_format);
-    D3D11_MAPPED_SUBRESOURCE mapped;
-    auto wait_start = std::chrono::steady_clock::now();
-    HRESULT mapped_result = g_device.context->Map(pending.staging, 0, D3D11_MAP_READ, wait ? 0 : D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
-    if (mapped_result == DXGI_ERROR_WAS_STILL_DRAWING) {
-        return false;
-    }
-    g_write_back_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - wait_start).count();
-    g_write_backs++;
-    if (FAILED(mapped_result)) {
-        return true;
-    }
-    const uint8_t* pixels = static_cast<const uint8_t*>(mapped.pData);
+    const uint8_t* pixels = static_cast<const uint8_t*>(mapped.pData) + static_cast<size_t>(pending.atlas_y) * mapped.RowPitch + pending.atlas_x * 4;
     uint8_t block[64];
     for (uint32_t by = 0; by < blocks_y; by++) {
         uint8_t* row = host(pending.address + by * pending.row_bytes);
@@ -1583,25 +1581,38 @@ bool write_back(const PendingWriteBack& pending, bool wait) {
             std::memcpy(row + bx * bytes, block, bytes);
         }
     }
-    g_device.context->Unmap(pending.staging, 0);
-    return true;
 }
 
 void complete_write_backs(bool wait) {
-    size_t done = 0;
+    if (g_device.write_backs.empty()) {
+        return;
+    }
+    wait = wait || g_device.write_backs.front().frame + kWriteBackFrames <= g_frame;
+    D3D11_MAPPED_SUBRESOURCE mapped;
+    auto wait_start = std::chrono::steady_clock::now();
+    HRESULT mapped_result = g_device.context->Map(g_device.staging_atlas, 0, D3D11_MAP_READ, wait ? 0 : D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
+    if (mapped_result == DXGI_ERROR_WAS_STILL_DRAWING) {
+        return;
+    }
+    g_write_back_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - wait_start).count();
+    g_write_backs += static_cast<uint32_t>(g_device.write_backs.size());
     for (const PendingWriteBack& pending : g_device.write_backs) {
-        if (!write_back(pending, wait || pending.frame + kWriteBackFrames <= g_frame)) {
-            break;
+        if (SUCCEEDED(mapped_result)) {
+            write_back(pending, mapped);
         }
-        done++;
-        g_device.free_staging.push_back(pending.staging);
         auto copied = g_device.copies.find(pending.address);
         if (copied != g_device.copies.end() && copied->second.pending_writes > 0 && --copied->second.pending_writes == 0) {
             CopiedTexture& entry = copied->second;
             entry.guest_hash = guest_range_valid(pending.address, entry.bytes) ? sample_hash(host(pending.address), entry.bytes) : 0;
         }
     }
-    g_device.write_backs.erase(g_device.write_backs.begin(), g_device.write_backs.begin() + static_cast<std::ptrdiff_t>(done));
+    if (SUCCEEDED(mapped_result)) {
+        g_device.context->Unmap(g_device.staging_atlas, 0);
+    }
+    g_device.write_backs.clear();
+    g_device.atlas_x = 0;
+    g_device.atlas_y = 0;
+    g_device.atlas_row = 0;
 }
 
 void finish_write_backs() {

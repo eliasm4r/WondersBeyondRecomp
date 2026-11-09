@@ -70,7 +70,22 @@ GPU by default, so nothing happens there. Writing them back to RAM overwrote the
 reached the interrupt table at 0x80003040: the next interrupt jumped to texture data and the game crashed at the
 start of gameplay. Copies whose destination is below 0x80004000 now stay texture-only.
 
-## Draw done and tokens
+## Frame pacing: 15 fps phases
 
-They no longer wait for pending EFB copies to reach RAM. Waiting made the game miss vsyncs and drop to 15 fps in
-scenes with many copies; a texture that reads a pending copy still waits for it.
+The game does not pace itself on vsync. Two periodic OSAlarms run from the same instant: a 60 Hz one samples the
+inputs (0x8002c9c0) and a 30 Hz one wakes the main loop (0x8002d1d4). Each loop runs one logic step per queued input
+sample and expects two; with three it skips the next render (0x8002cfd0).
+
+Both alarms are due together every other tick. On the console the second decrementer exception fires before the
+woken thread runs any further. Here it was delivered at the next poll, about a thousand poll sites later, so the
+loop sometimes read one sample, then three, and the skip kept itself going: 15 fps for tens of seconds after any
+hitch. In that mode the game also copied to null buffers (see above). A decrementer due within 100 us is now
+delivered at the very next poll site, even when interrupts were masked at the first try.
+
+## EFB copy read-backs
+
+Draw done and tokens wait for pending copies to reach RAM, like the console. Not waiting was tried and reverted:
+a late write can land in memory the game has already reused. Dolphin needs RAM copies for this game only for the
+snapshot feature. All pending copies share one staging atlas, so a frame costs two GPU synchronisations instead of
+about forty. What remains is the GPU finishing the frame: about 5 ms at 1x, 10 ms at 3x and 28 ms at 6x in the first
+cave, which is why 6x cannot hold 30 fps there yet.

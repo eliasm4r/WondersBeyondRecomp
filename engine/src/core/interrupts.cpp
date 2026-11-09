@@ -162,6 +162,16 @@ void poll_interrupts(Cpu& c) {
         uint32_t value = setting ? static_cast<uint32_t>(std::strtoul(setting, nullptr, 10)) : 0;
         return value ? value : 1u << 10;
     }();
+    // Interrupts are masked and a decrementer is about to fire: look again at the very next poll site.
+    static uint32_t quick_polls = 0;
+    constexpr uint32_t kMaxQuickPolls = 4096;
+    bool masked = g_in_interrupt || !(c.msr & kMsrExternalInterrupt);
+    if (masked && quick_polls < kMaxQuickPolls && decrementer_imminent()) {
+        quick_polls++;
+        g_poll_counter = 1;
+        return;
+    }
+    quick_polls = 0;
     g_poll_counter = interval;
     audio::update();
     dsp::update();
@@ -212,6 +222,9 @@ void poll_interrupts(Cpu& c) {
     previous_poll = now;
     previous_idle = idle;
     if (now < g_next_retrace) {
+        if (decrementer_imminent()) {
+            g_poll_counter = 1;
+        }
         return;
     }
     std::chrono::microseconds period = retrace_period();
@@ -221,6 +234,9 @@ void poll_interrupts(Cpu& c) {
     }
     si::poll();
     deliver_video_interrupt(c);
+    if (decrementer_imminent()) {
+        g_poll_counter = 1;
+    }
 }
 
 }
