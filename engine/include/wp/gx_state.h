@@ -62,6 +62,9 @@ struct LinePointOffsets {
 };
 
 LinePointOffsets line_point_offsets(const uint32_t* bp);
+
+// Texture cache key from the image registers (TX_SETIMAGE0/3), the mip level count (0 without mipmaps) and the palette register.
+uint64_t texture_key(uint32_t image0, uint32_t image3, uint32_t mip_levels, uint32_t tlut_register);
 bool line_offset_negative_side(float dx, float dy, bool tall);
 void offset_texture_coordinates(ScreenVertex& vertex, uint32_t coordinates, float s, float t);
 

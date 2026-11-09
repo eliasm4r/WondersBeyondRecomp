@@ -650,6 +650,20 @@ void test_gx_logic_ops() {
     CHECK(!disabled.enable && !disabled.logic_op && disabled.output == LogicSource::Tev);
 }
 
+void test_texture_keys() {
+    using wp::gx::texture_key;
+    // The old XOR key mixed address << 20 with height << 32: these two textures shared an entry.
+    uint32_t image0_small = (63u << 10) | 63u;
+    uint32_t image0_tall = (127u << 10) | 63u;
+    CHECK(texture_key(image0_small, 0x1000, 0, 0) != texture_key(image0_tall, 0x1000, 0, 0));
+    CHECK(texture_key(image0_small, 0x1000, 0, 0) != texture_key(image0_small, 0x1001, 0, 0));
+    CHECK(texture_key(image0_small, 0x1000, 0, 0) != texture_key(image0_small | (1u << 20), 0x1000, 0, 0));
+    CHECK(texture_key(image0_small, 0x1000, 0, 0) != texture_key(image0_small, 0x1000, 1, 0));
+    CHECK(texture_key(image0_small, 0x1000, 0, 0x001) != texture_key(image0_small, 0x1000, 0, 0x400));
+    CHECK(texture_key(image0_small, 0x1000, 12, 0xFFF) == texture_key(image0_small, 0x1000, 12, 0xFFF));
+    CHECK(texture_key(0xFFFFFF, 0xFFFFFF, 15, 0xFFF) == ~0ull);
+}
+
 void test_gx_line_point_offsets() {
     using namespace wp::gx;
     uint32_t bp[256] = {};
@@ -1288,6 +1302,7 @@ int main() {
     test_custom_texture_index();
     test_gx_logic_ops();
     test_gx_line_point_offsets();
+    test_texture_keys();
     test_key_names();
     test_key_defaults();
     test_settings_file_keys();

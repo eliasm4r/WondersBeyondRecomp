@@ -4,6 +4,7 @@
 #include "gx_render_common.h"
 
 #include <d3d11.h>
+#include <d3d11sdklayers.h>
 #include <d3dcompiler.h>
 #include <dxgi1_2.h>
 
@@ -722,8 +723,9 @@ struct Device {
 struct PendingBatch {
     std::vector<ScreenVertex> vertices;
     Constants constants;
-    ID3D11ShaderResourceView* views[kTextureMaps];
-    ID3D11SamplerState* samplers[kTextureMaps];
+    // Owned references: a later texture lookup may replace the cache entry a view came from.
+    ID3D11ShaderResourceView* views[kTextureMaps] = {};
+    ID3D11SamplerState* samplers[kTextureMaps] = {};
     uint32_t blend = 0;
     uint32_t depth = 0;
     bool early_depth = false;
@@ -892,11 +894,23 @@ bool initialize() {
     }
     g_scale = requested_scale();
     D3D_FEATURE_LEVEL level;
-    HRESULT result = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &g_device.device, &level,
+    // WP_D3D_WARP=1 renders with the Windows software rasterizer, to tell driver faults from renderer ones.
+    D3D_DRIVER_TYPE driver = std::getenv("WP_D3D_WARP") ? D3D_DRIVER_TYPE_WARP : D3D_DRIVER_TYPE_HARDWARE;
+    // WP_D3D_DEBUG=1 turns on the Direct3D debug layer (Windows optional feature "Graphics Tools").
+    UINT device_flags = std::getenv("WP_D3D_DEBUG") ? D3D11_CREATE_DEVICE_DEBUG : 0;
+    HRESULT result = D3D11CreateDevice(nullptr, driver, nullptr, device_flags, nullptr, 0, D3D11_SDK_VERSION, &g_device.device, &level,
                                        &g_device.context);
     if (FAILED(result)) {
         result = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &g_device.device, &level,
                                    &g_device.context);
+    }
+    ID3D11InfoQueue* info_queue = nullptr;
+    if (SUCCEEDED(result) && device_flags && SUCCEEDED(g_device.device->QueryInterface(__uuidof(ID3D11InfoQueue), reinterpret_cast<void**>(&info_queue)))) {
+        // An invalid call then stops right where it is made, so the crash report shows the caller.
+        info_queue->SetBreakOnSeverity(D3D11_MESSAGE_SEVERITY_CORRUPTION, TRUE);
+        info_queue->SetBreakOnSeverity(D3D11_MESSAGE_SEVERITY_ERROR, TRUE);
+        info_queue->Release();
+        log::write("video", "Direct3D debug layer on");
     }
     if (FAILED(result) || !create_target() || !create_pipeline()) {
         std::fputs("cannot initialise the D3D11 renderer\n", stderr);
@@ -1327,6 +1341,9 @@ void draw(const ScreenVertex* vertices, uint32_t count) {
     for (uint32_t map = 0; map < kTextureMaps; map++) {
         if (used_maps & (1u << map)) {
             views[map] = texture_for(map);
+            if (views[map]) {
+                views[map]->AddRef();
+            }
             samplers[map] = sampler_for(map);
         }
     }
@@ -1340,8 +1357,15 @@ void draw(const ScreenVertex* vertices, uint32_t count) {
     bool same = !pending.vertices.empty() && pending.blend == blend && pending.depth == depth && pending.early_depth == early_depth && pending.top_left == bp[0x20] &&
                 pending.bottom_right == bp[0x21] && pending.scissor_offset == bp[kBpScissorOffset] && std::memcmp(&pending.constants, &constants, sizeof constants) == 0 &&
                 std::memcmp(pending.views, views, sizeof views) == 0 && std::memcmp(pending.samplers, samplers, sizeof samplers) == 0;
-    if (!same) {
+    if (same) {
+        for (ID3D11ShaderResourceView*& view : views) {
+            release(view);
+        }
+    } else {
         flush_pending();
+        for (ID3D11ShaderResourceView*& view : pending.views) {
+            release(view);
+        }
         pending.constants = constants;
         std::memcpy(pending.views, views, sizeof views);
         std::memcpy(pending.samplers, samplers, sizeof samplers);

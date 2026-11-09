@@ -467,15 +467,14 @@ TextureRequest describe_texture(uint32_t map) {
         request.total = next;
     }
     request.source = host(request.address);
-    request.key = (static_cast<uint64_t>(request.address) << 20) ^ (static_cast<uint64_t>(request.width) << 8) ^
-                  (static_cast<uint64_t>(request.height) << 32) ^ request.format ^ (static_cast<uint64_t>(request.levels) << 4);
+    request.key = gx::texture_key(image0, image3, request.mipmaps ? request.levels : 0, 0);
     if (request.format >= 8 && request.format <= 10) {
         uint32_t tlut_register = bp[map < 4 ? 0x98 + map : 0xB8 + (map - 4)];
         uint32_t tlut_offset = (tlut_register & 0x3FF) << 9;
         request.tlut_format = (tlut_register >> 10) & 3;
         request.tlut = g_tlut + (tlut_offset & kTlutMask);
         request.entries = request.format == 8 ? 16 : request.format == 9 ? 256 : 16384;
-        request.key ^= (static_cast<uint64_t>(tlut_offset >> 9) << 54) ^ (static_cast<uint64_t>(request.tlut_format) << 52);
+        request.key = gx::texture_key(image0, image3, request.mipmaps ? request.levels : 0, tlut_register);
     }
     request.valid = true;
     return request;
@@ -519,6 +518,17 @@ SamplerParams sampler_params(uint32_t map, bool custom) {
         params.lod_bias = static_cast<float>(static_cast<int8_t>((mode >> 9) & 0xFF)) / 32.0f;
     }
     return params;
+}
+
+}
+
+namespace wp::gx {
+
+uint64_t texture_key(uint32_t image0, uint32_t image3, uint32_t mip_levels, uint32_t tlut_register) {
+    // Each field in its own bits, so two different textures never share a cache entry: address 24 bits, width and height
+    // 10 each, format 4, mip levels 4 (0 without mipmaps), palette offset 10 and palette format 2.
+    return (image3 & 0x00FFFFFF) | (static_cast<uint64_t>(image0 & 0xFFFFFF) << 24) | (static_cast<uint64_t>(mip_levels & 15) << 48) |
+           (static_cast<uint64_t>(tlut_register & 0xFFF) << 52);
 }
 
 }

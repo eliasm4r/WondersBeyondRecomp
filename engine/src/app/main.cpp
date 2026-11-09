@@ -6,6 +6,7 @@
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <filesystem>
 #include <string>
@@ -30,6 +31,34 @@
 namespace {
 
 #ifdef _WIN32
+// Native frames of the crashing thread as module+offset, which addr2line or the linker map turn into functions.
+void print_host_stack(const CONTEXT& crashed) {
+    CONTEXT context = crashed;
+    for (int depth = 0; depth < 32 && context.Rip != 0; depth++) {
+        HMODULE module = nullptr;
+        char name[MAX_PATH] = "?";
+        if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               reinterpret_cast<LPCSTR>(context.Rip), &module)) {
+            GetModuleFileNameA(module, name, sizeof name);
+        }
+        const char* file = std::strrchr(name, 92);
+        unsigned long long offset = context.Rip - reinterpret_cast<uintptr_t>(module);
+        std::fprintf(stderr, "host frame %d: %s+%llx", depth, file ? file + 1 : name, offset);
+        std::fputc(10, stderr);
+        wp::log::write("crash", "host frame %d: %s+%llx", depth, file ? file + 1 : name, offset);
+        DWORD64 image_base = 0;
+        PRUNTIME_FUNCTION function = RtlLookupFunctionEntry(context.Rip, &image_base, nullptr);
+        if (!function) {
+            context.Rip = *reinterpret_cast<DWORD64*>(context.Rsp);
+            context.Rsp += 8;
+            continue;
+        }
+        void* handler_data = nullptr;
+        DWORD64 frame = 0;
+        RtlVirtualUnwind(UNW_FLAG_NHANDLER, image_base, context.Rip, function, &context, &handler_data, &frame, nullptr);
+    }
+}
+
 LONG WINAPI report_crash(EXCEPTION_POINTERS* info) {
     const EXCEPTION_RECORD* record = info->ExceptionRecord;
     wp::log::write("crash", "exception %08lx at host address %p (module offset %llx)", record->ExceptionCode, record->ExceptionAddress,
@@ -42,6 +71,7 @@ LONG WINAPI report_crash(EXCEPTION_POINTERS* info) {
                      static_cast<unsigned long long>(record->ExceptionInformation[1] - reinterpret_cast<uintptr_t>(wp::g_memory)));
     }
     std::fputc(10, stderr);
+    print_host_stack(*info->ContextRecord);
     wp::print_guest_registers();
     wp::print_call_stack();
     wp::print_thread_stacks();
@@ -149,6 +179,8 @@ int main(int argc, char** argv) {
         wp::log::write("boot", "log started");
         std::freopen(log_path, "a", stderr);
     }
+    // Redirected stderr is fully buffered; a crash would lose the end of its report.
+    std::setvbuf(stderr, nullptr, _IONBF, 0);
 #ifdef _WIN32
     SetUnhandledExceptionFilter(report_crash);
     std::signal(SIGSEGV, report_crash);

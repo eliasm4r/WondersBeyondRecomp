@@ -52,3 +52,12 @@ Every change that alters runtime behavior is recorded here with what was verifie
 ## Removed Wii Party features
 
 - Mii loading, the controls hint window, the sideways grip per minigame and the instruction-screen watch are gone, with their settings (`input.auto_grip`, `input.controls_hint`, `system.skip_notices`) and launcher pages. The grip is now a single per-game value (`sideways_grip` in `game::Description`).
+
+## D3D11: freed texture bound by a draw
+
+- Symptom: crash in the graphics driver (NVIDIA `nvwgf2umx.dll`, and in WARP too) about 1.5 s after the Reshiram and Zekrom scene, when the player first controls Pikachu.
+- Found with the Direct3D debug layer (`WP_D3D_DEBUG=1`, Windows optional feature "Graphics Tools"): `PSSetShaderResources` in `flush_pending` received a view that was already released.
+- Cause: `draw` looks up the texture of each map in turn. A later lookup that hits the same cache entry with other parameters recreates it and releases the view an earlier map had just returned. The texture cache key also mixed its fields with XOR (address << 20 against height << 32), so different textures could share an entry.
+- Change (`engine/src/gpu/gx_render.cpp`, `engine/src/gpu/gx_render_common.cpp`): draws hold their own reference on each view until the batch is replaced; the key (`gx::texture_key`) puts each field in its own bits (address 24, width and height 10 each, format 4, mip levels 4, palette 12).
+- Verified: `test_texture_keys`; with the debug layer, which stops on any invalid call, 3 runs of 200 s through the scene into gameplay; one run of 5 minutes on the NVIDIA driver. One run of 200 s crashed once in `save_context` from the decrementer, at 131 s; it did not happen again in 4 more runs and is not explained yet.
+- Crash reports now list the host frames of the crashing thread (module+offset) and stderr is unbuffered, so a redirected report is complete.
