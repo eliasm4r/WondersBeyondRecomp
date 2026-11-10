@@ -21,7 +21,7 @@ constexpr Description kDescription = {
     "games/pokepark2/settings.ini",
     "games/pokepark2/textures",
     true,
-    "",
+    "1569649565127409705",
 };
 
 // nsNile::nsSequence::SequencerBoot (vtable 0x80453800), state at +4. The game plays Strap (scene 1), which
