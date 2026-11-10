@@ -236,6 +236,21 @@ BlendState blend_state_for(uint32_t word) {
     return blend_state(word & 0xFFFF, ((word >> 16) & 1) != 0, ((word >> 17) & 1) != 0, ((word >> 18) & 1) == 0);
 }
 
+uint32_t used_maps(const Constants& constants) {
+    uint32_t maps = 0;
+    for (uint32_t i = 0; i < constants.header[0] && i < kMaxStages; i++) {
+        if (constants.stage[i][2] & 0x40) {
+            maps |= 1u << (constants.stage[i][2] & 7);
+        }
+    }
+    // An indirect map is often sampled by no TEV stage (a distortion's normal map): left unbound it reads as zero,
+    // the largest offset, and the dash shockwave showed the scene shifted by 128 texels.
+    for (uint32_t j = 0; j < (constants.indirect[0] & 7) && j < 4; j++) {
+        maps |= 1u << ((constants.indirect[1] >> (6 * j)) & 7);
+    }
+    return maps;
+}
+
 void fill_constants(Constants& constants, int scale) {
     const uint32_t* bp = bp_registers();
     std::memset(&constants, 0, sizeof constants);

@@ -92,6 +92,8 @@ uint64_t hash_bytes(const uint8_t* data, size_t size);
 uint64_t sample_hash(const uint8_t* data, size_t size);
 BlendState blend_state_for(uint32_t word);
 void fill_constants(Constants& constants, int scale);
+// The texture maps a draw samples: those of its TEV stages and of its indirect stages.
+uint32_t used_maps(const Constants& constants);
 AlphaTestResult alpha_test_result(uint32_t test);
 uint32_t copy_bits(uint32_t format);
 uint32_t copy_texture_format(uint32_t format);

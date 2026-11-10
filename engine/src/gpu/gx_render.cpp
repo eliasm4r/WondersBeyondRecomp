@@ -1485,14 +1485,9 @@ void draw(const ScreenVertex* vertices, uint32_t count) {
     fill_constants(constants, g_scale);
     ID3D11ShaderResourceView* views[kTextureMaps] = {};
     ID3D11SamplerState* samplers[kTextureMaps] = {};
-    uint32_t used_maps = 0;
-    for (uint32_t i = 0; i < constants.header[0] && i < kMaxStages; i++) {
-        if (constants.stage[i][2] & 0x40) {
-            used_maps |= 1u << (constants.stage[i][2] & 7);
-        }
-    }
+    uint32_t used = used_maps(constants);
     for (uint32_t map = 0; map < kTextureMaps; map++) {
-        if (used_maps & (1u << map)) {
+        if (used & (1u << map)) {
             views[map] = texture_for(map);
             if (views[map]) {
                 views[map]->AddRef();

@@ -141,3 +141,9 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
 - The title screen and cutscenes are pre-rendered 30 fps movies, so they stay at 30 fps (see "60 fps").
 - Discord shows the game when `system.discord` is on and `discord_application` in the game description holds an
   Application ID; it talks to the local client over its IPC pipe and retries every 15 s.
+
+## Indirect maps left unbound
+
+`render::draw` bound only the maps named by TEV stage orders. A map read only by an indirect stage, such as the
+normal map of the dash shockwave (64x64 IA8), stayed unbound and sampled as zero, the largest offset: the ring
+showed the scene shifted by 128 texels. `used_maps` now adds the maps of the indirect stages (BP 0x27).
