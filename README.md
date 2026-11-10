@@ -1,9 +1,9 @@
 # WondersBeyondRecomp — PokéPark 2 Recomp for PC
 
-**PokéPark 2: Wonders Beyond** (PokePark 2 Recomp) running natively on PC through static recompilation.
+**PokéPark 2: Wonders Beyond** running natively on PC through static recompilation.
 
-> [!WARNING]
-> **Project status: early development.** The game's code is translated and builds, but the game does not run yet. There is nothing to play for now.
+> [!NOTE]
+> **Project status: playable, in development.** The game boots, plays and saves on Windows at up to 60 fps and high internal resolutions. Expect rough edges; see [CHANGELOG.md](CHANGELOG.md) for what changed.
 
 ## Overview
 
@@ -13,14 +13,29 @@ WondersBeyondRecomp translates the game's PowerPC code into C++ ahead of time an
 
 Supported disc: Europe (`S2LP01`). Other regions are planned.
 
-### Goals
+## Features
 
-- Stable, faithful gameplay
-- Higher internal resolution and widescreen
-- High frame rates (120 FPS and more) through frame interpolation
-- Custom and upscaled textures
-- Keyboard, mouse and modern gamepads
-- Windows first, then Linux and macOS
+- **60 fps** gameplay (`video.fps`), with movies and cutscenes kept at their native 30 fps
+- **Internal resolution** up to 6x, 16:9 or 4:3, optional supersampled smoothing, anisotropic filtering, vsync
+- **Options menu (F1)** drawn in the game's style, with five tabs (Display, Keyboard, Gamepad, Sound, Game), usable with keyboard, mouse or gamepad, without pausing the game
+- **Keyboard and mouse**: every action can be rebound; hold **Ctrl** to aim the Wii Remote pointer with the mouse
+- **Gamepads** (XInput and SDL): rebinding, stick deadzone, rumble; hold **L3** to aim with the right stick; a sharp jolt of a gamepad with a motion sensor counts as a Wii Remote shake
+- **Sound**: volume, mute, Wii Remote speaker
+- **Languages**: game and menu language (English, French, Spanish, Galician for the menu)
+- **Discord Rich Presence** while the game runs (can be turned off)
+- **Custom textures** loaded from `games/pokepark2/textures`
+- Save backups and crash reports
+
+## Playing
+
+After building (below), start the game with `Jouer PokePark 2.bat` or `build/out/pokepark2.exe`. Press **F1** for the options menu. Settings are stored in `games/pokepark2/settings.ini` and saves in `games/pokepark2/nand`.
+
+## Roadmap
+
+- 120 fps and beyond
+- Free camera with the mouse or the right stick
+- Shader cache on disk to remove first-time stutters
+- Installer, then Linux and macOS builds
 
 ## Building from Source
 
@@ -37,6 +52,8 @@ cmake -S . -B build/out -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build/out --target pokepark2
 ./build/out/pokepark2
 ```
+
+Run the tests with `ctest` in `build/out`. Technical notes on the fixes so far are in [docs/NOTES.md](docs/NOTES.md).
 
 The function list in `games/pokepark2/analysis/` was produced with [decomp-toolkit](https://github.com/encounter/decomp-toolkit).
 
