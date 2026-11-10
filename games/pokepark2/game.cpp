@@ -2,9 +2,11 @@
 
 #include "wp/game.h"
 #include "wp/gx.h"
+#include "wp/disc.h"
 #include "wp/input.h"
 #include "wp/log.h"
 #include "wp/memory.h"
+#include "wp/settings.h"
 
 namespace wp::game {
 
@@ -80,6 +82,30 @@ void boot_sequence(Cpu& c) {
 
 const Description& description() {
     return kDescription;
+}
+
+// The main loop is paced by two periodic alarms (docs/NOTES.md, "Frame pacing"): input at 60 Hz and frames at
+// 30 Hz, and it runs one logic step per input tick. Giving the frame alarm the input period renders every step.
+// The loop applies a pending period by itself (0x8000efa0). Movies advance one picture per rendered frame, so they
+// keep 30 fps while their file is being streamed.
+void retrace() {
+    constexpr uint32_t kInputAlarm = 0x804BA4D8;
+    constexpr uint32_t kFrameAlarm = 0x804BA548;
+    constexpr uint32_t kPeriod = 0x38;
+    constexpr uint32_t kPendingPeriod = 0x40;
+    constexpr uint32_t kRunning = 0x6C;
+    static const settings::LiveNumber fps("video.fps", "WP_FPS");
+    if (rd8(kInputAlarm + kRunning) == 0 || rd8(kFrameAlarm + kRunning) == 0) {
+        return;
+    }
+    uint64_t input = (static_cast<uint64_t>(rd32(kInputAlarm + kPeriod)) << 32) | rd32(kInputAlarm + kPeriod + 4);
+    bool movie = disc::seconds_since_read("/Movie/") < 0.5;
+    uint64_t wanted = fps() >= 60 && !movie ? input : input * 2;
+    uint64_t pending = (static_cast<uint64_t>(rd32(kFrameAlarm + kPendingPeriod)) << 32) | rd32(kFrameAlarm + kPendingPeriod + 4);
+    if (input != 0 && pending != wanted) {
+        wr32(kFrameAlarm + kPendingPeriod, static_cast<uint32_t>(wanted >> 32));
+        wr32(kFrameAlarm + kPendingPeriod + 4, static_cast<uint32_t>(wanted));
+    }
 }
 
 HleFunction replacement(const char* name) {

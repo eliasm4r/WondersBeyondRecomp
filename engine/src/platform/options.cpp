@@ -16,7 +16,7 @@ namespace wp::options {
 namespace {
 
 constexpr const char* kLiveKeys[] = {
-    "video.scale",         "video.fullscreen",    "video.copy_filter",   "input.gamepads",
+    "video.scale",         "video.fps",           "video.fullscreen",    "video.copy_filter",   "input.gamepads",
     "input.real_wiimote_mouse", "input.wake_on_mouse", "input.hide_cursor",   "system.options_menu", "audio.mute", "audio.wiimote_speaker", "saves.backups", "system.interface_language",
 };
 
@@ -65,6 +65,9 @@ std::vector<std::string> choices(const std::string& key) {
         }
         return scales;
     }
+    if (key == "video.fps") {
+        return {"30", "60"};
+    }
     if (key == "system.interface_language") {
         return {"en", "es", "gl"};
     }
@@ -88,6 +91,9 @@ std::string shown_value(const std::string& key, const std::string& value) {
     const ui::Text& text = ui::text();
     if (key == "video.scale") {
         return value == "1" ? text.menu_native : value + "x";
+    }
+    if (key == "video.fps") {
+        return value;
     }
     if (key == "system.interface_language") {
         return value == "es" ? "Español" : value == "gl" ? "Galego" : "English";

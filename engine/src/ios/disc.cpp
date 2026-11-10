@@ -1,6 +1,7 @@
 #include "wp/disc.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -120,6 +121,20 @@ bool mount(const std::string& extracted_directory) {
     return true;
 }
 
+std::string g_watched_part;
+std::atomic<int64_t> g_watched_read{INT64_MIN / 2};
+
+int64_t now_nanoseconds() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+double seconds_since_read(const char* path_part) {
+    if (g_watched_part != path_part) {
+        g_watched_part = path_part;
+    }
+    return static_cast<double>(now_nanoseconds() - g_watched_read.load()) * 1e-9;
+}
+
 void read(uint64_t offset, uint32_t length, uint32_t destination) {
     static const bool logging = std::getenv("WP_LOG_DISC") != nullptr;
     uint8_t* output = host(destination);
@@ -138,6 +153,9 @@ void read(uint64_t offset, uint32_t length, uint32_t destination) {
         uint64_t start = std::max(offset, it->offset);
         uint64_t stop = std::min(end, file_end);
         auto began = std::chrono::steady_clock::now();
+        if (!g_watched_part.empty() && it->path.find(g_watched_part) != std::string::npos) {
+            g_watched_read = now_nanoseconds();
+        }
         std::FILE* file = std::fopen(it->path.c_str(), "rb");
         if (logging) {
             std::fprintf(stderr, "disc read %llx+%x -> %08x from %s%s\n", static_cast<unsigned long long>(offset), length,

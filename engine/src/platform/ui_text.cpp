@@ -9,6 +9,7 @@ namespace {
 
 constexpr Label kEnglishLabels[] = {
     {"video.scale", "Internal resolution"},
+    {"video.fps", "Frames per second"},
     {"video.fullscreen", "Full screen"},
     {"video.copy_filter", "Anti-flicker filter"},
     {"video.custom_textures", "Custom textures"},
@@ -45,6 +46,7 @@ constexpr Label kEnglishLabels[] = {
 
 constexpr Label kSpanishLabels[] = {
     {"video.scale", "Resolución interna"},
+    {"video.fps", "Fotogramas por segundo"},
     {"video.fullscreen", "Pantalla completa"},
     {"video.copy_filter", "Filtro anti-parpadeo"},
     {"video.custom_textures", "Texturas personalizadas"},
@@ -81,6 +83,7 @@ constexpr Label kSpanishLabels[] = {
 
 constexpr Label kGalicianLabels[] = {
     {"video.scale", "Resolución interna"},
+    {"video.fps", "Fotogramas por segundo"},
     {"video.fullscreen", "Pantalla completa"},
     {"video.copy_filter", "Filtro antiparpadeo"},
     {"video.custom_textures", "Texturas personalizadas"},

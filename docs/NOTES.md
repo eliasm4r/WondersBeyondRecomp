@@ -96,3 +96,28 @@ configuration now gets its own variant of the same source, with the stages, swap
 into constants so the compiler folds the interpreter away (about 30 ms to compile, on a worker thread; the generic
 shader draws until the variant is ready). Same scene at 6x: 30 fps. `WP_GENERIC_SHADER=1` turns the variants off.
 The OpenGL renderer still uses the generic shader only.
+
+## 60 fps
+
+The main loop is paced by two periodic alarms in the timer manager at 0x804BA4D8 (0x70 bytes each): input at
+59.94 Hz and frames at 29.97 Hz. It runs one logic step per input sample and skips the next render when it had
+more steps than `frame period / input period`. `video.fps=60` (`WP_FPS`) writes the input period into the frame
+alarm's pending period (0x804BA588), the same change as Dolphin's 60 fps code; the loop applies it by itself.
+Three more things were needed:
+
+- The game picks its render mode from `VIGetTvFormat`. Boot wrote PAL (1) to 0x800000CC even with `pal60=1`, so the
+  game ran a 50 Hz mode and could not present more than 50 frames. A PAL console set to 60 Hz announces EURGB60 (5).
+- Buffers copied again every frame (bloom and similar, about 39 copies per frame in the first cave) stay on the
+  GPU. Reading them back to RAM held that scene at 42 fps. A buffer that was not copied in the last two frames is
+  still written, so a one-off copy such as a snapshot reaches RAM.
+- Movies (`Movie/*.mo`) advance one picture per rendered frame. While such a file is being read the frame alarm
+  keeps the 30 fps period.
+
+Measured in the first cave, D3D11: 59.9 to 60.0 fps at 3x and 6x.
+
+## Boot hang in `__AI_SRC_INIT`
+
+0x802b5290 times the audio sample counter with interrupts masked and retries until the measure is plausible. The
+quick polls added for prompt alarm delivery skipped `audio::update()` for 4096 polls at a time whenever an alarm was
+overdue during that function, so the counter never moved in time and about one boot in three hung on a black screen.
+The quick-poll allowance is now renewed only by a poll that finds interrupts unmasked.

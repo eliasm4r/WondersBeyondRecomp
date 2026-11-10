@@ -639,6 +639,7 @@ struct CopiedTexture {
     uint32_t bytes = 0;
     uint64_t guest_hash = 0;
     uint32_t pending_writes = 0;
+    uint32_t copied_frame = 0;
 };
 
 struct PendingWriteBack {
@@ -1657,6 +1658,10 @@ void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width,
     }
     flush_pending();
     CopiedTexture& entry = g_device.copies[address];
+    // Buffers copied again every frame stay on the GPU; see the Direct3D renderer.
+    constexpr uint32_t kRecurringFrames = 2;
+    bool recurring = entry.view != 0 && g_frame - entry.copied_frame <= kRecurringFrames;
+    entry.copied_frame = g_frame;
     uint32_t w = static_cast<uint32_t>(width);
     uint32_t h = static_cast<uint32_t>(height);
     entry.logical_width = half ? std::max(1u, w / 2) : w;
@@ -1674,7 +1679,7 @@ void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width,
     run_copy(entry.converted, target_width, target_height, x, y, width, height, format, intensity, alpha || depth, depth, filter);
     entry.view = entry.converted.texture;
     entry.bytes = entry.logical_width * entry.logical_height * copy_bits(format) / 8;
-    if (queue_write_back(address, stride, x, y, width, height, entry.logical_width, entry.logical_height, format, intensity, alpha || depth, depth, filter)) {
+    if (!recurring && queue_write_back(address, stride, x, y, width, height, entry.logical_width, entry.logical_height, format, intensity, alpha || depth, depth, filter)) {
         entry.pending_writes++;
     } else if (entry.pending_writes == 0) {
         entry.guest_hash = guest_range_valid(address, entry.bytes) ? sample_hash(host(address), entry.bytes) : 0;

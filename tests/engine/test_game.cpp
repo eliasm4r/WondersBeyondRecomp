@@ -24,4 +24,6 @@ HleFunction replacement(const char*) {
     return nullptr;
 }
 
+void retrace() {}
+
 }

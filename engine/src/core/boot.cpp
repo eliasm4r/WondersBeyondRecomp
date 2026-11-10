@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "wp/memory.h"
+#include "wp/settings.h"
 
 namespace wp {
 
@@ -19,6 +20,7 @@ constexpr uint32_t kBi2Size = 0x2000;
 constexpr uint32_t kBusClock = 243000000;
 constexpr uint32_t kCpuClock = 729000000;
 constexpr uint32_t kPalVideoMode = 1;
+constexpr uint32_t kPal60VideoMode = 5;
 constexpr uint32_t kNtscVideoMode = 0;
 constexpr uint32_t kVideoControlRegister = 0xCC002002;
 constexpr uint32_t kVideoClockRegister = 0xCC00206C;
@@ -70,7 +72,9 @@ bool init_boot_memory(const std::string& extracted_directory) {
     wr32(0x8000003C, static_cast<uint32_t>(fst.size()));
     char region = static_cast<char>(header[3]);
     bool ntsc = region == 'E' || region == 'J' || region == 'K' || region == 'W';
-    wr32(0x800000CC, ntsc ? kNtscVideoMode : kPalVideoMode);
+    // A PAL console set to 60 Hz announces EURGB60, and the game then picks its 60 Hz render mode.
+    bool pal60 = settings::flag("system.pal60", "WP_PAL60");
+    wr32(0x800000CC, ntsc ? kNtscVideoMode : pal60 ? kPal60VideoMode : kPalVideoMode);
     wr16(kVideoControlRegister, ntsc ? kVideoControlNtsc : kVideoControlPal);
     wr16(kVideoClockRegister, ntsc ? 1 : 0);
     wr16(kVideoDtvStatusRegister, region == 'J' ? 2 : 0);

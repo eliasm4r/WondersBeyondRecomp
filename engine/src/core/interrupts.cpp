@@ -171,16 +171,17 @@ void poll_interrupts(Cpu& c) {
         g_poll_counter = 1;
         return;
     }
-    quick_polls = 0;
     g_poll_counter = interval;
     audio::update();
     dsp::update();
     log::watch_modules();
     ipc::update();
-    if (g_in_interrupt || !(c.msr & kMsrExternalInterrupt)) {
+    if (masked) {
         gx::process();
         return;
     }
+    // Only an unmasked poll renews the allowance: a long masked wait that times the sample counter must see it advance.
+    quick_polls = 0;
     if (decrementer_due()) {
         deliver_decrementer(c);
     }

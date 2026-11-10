@@ -533,6 +533,7 @@ void save_next_frame(const char* path) {
 }
 
 void present() {
+    game::retrace();
     HWND window = g_window;
     static const bool saving = std::getenv("WP_SAVE_FRAME") || std::getenv("WP_CAPTURE_AT") || std::getenv("WP_SAVE_PIPE");
     if (!window && !saving) {
