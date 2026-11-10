@@ -18,6 +18,8 @@ struct ScreenVertex {
 const uint32_t* bp_registers();
 const uint32_t* konst_registers();
 const uint32_t* xf_registers();
+// Changes whenever a BP, konst or XF control register is written: matrices alone leave it unchanged.
+uint64_t register_serial();
 
 }
 

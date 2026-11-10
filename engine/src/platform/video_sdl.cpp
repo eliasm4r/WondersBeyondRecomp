@@ -49,7 +49,7 @@ constexpr int kRightButton = 0x02;
 constexpr int kMiddleButton = 0x04;
 constexpr int kExtraButton1 = 0x05;
 constexpr int kExtraButton2 = 0x06;
-constexpr int kF10 = 0x79;
+constexpr int kF1 = 0x70;
 constexpr int kF11 = 0x7A;
 constexpr int kF12 = 0x7B;
 
@@ -214,7 +214,10 @@ std::string window_title(double fps) {
     } else {
         std::snprintf(statistics, sizeof statistics, "%s: %.0f | %s: %s", text.fps, fps, text.dsp, text.dsp_stopped);
     }
-    return std::string(game::description().title) + " (" + code + ") | " + gx::render::api_name() + " | " + region + " | " + statistics;
+    (void)region;
+    static const settings::LiveFlag show_statistics("video.show_fps", "WP_SHOW_FPS");
+    std::string title = game::description().app_name;
+    return show_statistics() ? title + " | " + gx::render::api_name() + " | " + statistics : title;
 }
 
 void handle_event(SDL_Window* window, const SDL_Event& event) {
@@ -238,7 +241,7 @@ void handle_event(SDL_Window* window, const SDL_Event& event) {
             options::refresh_menu(window);
             return;
         }
-        if (vk == kF10) {
+        if (vk == kF1) {
             if (!repeat) {
                 options::toggle_menu(window);
             }
@@ -276,7 +279,12 @@ void handle_event(SDL_Window* window, const SDL_Event& event) {
     case SDL_EVENT_MOUSE_MOTION: {
         if (options::menu_open()) {
             float density = SDL_GetWindowPixelDensity(window);
-            options::menu_hover(window, static_cast<int>(event.motion.x * density), static_cast<int>(event.motion.y * density));
+            int x = static_cast<int>(event.motion.x * density);
+            int y = static_cast<int>(event.motion.y * density);
+            options::menu_hover(window, x, y);
+            if (event.motion.state & SDL_BUTTON_LMASK) {
+                apply_option(window, options::menu_drag(window, x, y));
+            }
         }
         return;
     }

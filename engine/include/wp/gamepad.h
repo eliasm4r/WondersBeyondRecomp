@@ -13,6 +13,8 @@ constexpr uint32_t kMenuRight = 0x08;
 constexpr uint32_t kMenuAccept = 0x10;
 constexpr uint32_t kMenuCancel = 0x20;
 constexpr uint32_t kMenuToggle = 0x40;
+constexpr uint32_t kMenuTabPrevious = 0x80;
+constexpr uint32_t kMenuTabNext = 0x100;
 
 struct State {
     bool connected = false;
@@ -28,5 +30,7 @@ bool connected(uint32_t slot);
 State poll(uint32_t slot, bool sideways);
 void set_outputs(uint32_t slot, bool rumble, uint8_t leds);
 uint32_t menu_buttons();
+// The first physical input (padmap::Physical) held on any gamepad, or -1: what the menu binds to an action.
+int held_physical();
 
 }

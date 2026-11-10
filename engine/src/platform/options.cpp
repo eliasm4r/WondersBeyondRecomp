@@ -8,6 +8,8 @@
 #include <mutex>
 #include <utility>
 
+#include "wp/keymap.h"
+#include "wp/padmap.h"
 #include "wp/settings.h"
 #include "wp/ui_text.h"
 
@@ -16,8 +18,10 @@ namespace wp::options {
 namespace {
 
 constexpr const char* kLiveKeys[] = {
-    "video.scale",         "video.fps",           "video.fullscreen",    "video.copy_filter",   "input.gamepads",
-    "input.real_wiimote_mouse", "input.wake_on_mouse", "input.hide_cursor",   "system.options_menu", "audio.mute", "audio.wiimote_speaker", "saves.backups", "system.interface_language",
+    "video.scale",          "video.fps",            "video.fullscreen",      "video.copy_filter",  "video.vsync",
+    "video.show_fps",       "video.smooth",         "video.anisotropy",      "input.gamepads",     "input.rumble",
+    "input.stick_deadzone", "input.real_wiimote_mouse", "input.wake_on_mouse", "input.hide_cursor", "system.options_menu",
+    "audio.mute",           "audio.volume",         "audio.wiimote_speaker", "saves.backups",      "system.interface_language", "system.discord",
 };
 
 struct Language {
@@ -28,9 +32,45 @@ struct Language {
 constexpr Language kLanguages[] = {{"auto", nullptr}, {"en", "English"},  {"de", "Deutsch"},   {"fr", "Français"},
                                    {"es", "Español"}, {"it", "Italiano"}, {"nl", "Nederlands"}};
 
+constexpr Language kInterfaceLanguages[] = {{"fr", "Français"}, {"en", "English"}, {"es", "Español"}, {"gl", "Galego"}};
+
 constexpr int kMaxScale = 6;
 
 constexpr const char* kBackupCounts[] = {"0", "1", "3", "5", "10", "20"};
+
+struct Slider {
+    const char* key;
+    int low;
+    int high;
+    int step;
+};
+
+constexpr Slider kSliders[] = {{"audio.volume", 0, 100, 5}, {"input.stick_deadzone", 10, 90, 5}};
+
+constexpr const char* kTabLabels[kTabCount] = {"tab.display", "tab.keyboard", "tab.gamepad", "tab.audio", "tab.system"};
+
+constexpr const char* kResetKeys = "keys.reset";
+constexpr const char* kResetPad = "pad.reset";
+
+// Both families of controller are named, since the menu cannot tell which one is plugged in.
+constexpr const char* kPhysicalLabels[padmap::kPhysicalCount] = {
+    "A / Cross",   "B / Circle", "X / Square", "Y / Triangle",   "Back / Select",    "Guide",            "Start",
+    "L3",          "R3",         "LB / L1",    "RB / R1",        "D-pad Up",         "D-pad Down",       "D-pad Left",
+    "D-pad Right", "LT / L2",    "RT / R2",    "Right stick Up", "Right stick Down", "Right stick Left", "Right stick Right",
+};
+
+const Slider* slider_of(const std::string& key) {
+    for (const Slider& slider : kSliders) {
+        if (key == slider.key) {
+            return &slider;
+        }
+    }
+    return nullptr;
+}
+
+bool starts_with(const std::string& text, const char* prefix) {
+    return text.compare(0, std::strlen(prefix), prefix) == 0;
+}
 
 bool known(const std::string& key) {
     std::vector<std::string> all = settings::keys();
@@ -48,7 +88,60 @@ uint64_t g_overlay_version = 0;
 
 }
 
+const char* tab_label(size_t tab) {
+    return ui::label(kTabLabels[tab < kTabCount ? tab : 0]);
+}
+
+std::vector<std::string> tab_keys(size_t tab) {
+    switch (tab) {
+    case 0:
+        return {"video.scale", "video.fullscreen", "system.widescreen", "video.fps", "video.vsync", "video.show_fps", "video.smooth", "video.anisotropy"};
+    case 1: {
+        std::vector<std::string> keys;
+        for (size_t i = 0; i < keymap::kActionCount; i++) {
+            keys.push_back(keymap::setting_key(i));
+        }
+        keys.push_back(kResetKeys);
+        return keys;
+    }
+    case 2: {
+        std::vector<std::string> keys = {"input.gamepads", "input.rumble", "input.stick_deadzone"};
+        for (size_t i = 0; i < padmap::kActionCount; i++) {
+            keys.push_back(padmap::setting_key(i));
+        }
+        keys.push_back(kResetPad);
+        return keys;
+    }
+    case 3:
+        return {"audio.volume", "audio.mute", "audio.wiimote_speaker"};
+    case 4:
+        return {"system.language", "system.interface_language", "saves.backups", "input.hide_cursor", "system.discord", "video.custom_textures"};
+    default:
+        return {};
+    }
+}
+
+Kind kind(const std::string& key) {
+    if (key == kResetKeys || key == kResetPad) {
+        return Kind::Button;
+    }
+    if (starts_with(key, "keys.")) {
+        return Kind::Key;
+    }
+    if (starts_with(key, "pad.")) {
+        return Kind::Pad;
+    }
+    if (slider_of(key)) {
+        return Kind::Slider;
+    }
+    std::vector<std::string> options = choices(key);
+    return options.size() == 2 && options[0] == "0" && options[1] == "1" ? Kind::Toggle : Kind::Choice;
+}
+
 bool live(const std::string& key) {
+    if (starts_with(key, "keys.") || starts_with(key, "pad.")) {
+        return true;
+    }
     for (const char* entry : kLiveKeys) {
         if (key == entry) {
             return true;
@@ -68,8 +161,18 @@ std::vector<std::string> choices(const std::string& key) {
     if (key == "video.fps") {
         return {"30", "60"};
     }
+    if (key == "video.anisotropy") {
+        return {"1", "2", "4", "8", "16"};
+    }
+    if (const Slider* slider = slider_of(key)) {
+        std::vector<std::string> values;
+        for (int value = slider->low; value <= slider->high; value += slider->step) {
+            values.push_back(std::to_string(value));
+        }
+        return values;
+    }
     if (key == "system.interface_language") {
-        return {"en", "es", "gl"};
+        return {"fr", "en", "es", "gl"};
     }
     if (key == "system.language") {
         std::vector<std::string> codes;
@@ -80,6 +183,9 @@ std::vector<std::string> choices(const std::string& key) {
     }
     if (key == "saves.backups") {
         return std::vector<std::string>(std::begin(kBackupCounts), std::end(kBackupCounts));
+    }
+    if (starts_with(key, "keys.") || starts_with(key, "pad.")) {
+        return {};
     }
     if (known(key)) {
         return {"0", "1"};
@@ -95,8 +201,19 @@ std::string shown_value(const std::string& key, const std::string& value) {
     if (key == "video.fps") {
         return value;
     }
+    if (key == "video.anisotropy") {
+        return value == "1" ? text.menu_off : value + "x";
+    }
+    if (slider_of(key)) {
+        return value + "%";
+    }
     if (key == "system.interface_language") {
-        return value == "es" ? "Español" : value == "gl" ? "Galego" : "English";
+        for (const Language& language : kInterfaceLanguages) {
+            if (value == language.code) {
+                return language.name;
+            }
+        }
+        return "English";
     }
     if (key == "system.language") {
         for (const Language& language : kLanguages) {
@@ -109,6 +226,13 @@ std::string shown_value(const std::string& key, const std::string& value) {
     if (key == "saves.backups") {
         return value == "0" ? text.menu_off : value;
     }
+    if (starts_with(key, "keys.")) {
+        return keymap::format(keymap::parse(value).codes, ", ");
+    }
+    if (starts_with(key, "pad.")) {
+        int physical = padmap::physical_from_name(value);
+        return physical == padmap::kAutomatic ? ui::label("menu.auto") : kPhysicalLabels[physical];
+    }
     return enabled_text(value) ? text.menu_on : text.menu_off;
 }
 
@@ -118,27 +242,30 @@ std::string step_value(const std::string& key, const std::string& value, int ste
         return value;
     }
     auto found = std::find(list.begin(), list.end(), value);
+    int count = static_cast<int>(list.size());
     int index = 0;
     if (found != list.end()) {
         index = static_cast<int>(found - list.begin());
     } else if (list.size() == 2 && list[0] == "0" && list[1] == "1") {
         index = enabled_text(value) ? 1 : 0;
-    } else if (key == "saves.backups") {
+    } else if (key == "saves.backups" || slider_of(key)) {
         int current = std::atoi(value.c_str());
-        index = 0;
-        while (index + 1 < static_cast<int>(list.size()) && std::atoi(list[static_cast<size_t>(index) + 1].c_str()) <= current) {
+        while (index + 1 < count && std::atoi(list[static_cast<size_t>(index) + 1].c_str()) <= current) {
             index++;
         }
     } else {
         return list.front();
     }
-    int count = static_cast<int>(list.size());
+    if (slider_of(key)) {
+        return list[static_cast<size_t>(std::clamp(index + step, 0, count - 1))];
+    }
     index = ((index + step) % count + count) % count;
     return list[static_cast<size_t>(index)];
 }
 
 void Menu::set_open(bool open) {
     open_ = open;
+    capturing_ = false;
     hover_ = Hover{};
 }
 
@@ -150,51 +277,143 @@ bool Menu::set_hover(const Hover& hover) {
     return true;
 }
 
-void Menu::select(size_t index) {
-    size_t count = settings::keys().size();
-    if (index < count) {
-        selection_ = index;
+void Menu::select_tab(size_t tab) {
+    if (tab < kTabCount && tab != tab_) {
+        tab_ = tab;
+        selection_ = 0;
+        scroll_ = 0;
+        capturing_ = false;
     }
+}
+
+void Menu::select(size_t index) {
+    if (index < tab_keys(tab_).size()) {
+        selection_ = index;
+        capturing_ = false;
+        keep_visible();
+    }
+}
+
+void Menu::scroll_by(int rows) {
+    size_t count = tab_keys(tab_).size();
+    int last = count > kVisibleRows ? static_cast<int>(count - kVisibleRows) : 0;
+    scroll_ = static_cast<size_t>(std::clamp(static_cast<int>(scroll_) + rows, 0, last));
+}
+
+void Menu::keep_visible() {
+    if (selection_ < scroll_) {
+        scroll_ = selection_;
+    } else if (selection_ >= scroll_ + kVisibleRows) {
+        scroll_ = selection_ + 1 - kVisibleRows;
+    }
+}
+
+Kind Menu::capture_kind() const {
+    std::vector<std::string> keys = tab_keys(tab_);
+    return selection_ < keys.size() ? kind(keys[selection_]) : Kind::Choice;
 }
 
 std::vector<Row> Menu::rows() const {
     std::vector<Row> result;
-    for (const std::string& key : settings::keys()) {
+    for (const std::string& key : tab_keys(tab_)) {
         Row row;
         row.key = key;
-        row.label = ui::label(key.c_str());
-        row.value = shown_value(key, settings::text(key.c_str(), nullptr));
+        row.kind = kind(key);
         row.live = live(key);
-        std::vector<std::string> options = choices(key);
-        row.toggle = options.size() == 2 && options[0] == "0" && options[1] == "1";
-        row.on = row.toggle && enabled_text(settings::text(key.c_str(), nullptr));
+        // A gamepad action reuses the label of the keyboard action with the same name.
+        std::string label_key = row.kind == Kind::Pad ? "keys." + key.substr(4) : key;
+        row.label = ui::label(label_key.c_str());
+        if (row.kind != Kind::Button) {
+            std::string value = settings::text(key.c_str(), nullptr);
+            row.value = shown_value(key, value);
+            row.on = row.kind == Kind::Toggle && enabled_text(value);
+            if (const Slider* slider = slider_of(key)) {
+                row.fraction = std::clamp((std::atoi(value.c_str()) - slider->low) / static_cast<double>(slider->high - slider->low), 0.0, 1.0);
+            }
+        }
         result.push_back(row);
     }
     return result;
 }
 
-std::string Menu::handle(Action action) {
-    std::vector<std::string> all = settings::keys();
-    if (all.empty()) {
+std::string Menu::capture(const std::string& name) {
+    std::vector<std::string> keys = tab_keys(tab_);
+    if (!capturing_ || selection_ >= keys.size() || name.empty()) {
         return "";
     }
-    size_t count = all.size();
+    capturing_ = false;
+    settings::store(keys[selection_].c_str(), name);
+    return keys[selection_];
+}
+
+std::string Menu::set_fraction(size_t row, double fraction) {
+    std::vector<std::string> keys = tab_keys(tab_);
+    const Slider* slider = row < keys.size() ? slider_of(keys[row]) : nullptr;
+    if (!slider) {
+        return "";
+    }
+    int steps = (slider->high - slider->low) / slider->step;
+    int value = slider->low + static_cast<int>(std::clamp(fraction, 0.0, 1.0) * steps + 0.5) * slider->step;
+    settings::store(slider->key, std::to_string(value));
+    return slider->key;
+}
+
+std::string Menu::handle(Action action) {
+    std::vector<std::string> keys = tab_keys(tab_);
+    size_t count = keys.size();
     selection_ = std::min(selection_, count - 1);
+    if (capturing_) {
+        capturing_ = false;
+        return "";
+    }
+    const std::string key = keys[selection_];
+    Kind type = kind(key);
     switch (action) {
     case Action::Up:
         selection_ = (selection_ + count - 1) % count;
+        keep_visible();
         return "";
     case Action::Down:
         selection_ = (selection_ + 1) % count;
+        keep_visible();
         return "";
     case Action::Close:
         open_ = false;
         return "";
+    case Action::TabPrevious:
+        select_tab((tab_ + kTabCount - 1) % kTabCount);
+        return "";
+    case Action::TabNext:
+        select_tab((tab_ + 1) % kTabCount);
+        return "";
+    case Action::Accept:
+        if (type == Kind::Key || type == Kind::Pad) {
+            capturing_ = true;
+            return "";
+        }
+        if (type == Kind::Button) {
+            if (key == kResetKeys) {
+                for (size_t i = 0; i < keymap::kActionCount; i++) {
+                    settings::store(keymap::setting_key(i).c_str(), keymap::action(i).defaults);
+                }
+            } else {
+                for (size_t i = 0; i < padmap::kActionCount; i++) {
+                    settings::store(padmap::setting_key(i).c_str(), "auto");
+                }
+            }
+            return key;
+        }
+        if (type == Kind::Slider) {
+            return "";
+        }
+        [[fallthrough]];
     case Action::Previous:
     case Action::Next: {
-        const std::string& key = all[selection_];
+        if (type != Kind::Choice && type != Kind::Toggle && type != Kind::Slider) {
+            return "";
+        }
         std::string current = settings::text(key.c_str(), nullptr);
-        std::string next = step_value(key, current, action == Action::Next ? 1 : -1);
+        std::string next = step_value(key, current, action == Action::Previous ? -1 : 1);
         if (next == current) {
             return "";
         }
@@ -219,17 +438,19 @@ uint32_t Repeat::update(uint32_t held, int64_t now) {
     return fired;
 }
 
-Layout layout(int client_height, size_t rows) {
+Layout layout(int client_height, size_t total_rows, size_t scroll) {
     Layout result;
     result.unit = std::clamp(client_height / 40, 14, 40);
     int unit = result.unit;
     result.padding = unit + unit / 2;
-    result.title_height = unit * 3;
+    result.title_height = unit * 3 + unit / 2;
+    result.tab_height = unit * 2 + unit / 2;
     result.row_height = unit * 2;
     result.footer_height = unit * 2 + unit / 2;
-    result.rows = rows;
-    result.width = unit * 40;
-    result.height = result.padding * 2 + result.title_height + static_cast<int>(rows) * result.row_height + result.footer_height;
+    result.total = total_rows;
+    result.scroll = scroll;
+    result.width = unit * 46;
+    result.height = result.padding * 2 + result.title_height + result.tab_height + rows_rect(result).height + result.footer_height;
     return result;
 }
 
@@ -246,28 +467,43 @@ Rect place(int client_width, int client_height, int width, int height) {
     return result;
 }
 
-int row_at(const Layout& layout, const Rect& placed, int x, int y) {
-    if (placed.width <= 0 || placed.height <= 0 || layout.row_height <= 0) {
-        return -1;
-    }
-    int64_t bx = static_cast<int64_t>(x - placed.x) * layout.width / placed.width;
-    int64_t by = static_cast<int64_t>(y - placed.y) * layout.height / placed.height;
-    int64_t top = layout.padding + layout.title_height;
-    if (x < placed.x || y < placed.y || bx < layout.padding || bx >= layout.width - layout.padding || by < top) {
-        return -1;
-    }
-    int64_t index = (by - top) / layout.row_height;
-    return index < static_cast<int64_t>(layout.rows) ? static_cast<int>(index) : -1;
+Rect tab_rect(const Layout& layout, size_t tab) {
+    int gap = layout.unit / 2;
+    int inner = layout.width - layout.padding * 2;
+    Rect result;
+    result.width = (inner - gap * static_cast<int>(kTabCount - 1)) / static_cast<int>(kTabCount);
+    result.height = layout.tab_height - layout.unit / 2;
+    result.x = layout.padding + static_cast<int>(tab) * (result.width + gap);
+    result.y = layout.padding + layout.title_height;
+    return result;
 }
 
-Rect control_rect(const Layout& layout, size_t row) {
+Rect rows_rect(const Layout& layout) {
     Rect result;
-    int unit = layout.unit;
-    int rows_top = layout.padding + layout.title_height;
-    result.width = unit * 10;
-    result.height = unit * 3 / 2;
-    result.x = layout.width - layout.padding - unit / 2 - result.width;
-    result.y = rows_top + static_cast<int>(row) * layout.row_height + (layout.row_height - result.height) / 2;
+    result.x = layout.padding;
+    result.y = layout.padding + layout.title_height + layout.tab_height;
+    result.width = layout.width - layout.padding * 2;
+    result.height = static_cast<int>(kVisibleRows) * layout.row_height + layout.unit;
+    return result;
+}
+
+Rect row_rect(const Layout& layout, size_t visible_row) {
+    Rect rows = rows_rect(layout);
+    Rect result;
+    result.x = rows.x + layout.unit / 2;
+    result.y = rows.y + layout.unit / 2 + static_cast<int>(visible_row) * layout.row_height;
+    result.width = rows.width - layout.unit * 2;
+    result.height = layout.row_height;
+    return result;
+}
+
+Rect control_rect(const Layout& layout, size_t visible_row) {
+    Rect row = row_rect(layout, visible_row);
+    Rect result;
+    result.width = layout.unit * 13;
+    result.height = layout.unit * 3 / 2;
+    result.x = row.x + row.width - layout.unit / 2 - result.width;
+    result.y = row.y + (row.height - result.height) / 2;
     return result;
 }
 
@@ -286,27 +522,48 @@ Hover hit_test(const Layout& layout, const Rect& placed, int x, int y) {
     if (placed.width <= 0 || placed.height <= 0 || x < placed.x || y < placed.y || x >= placed.x + placed.width || y >= placed.y + placed.height) {
         return result;
     }
-    int64_t bx = static_cast<int64_t>(x - placed.x) * layout.width / placed.width;
-    int64_t by = static_cast<int64_t>(y - placed.y) * layout.height / placed.height;
-    Rect close = close_rect(layout);
+    int bx = static_cast<int>(static_cast<int64_t>(x - placed.x) * layout.width / placed.width);
+    int by = static_cast<int>(static_cast<int64_t>(y - placed.y) * layout.height / placed.height);
+    auto inside = [&](const Rect& rect, int margin) {
+        return bx >= rect.x - margin && bx < rect.x + rect.width + margin && by >= rect.y - margin && by < rect.y + rect.height + margin;
+    };
     int margin = layout.unit / 2;
-    if (bx >= close.x - margin && bx < close.x + close.width + margin && by >= close.y - margin && by < close.y + close.height + margin) {
+    if (inside(close_rect(layout), margin)) {
         result.part = Part::Close;
         return result;
     }
-    int row = row_at(layout, placed, x, y);
-    if (row < 0) {
+    for (size_t tab = 0; tab < kTabCount; tab++) {
+        if (inside(tab_rect(layout, tab), 0)) {
+            result.part = Part::Tab;
+            result.tab = static_cast<int>(tab);
+            return result;
+        }
+    }
+    for (size_t visible = 0; visible < kVisibleRows && layout.scroll + visible < layout.total; visible++) {
+        if (!inside(row_rect(layout, visible), 0)) {
+            continue;
+        }
+        result.row = static_cast<int>(layout.scroll + visible);
+        result.part = Part::Label;
+        Rect control = control_rect(layout, visible);
+        if (bx >= control.x - margin && bx < control.x + control.width + margin) {
+            int arrow = layout.unit * 2;
+            result.part = bx < control.x + arrow ? Part::Previous : bx >= control.x + control.width - arrow ? Part::Next : Part::Value;
+        }
         return result;
     }
-    result.row = row;
-    result.part = Part::Label;
-    Rect control = control_rect(layout, static_cast<size_t>(row));
-    int top = layout.padding + layout.title_height + row * layout.row_height;
-    if (bx >= control.x - margin && bx < control.x + control.width + margin && by >= top && by < top + layout.row_height) {
-        int arrow = layout.unit * 2;
-        result.part = bx < control.x + arrow ? Part::Previous : bx >= control.x + control.width - arrow ? Part::Next : Part::Value;
-    }
     return result;
+}
+
+double slider_fraction(const Layout& layout, const Rect& placed, size_t visible_row, int x) {
+    if (placed.width <= 0) {
+        return 0.0;
+    }
+    Rect control = control_rect(layout, visible_row);
+    int bx = static_cast<int>(static_cast<int64_t>(x - placed.x) * layout.width / placed.width);
+    int left = control.x + layout.unit / 2;
+    int right = control.x + control.width - layout.unit * 4;
+    return std::clamp((bx - left) / static_cast<double>(right - left), 0.0, 1.0);
 }
 
 void show_overlay(Image image) {

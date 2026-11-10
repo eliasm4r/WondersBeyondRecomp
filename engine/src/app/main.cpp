@@ -12,6 +12,7 @@
 #include <string>
 #include <thread>
 
+#include "wp/discord.h"
 #include "wp/big_stack.h"
 #include "wp/boot.h"
 #include "wp/cpu.h"
@@ -166,6 +167,9 @@ int run(int argc, char** argv) {
     }
 
     wp::video::start();
+    if (!std::getenv("WP_HEADLESS")) {
+        wp::discord::start();
+    }
     wp::Cpu cpu{};
     wp::init_threads(cpu);
     wp::call(cpu, entry);

@@ -173,6 +173,10 @@ std::vector<uint8_t> paired_remotes() {
     return data;
 }
 
+uint8_t wide_screen() {
+    return settings::flag("system.widescreen", "WP_WIDESCREEN") ? 1 : 0;
+}
+
 uint8_t pal60() {
     return settings::flag("system.pal60", "WP_PAL60") ? 1 : 0;
 }
@@ -256,7 +260,7 @@ std::vector<uint8_t> default_sysconf() {
     parental[2] = 0x14;
     add_item(items, kTypeSmallArray, "IPL.PC", parental);
     add_item(items, kTypeLong, "IPL.CB", {0, 0, 0, 0});
-    add_item(items, kTypeByte, "IPL.AR", {1});
+    add_item(items, kTypeByte, "IPL.AR", {wide_screen()});
     add_item(items, kTypeByte, "IPL.SSV", {1});
     add_item(items, kTypeBool, "IPL.CD", {0});
     add_item(items, kTypeBool, "IPL.CD2", {0});
@@ -372,6 +376,7 @@ void apply_settings(const fs::path& path) {
     size_t count = std::fread(data.data(), 1, data.size(), file);
     set_byte_item(data, count, "IPL.LNG", console_language(), file);
     set_byte_item(data, count, "IPL.E60", pal60(), file);
+    set_byte_item(data, count, "IPL.AR", wide_screen(), file);
     Area area = console_area();
     set_array_item(data, count, "IPL.AREA", area.area, file);
     set_array_item(data, count, "IPL.CODE", area.code, file);

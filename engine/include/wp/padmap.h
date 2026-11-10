@@ -35,7 +35,8 @@ enum Physical {
 
 constexpr int kAutomatic = -1;
 constexpr size_t kButtonActionCount = 7;
-constexpr size_t kActionCount = 14;
+constexpr size_t kActionCount = 15;
+constexpr size_t kPointerAction = 14;
 
 struct Pressed {
     std::array<bool, kPhysicalCount> held{};
@@ -50,6 +51,8 @@ std::string setting_key(size_t action);
 const char* physical_name(int physical);
 int physical_from_name(const std::string& name);
 Mapping current_mapping();
+// The input held to aim with the gyroscope or the right stick: the left stick click unless the player chose another.
+int pointer_input(const Mapping& mapping);
 uint32_t buttons(const Pressed& pressed, bool sideways, const Mapping& mapping);
 
 std::string device_key(const std::string& name, int ordinal);

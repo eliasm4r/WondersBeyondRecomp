@@ -1381,6 +1381,15 @@ void draw(const ScreenVertex* vertices, uint32_t count) {
     if (count == 0 || !initialize()) {
         return;
     }
+    // Most tiny draws only change a matrix: with no register the batch depends on written, join the pending batch as is.
+    static uint64_t batched_serial = ~0ull;
+    static uint64_t batched_epoch = 0;
+    static int batched_scale = 0;
+    PendingBatch& pending = g_pending;
+    if (!pending.vertices.empty() && batched_serial == register_serial() && batched_epoch == g_texture_epoch && batched_scale == g_scale) {
+        pending.vertices.insert(pending.vertices.end(), vertices, vertices + count);
+        return;
+    }
     const uint32_t* bp = bp_registers();
     Constants constants;
     fill_constants(constants, g_scale);
@@ -1404,7 +1413,6 @@ void draw(const ScreenVertex* vertices, uint32_t count) {
                      (static_cast<uint32_t>(!alpha_test.can_pass) << 18);
     uint32_t depth = bp[0x40] & 0x1F;
     bool early_depth = (depth & 1) != 0 && (bp[0x43] & (1u << 6)) != 0 && alpha_test.can_pass && alpha_test.can_fail;
-    PendingBatch& pending = g_pending;
     bool same = !pending.vertices.empty() && pending.blend == blend && pending.depth == depth && pending.early_depth == early_depth && pending.top_left == bp[0x20] &&
                 pending.bottom_right == bp[0x21] && pending.scissor_offset == bp[kBpScissorOffset] && std::memcmp(&pending.constants, &constants, sizeof constants) == 0 &&
                 std::memcmp(pending.views, views, sizeof views) == 0 && std::memcmp(pending.samplers, samplers, sizeof samplers) == 0;
@@ -1421,6 +1429,9 @@ void draw(const ScreenVertex* vertices, uint32_t count) {
         pending.scissor_offset = bp[kBpScissorOffset];
     }
     pending.vertices.insert(pending.vertices.end(), vertices, vertices + count);
+    batched_serial = register_serial();
+    batched_epoch = g_texture_epoch;
+    batched_scale = g_scale;
 }
 
 void take_statistics(uint32_t& batches, uint32_t& vertices, double& seconds) {

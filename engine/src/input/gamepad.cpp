@@ -22,7 +22,13 @@ namespace wp::gamepad {
 namespace {
 
 constexpr float kGravity = 9.80665f;
-constexpr float kStickThreshold = 0.5f;
+constexpr float kShakeJolt = 0.9f;
+constexpr auto kShakeHold = std::chrono::milliseconds(250);
+// How far a stick must be pushed to count as a direction, from the "stick dead zone" setting.
+float stick_threshold() {
+    static const settings::LiveNumber percent("input.stick_deadzone", "WP_STICK_DEADZONE");
+    return std::clamp(percent(), 10, 90) / 100.0f;
+}
 constexpr float kTriggerThreshold = 0.5f;
 constexpr float kPointerPerRadian = 2.3f;
 constexpr float kStickPointerSpeed = 1.6f;
@@ -47,6 +53,7 @@ struct Snapshot {
     float right_y = 0.0f;
     bool has_accel = false;
     float accel[3] = {0.0f, 0.0f, 0.0f};
+    bool shaking = false;
     bool pointer_valid = false;
     float pointer_x = 0.0f;
     float pointer_y = 0.0f;
@@ -70,6 +77,8 @@ struct Pad {
     int still_samples = 0;
     bool rumble = false;
     std::chrono::steady_clock::time_point rumble_refresh{};
+    bool aiming = false;
+    std::chrono::steady_clock::time_point shake_until{};
     int player = -1;
 };
 
@@ -205,6 +214,21 @@ void calibrate(Pad& pad, const float gyro[3], const float accel[3], float dt) {
     }
 }
 
+padmap::Pressed physical_state(const Snapshot& current) {
+    padmap::Pressed pressed;
+    pressed.nintendo_layout = current.nintendo_layout;
+    for (int i = 0; i < padmap::kLeftTrigger; i++) {
+        pressed.held[i] = current.buttons[i];
+    }
+    pressed.held[padmap::kLeftTrigger] = current.left_trigger > kTriggerThreshold;
+    pressed.held[padmap::kRightTrigger] = current.right_trigger > kTriggerThreshold;
+    pressed.held[padmap::kRightStickUp] = current.right_y < -stick_threshold();
+    pressed.held[padmap::kRightStickDown] = current.right_y > stick_threshold();
+    pressed.held[padmap::kRightStickLeft] = current.right_x < -stick_threshold();
+    pressed.held[padmap::kRightStickRight] = current.right_x > stick_threshold();
+    return pressed;
+}
+
 Snapshot read(Pad& pad, float dt) {
     Snapshot snapshot;
     SDL_Gamepad* handle = pad.handle;
@@ -221,22 +245,40 @@ Snapshot read(Pad& pad, float dt) {
     float right_y = axis(handle, SDL_GAMEPAD_AXIS_RIGHTY);
     snapshot.right_x = right_x;
     snapshot.right_y = right_y;
+    // The pointer exists only while the pointer button is held; it starts from the centre of the screen.
+    bool aiming = physical_state(snapshot).held[padmap::pointer_input(padmap::current_mapping())];
+    if (aiming && !pad.aiming) {
+        pad.pointer_x = 0.0f;
+        pad.pointer_y = 0.0f;
+    }
+    pad.aiming = aiming;
+    pad.pointer_active = aiming;
     bool motion_mode = snapshot.buttons[SDL_GAMEPAD_BUTTON_LEFT_SHOULDER];
-    if (!motion_mode && (std::fabs(right_x) > kStickDeadZone || std::fabs(right_y) > kStickDeadZone)) {
-        pad.pointer_active = true;
+    if (aiming && !motion_mode && (std::fabs(right_x) > kStickDeadZone || std::fabs(right_y) > kStickDeadZone)) {
         pad.pointer_x += right_x * kStickPointerSpeed * dt;
         pad.pointer_y += right_y * kStickPointerSpeed * dt;
     }
     if (pad.has_accel) {
         snapshot.has_accel = SDL_GetGamepadSensorData(handle, SDL_SENSOR_ACCEL, snapshot.accel, 3);
     }
+    // A gamepad shaken by hand jolts far less than a Wii Remote, so a clear jolt counts as the game's full shake.
+    auto now = std::chrono::steady_clock::now();
+    if (snapshot.has_accel) {
+        float g = std::sqrt(snapshot.accel[0] * snapshot.accel[0] + snapshot.accel[1] * snapshot.accel[1] + snapshot.accel[2] * snapshot.accel[2]) / kGravity;
+        if (std::fabs(g - 1.0f) > kShakeJolt) {
+            pad.shake_until = now + kShakeHold;
+        }
+    }
+    snapshot.shaking = now < pad.shake_until;
     float gyro[3] = {};
     if (pad.has_gyro && SDL_GetGamepadSensorData(handle, SDL_SENSOR_GYRO, gyro, 3)) {
         if (snapshot.has_accel) {
             calibrate(pad, gyro, snapshot.accel, dt);
         }
-        pad.pointer_x -= (gyro[1] - pad.bias[1]) * dt * kPointerPerRadian;
-        pad.pointer_y -= (gyro[0] - pad.bias[0]) * dt * kPointerPerRadian;
+        if (aiming) {
+            pad.pointer_x -= (gyro[1] - pad.bias[1]) * dt * kPointerPerRadian;
+            pad.pointer_y -= (gyro[0] - pad.bias[0]) * dt * kPointerPerRadian;
+        }
     }
     bool recenter = snapshot.buttons[SDL_GAMEPAD_BUTTON_RIGHT_STICK];
     if (recenter && !pad.recenter_held) {
@@ -254,7 +296,8 @@ Snapshot read(Pad& pad, float dt) {
 }
 
 void apply_outputs(Pad& pad, size_t slot) {
-    bool rumble = g_rumble[slot].load();
+    static const settings::LiveFlag rumble_enabled("input.rumble", "WP_RUMBLE");
+    bool rumble = g_rumble[slot].load() && rumble_enabled();
     auto now = std::chrono::steady_clock::now();
     if (rumble != pad.rumble || (rumble && now >= pad.rumble_refresh)) {
         pad.rumble = rumble;
@@ -425,6 +468,22 @@ void set_outputs(uint32_t slot, bool rumble, uint8_t leds) {
     g_player[slot] = player;
 }
 
+int held_physical() {
+    for (uint32_t slot = 0; slot < kSlots; slot++) {
+        Snapshot current = snapshot(slot);
+        if (!current.connected) {
+            continue;
+        }
+        padmap::Pressed pressed = physical_state(current);
+        for (int i = 0; i < padmap::kPhysicalCount; i++) {
+            if (pressed.held[i]) {
+                return i;
+            }
+        }
+    }
+    return -1;
+}
+
 uint32_t menu_buttons() {
     uint32_t result = 0;
     for (uint32_t slot = 0; slot < kSlots; slot++) {
@@ -435,16 +494,16 @@ uint32_t menu_buttons() {
         auto held = [&](SDL_GamepadButton button) { return current.buttons[button]; };
         SDL_GamepadButton accept = current.nintendo_layout ? SDL_GAMEPAD_BUTTON_EAST : SDL_GAMEPAD_BUTTON_SOUTH;
         SDL_GamepadButton cancel = current.nintendo_layout ? SDL_GAMEPAD_BUTTON_SOUTH : SDL_GAMEPAD_BUTTON_EAST;
-        if (held(SDL_GAMEPAD_BUTTON_DPAD_UP) || current.left_y < -kStickThreshold) {
+        if (held(SDL_GAMEPAD_BUTTON_DPAD_UP) || current.left_y < -stick_threshold()) {
             result |= kMenuUp;
         }
-        if (held(SDL_GAMEPAD_BUTTON_DPAD_DOWN) || current.left_y > kStickThreshold) {
+        if (held(SDL_GAMEPAD_BUTTON_DPAD_DOWN) || current.left_y > stick_threshold()) {
             result |= kMenuDown;
         }
-        if (held(SDL_GAMEPAD_BUTTON_DPAD_LEFT) || current.left_x < -kStickThreshold) {
+        if (held(SDL_GAMEPAD_BUTTON_DPAD_LEFT) || current.left_x < -stick_threshold()) {
             result |= kMenuLeft;
         }
-        if (held(SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || current.left_x > kStickThreshold) {
+        if (held(SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || current.left_x > stick_threshold()) {
             result |= kMenuRight;
         }
         if (held(accept)) {
@@ -452,6 +511,12 @@ uint32_t menu_buttons() {
         }
         if (held(cancel)) {
             result |= kMenuCancel;
+        }
+        if (held(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER)) {
+            result |= kMenuTabPrevious;
+        }
+        if (held(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER)) {
+            result |= kMenuTabNext;
         }
         if (held(SDL_GAMEPAD_BUTTON_START) && (held(SDL_GAMEPAD_BUTTON_GUIDE) || held(SDL_GAMEPAD_BUTTON_BACK))) {
             result |= kMenuToggle;
@@ -469,23 +534,16 @@ State poll(uint32_t slot, bool sideways) {
     state.connected = true;
     auto held = [&](SDL_GamepadButton button) { return current.buttons[button]; };
     uint32_t& b = state.buttons;
-    padmap::Pressed pressed;
-    pressed.nintendo_layout = current.nintendo_layout;
-    for (int i = 0; i < padmap::kLeftTrigger; i++) {
-        pressed.held[i] = current.buttons[i];
-    }
-    pressed.held[padmap::kLeftTrigger] = current.left_trigger > kTriggerThreshold;
-    pressed.held[padmap::kRightTrigger] = current.right_trigger > kTriggerThreshold;
-    pressed.held[padmap::kRightStickUp] = current.right_y < -kStickThreshold;
-    pressed.held[padmap::kRightStickDown] = current.right_y > kStickThreshold;
-    pressed.held[padmap::kRightStickLeft] = current.right_x < -kStickThreshold;
-    pressed.held[padmap::kRightStickRight] = current.right_x > kStickThreshold;
+    padmap::Pressed pressed = physical_state(current);
     bool motion_mode = held(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
     b |= padmap::buttons(pressed, sideways, padmap::current_mapping());
-    bool left = held(SDL_GAMEPAD_BUTTON_DPAD_LEFT) || current.left_x < -kStickThreshold;
-    bool right = held(SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || current.left_x > kStickThreshold;
-    bool up = (held(SDL_GAMEPAD_BUTTON_DPAD_UP) && !motion_mode) || current.left_y < -kStickThreshold;
-    bool down = (held(SDL_GAMEPAD_BUTTON_DPAD_DOWN) && !motion_mode) || current.left_y > kStickThreshold;
+    if (current.shaking) {
+        b |= input::kMotionShake;
+    }
+    bool left = held(SDL_GAMEPAD_BUTTON_DPAD_LEFT) || current.left_x < -stick_threshold();
+    bool right = held(SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || current.left_x > stick_threshold();
+    bool up = (held(SDL_GAMEPAD_BUTTON_DPAD_UP) && !motion_mode) || current.left_y < -stick_threshold();
+    bool down = (held(SDL_GAMEPAD_BUTTON_DPAD_DOWN) && !motion_mode) || current.left_y > stick_threshold();
     if (sideways) {
         b |= (left ? input::kButtonUp : 0) | (right ? input::kButtonDown : 0) | (up ? input::kButtonRight : 0) | (down ? input::kButtonLeft : 0);
     } else {

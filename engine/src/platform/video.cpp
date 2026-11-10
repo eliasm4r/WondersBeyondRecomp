@@ -175,6 +175,12 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             options::refresh_menu(window);
             return 0;
         }
+        if (wparam == VK_F1) {
+            if (!repeat) {
+                options::toggle_menu(window);
+            }
+            return 0;
+        }
         if (options::menu_open()) {
             apply_option(window, options::menu_key(window, static_cast<unsigned>(wparam), repeat));
             return 0;
@@ -184,10 +190,12 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
     }
     case WM_SYSKEYDOWN:
     case WM_SYSKEYUP:
+        // F10 alone would open the window's system menu and freeze the game until the next key.
         if (wparam == VK_F10) {
-            if (message == WM_SYSKEYDOWN && !(lparam & (1 << 30))) {
-                options::toggle_menu(window);
-            }
+            return 0;
+        }
+        if (message == WM_SYSKEYDOWN && options::menu_open()) {
+            apply_option(window, options::menu_key(window, static_cast<unsigned>(wparam), (lparam & (1 << 30)) != 0));
             return 0;
         }
         if (message == WM_SYSKEYDOWN && !options::menu_open()) {
@@ -214,6 +222,9 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
     case WM_MOUSEMOVE:
         if (options::menu_open()) {
             options::menu_hover(window, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
+            if (wparam & MK_LBUTTON) {
+                apply_option(window, options::menu_drag(window, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)));
+            }
             return 0;
         }
         return DefWindowProc(window, message, wparam, lparam);
@@ -291,8 +302,10 @@ std::string window_title(double fps) {
     } else {
         std::snprintf(statistics, sizeof statistics, "%s: %.0f | %s: %s", text.fps, fps, text.dsp, text.dsp_stopped);
     }
-    return std::string(game::description().title) + " (" + code + ") | " + gx::render::api_name() + " | " + region + " | " +
-           statistics;
+    (void)region;
+    static const settings::LiveFlag show_statistics("video.show_fps", "WP_SHOW_FPS");
+    std::string title = game::description().app_name;
+    return show_statistics() ? title + " | " + gx::render::api_name() + " | " + statistics : title;
 }
 
 void window_thread() {

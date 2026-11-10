@@ -32,6 +32,7 @@ enum class Action {
     TiltDown,
     Screenshot,
     MouseMotion,
+    Pointer,
     Count,
 };
 

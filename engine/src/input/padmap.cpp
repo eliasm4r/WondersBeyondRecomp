@@ -17,6 +17,7 @@ constexpr Action kActions[kActionCount] = {
     {"plus", input::kButtonPlus}, {"minus", input::kButtonMinus}, {"home", input::kButtonHome},
     {"shake", input::kMotionShake}, {"swing_up", input::kMotionSwingUp}, {"swing_down", input::kMotionSwingDown},
     {"tilt_left", input::kMotionTiltLeft}, {"tilt_right", input::kMotionTiltRight}, {"tilt_up", input::kMotionTiltUp}, {"tilt_down", input::kMotionTiltDown},
+    {"pointer", 0},
 };
 
 constexpr const char* kPhysicalNames[kPhysicalCount] = {
@@ -124,6 +125,10 @@ int physical_from_name(const std::string& name) {
         }
     }
     return kAutomatic;
+}
+
+int pointer_input(const Mapping& mapping) {
+    return mapping[kPointerAction] == kAutomatic ? kLeftStick : mapping[kPointerAction];
 }
 
 Mapping current_mapping() {

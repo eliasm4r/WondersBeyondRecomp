@@ -1163,7 +1163,10 @@ std::atomic<bool> g_finish_pending{false};
 std::atomic<bool> g_token_pending{false};
 std::atomic<uint32_t> g_token{0};
 
+uint64_t g_register_serial = 0;
+
 void load_bp(uint32_t word) {
+    g_register_serial++;
     uint32_t reg = word >> 24;
     uint32_t value = word & 0xFFFFFF;
     g_stats.bp_writes++;
@@ -1218,6 +1221,7 @@ void write_xf(uint32_t address, uint32_t value) {
     if (address < kXfSize) {
         if (address >= 0x1000) {
             note_register(2, address, value);
+            g_register_serial++;
         }
         g_xf[address] = value;
     }
@@ -1338,6 +1342,10 @@ const uint32_t* bp_registers() {
 
 const uint32_t* konst_registers() {
     return g_konst;
+}
+
+uint64_t register_serial() {
+    return g_register_serial;
 }
 
 const uint32_t* xf_registers() {

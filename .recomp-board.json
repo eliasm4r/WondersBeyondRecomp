@@ -26,5 +26,5 @@
     "pokepark",
     "pokepark-2"
   ],
-  "notes": "Early development. The game's code is translated to C++, builds into a native Windows program and boots to its first screens at a stable 30 fps."
+  "notes": "Early development. The game's code is translated to C++ and builds into a native Windows program that plays at 60 fps up to 6x internal resolution, with an in-game options menu (F1)."
 }

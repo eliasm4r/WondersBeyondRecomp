@@ -310,22 +310,14 @@ Sample device_sample(uint32_t channel) {
         std::fprintf(stderr, "input buttons=%04x", result.buttons);
         std::fputc(10, stderr);
     }
-    static long last_x = 0;
-    static long last_y = 0;
-    static int64_t last_mouse_move = -1000000;
     long cursor_x = 0;
     long cursor_y = 0;
-    if (video::cursor_position(cursor_x, cursor_y)) {
-        if (cursor_x != last_x || cursor_y != last_y) {
-            last_x = cursor_x;
-            last_y = cursor_y;
-            last_mouse_move = now;
-        }
-    }
+    video::cursor_position(cursor_x, cursor_y);
     static MouseMotionState mouse_state;
     result.buttons |= mouse_motion(mouse_state, any_pressed(keys.of(keymap::Action::MouseMotion)), cursor_x, cursor_y, now);
-    bool mouse_recent = now - last_mouse_move < 1000;
-    if ((mouse_recent || !pad.pointer_valid) && video::cursor_on_image(result.pointer_x, result.pointer_y)) {
+    // The mouse aims only while the pointer key is held, so it never points by accident.
+    bool mouse_aims = any_pressed(keys.of(keymap::Action::Pointer));
+    if (mouse_aims && video::cursor_on_image(result.pointer_x, result.pointer_y)) {
         result.pointer_valid = true;
     } else if (pad.pointer_valid) {
         result.pointer_valid = true;

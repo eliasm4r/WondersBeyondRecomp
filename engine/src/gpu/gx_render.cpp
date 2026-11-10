@@ -62,6 +62,19 @@ Output vertex_main(uint id : SV_VertexID) {
 float4 pixel_main(Output input) : SV_Target {
     return float4(frame.Sample(frame_sampler, input.uv).rgb, 1);
 }
+
+// Averages the whole footprint of a screen pixel, so an internal resolution above the window's becomes anti-aliasing.
+float4 pixel_smooth(Output input) : SV_Target {
+    float2 dx = ddx(input.uv);
+    float2 dy = ddy(input.uv);
+    float3 sum = 0;
+    for (int y = 0; y < 4; y++) {
+        for (int x = 0; x < 4; x++) {
+            sum += frame.SampleLevel(frame_sampler, input.uv + dx * ((x + 0.5) / 4 - 0.5) + dy * ((y + 0.5) / 4 - 0.5), 0).rgb;
+        }
+    }
+    return float4(sum / 16, 1);
+}
 )HLSL";
 
 const char* kOverlayShaderSource = R"HLSL(
@@ -702,6 +715,8 @@ struct Device {
     UINT swapchain_height = 0;
     ID3D11VertexShader* present_vertex = nullptr;
     ID3D11PixelShader* present_pixel = nullptr;
+    ID3D11PixelShader* present_smooth = nullptr;
+    int anisotropy = 1;
     ID3D11SamplerState* present_sampler = nullptr;
     ID3D11PixelShader* copy_pixel = nullptr;
     ID3D11Buffer* copy_constants = nullptr;
@@ -1154,6 +1169,10 @@ ID3D11SamplerState* sampler_for(uint32_t map) {
     D3D11_FILTER_TYPE mag_type = params.mag_linear ? D3D11_FILTER_TYPE_LINEAR : D3D11_FILTER_TYPE_POINT;
     D3D11_FILTER_TYPE mip_type = params.mip_mode == 2 ? D3D11_FILTER_TYPE_LINEAR : D3D11_FILTER_TYPE_POINT;
     description.Filter = D3D11_ENCODE_BASIC_FILTER(min_type, mag_type, mip_type, false);
+    if (g_device.anisotropy > 1 && params.min_linear && params.mag_linear) {
+        description.Filter = D3D11_FILTER_ANISOTROPIC;
+        description.MaxAnisotropy = static_cast<UINT>(g_device.anisotropy);
+    }
     description.AddressU = address(params.wrap_s);
     description.AddressV = address(params.wrap_t);
     description.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
@@ -1451,6 +1470,16 @@ void draw(const ScreenVertex* vertices, uint32_t count) {
     if (count == 0 || !initialize()) {
         return;
     }
+    // Scenes such as the open zones send hundreds of thousands of tiny draws a second, mostly with only a new matrix in
+    // between: when no register the batch depends on changed, this draw joins the pending batch without recomputing it.
+    static uint64_t batched_serial = ~0ull;
+    static uint64_t batched_epoch = 0;
+    static int batched_scale = 0;
+    PendingBatch& pending = g_pending;
+    if (!pending.vertices.empty() && batched_serial == register_serial() && batched_epoch == g_texture_epoch && batched_scale == g_scale) {
+        pending.vertices.insert(pending.vertices.end(), vertices, vertices + count);
+        return;
+    }
     const uint32_t* bp = bp_registers();
     Constants constants;
     fill_constants(constants, g_scale);
@@ -1477,7 +1506,6 @@ void draw(const ScreenVertex* vertices, uint32_t count) {
                      (static_cast<uint32_t>(!alpha_test.can_pass) << 18);
     uint32_t depth = bp[0x40] & 0x1F;
     bool early_depth = (depth & 1) != 0 && (bp[0x43] & (1u << 6)) != 0 && alpha_test.can_pass && alpha_test.can_fail;
-    PendingBatch& pending = g_pending;
     bool same = !pending.vertices.empty() && pending.blend == blend && pending.depth == depth && pending.early_depth == early_depth && pending.top_left == bp[0x20] &&
                 pending.bottom_right == bp[0x21] && pending.scissor_offset == bp[kBpScissorOffset] && std::memcmp(&pending.constants, &constants, sizeof constants) == 0 &&
                 std::memcmp(pending.views, views, sizeof views) == 0 && std::memcmp(pending.samplers, samplers, sizeof samplers) == 0;
@@ -1501,6 +1529,9 @@ void draw(const ScreenVertex* vertices, uint32_t count) {
         pending.scissor_offset = bp[kBpScissorOffset];
     }
     pending.vertices.insert(pending.vertices.end(), vertices, vertices + count);
+    batched_serial = register_serial();
+    batched_epoch = g_texture_epoch;
+    batched_scale = g_scale;
 }
 
 void take_statistics(uint32_t& batches, uint32_t& vertices, double& seconds) {
@@ -1865,6 +1896,11 @@ bool create_present_pipeline() {
               SUCCEEDED(g_device.device->CreatePixelShader(pixel_code->GetBufferPointer(), pixel_code->GetBufferSize(), nullptr, &g_device.present_pixel));
     release(vertex_code);
     release(pixel_code);
+    ID3DBlob* smooth_code = nullptr;
+    if (ok && compile(kPresentShaderSource, "pixel_smooth", "ps_5_0", &smooth_code)) {
+        g_device.device->CreatePixelShader(smooth_code->GetBufferPointer(), smooth_code->GetBufferSize(), nullptr, &g_device.present_smooth);
+        release(smooth_code);
+    }
     ID3DBlob* copy_code = nullptr;
     if (ok && compile(kCopyShaderSource, "pixel_main", "ps_5_0", &copy_code)) {
         ok = SUCCEEDED(g_device.device->CreatePixelShader(copy_code->GetBufferPointer(), copy_code->GetBufferSize(), nullptr, &g_device.copy_pixel));
@@ -1965,6 +2001,21 @@ void release_target() {
     release(g_device.depth_view);
     release(g_device.depth_resource);
     release(g_device.depth);
+}
+
+// The samplers are cached by their GX parameters only, so a new anisotropy level drops them all between two frames.
+void apply_anisotropy() {
+    static const settings::LiveNumber setting("video.anisotropy", "WP_ANISOTROPY");
+    int level = std::clamp(setting(), 1, 16);
+    if (level == g_device.anisotropy) {
+        return;
+    }
+    flush_pending();
+    for (auto& entry : g_device.samplers) {
+        release(entry.second);
+    }
+    g_device.samplers.clear();
+    g_device.anisotropy = level;
 }
 
 void apply_scale() {
@@ -2112,14 +2163,16 @@ bool present_frame(void* window_handle, double aspect) {
     context->IASetInputLayout(nullptr);
     context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     context->VSSetShader(g_device.present_vertex, nullptr, 0);
-    context->PSSetShader(g_device.present_pixel, nullptr, 0);
+    static const settings::LiveFlag smooth("video.smooth", "WP_SMOOTH");
+    context->PSSetShader(smooth() && g_device.present_smooth ? g_device.present_smooth : g_device.present_pixel, nullptr, 0);
     context->PSSetShaderResources(0, 1, &g_device.frame_view);
     context->PSSetSamplers(0, 1, &g_device.present_sampler);
     context->Draw(3, 0);
     ID3D11ShaderResourceView* none = nullptr;
     context->PSSetShaderResources(0, 1, &none);
     draw_overlay(client);
-    HRESULT presented = g_device.swapchain->Present(0, 0);
+    static const settings::LiveFlag vsync("video.vsync", "WP_VSYNC");
+    HRESULT presented = g_device.swapchain->Present(vsync() ? 1 : 0, 0);
     static bool logged_present_failure = false;
     if (FAILED(presented) && !logged_present_failure) {
         logged_present_failure = true;
@@ -2127,6 +2180,7 @@ bool present_frame(void* window_handle, double aspect) {
         log::write("video", "Present failed with %08lx, device removed reason %08lx", static_cast<unsigned long>(presented), static_cast<unsigned long>(removed));
     }
     apply_scale();
+    apply_anisotropy();
     return true;
 }
 

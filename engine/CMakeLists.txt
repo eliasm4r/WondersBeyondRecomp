@@ -39,6 +39,7 @@ add_library(wp_engine STATIC
     src/platform/ui_text.cpp
     src/platform/options.cpp
     src/platform/options_window.cpp
+    src/platform/discord.cpp
 )
 if(WIN32)
     target_sources(wp_engine PRIVATE src/gpu/gx_render.cpp src/platform/video.cpp)

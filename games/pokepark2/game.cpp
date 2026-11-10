@@ -14,12 +14,14 @@ namespace {
 
 constexpr Description kDescription = {
     "PokePark 2: Wonders Beyond",
+    "WondersBeyondRecomp",
     "pokepark2",
     "games/pokepark2/extracted",
     "games/pokepark2/nand",
     "games/pokepark2/settings.ini",
     "games/pokepark2/textures",
     true,
+    "",
 };
 
 // nsNile::nsSequence::SequencerBoot (vtable 0x80453800), state at +4. The game plays Strap (scene 1), which

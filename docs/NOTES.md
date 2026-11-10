@@ -121,3 +121,23 @@ Measured in the first cave, D3D11: 59.9 to 60.0 fps at 3x and 6x.
 quick polls added for prompt alarm delivery skipped `audio::update()` for 4096 polls at a time whenever an alarm was
 overdue during that function, so the counter never moved in time and about one boot in three hung on a black screen.
 The quick-poll allowance is now renewed only by a poll that finds interrupts unmasked.
+
+## Tiny draws in the open zones
+
+The first open zone sends close to a million draws a second, nearly all under 16 vertices (grass, foliage), and
+most of them change only a matrix in between. Recomputing the pixel-shader constants, textures and samplers for
+each one held the GPU thread at about 52 fps whatever the resolution. `render::draw` now keeps a serial of the BP,
+konst and XF control register writes (`register_serial`): when it, the texture epoch and the scale are unchanged
+since the previous draw, the vertices join the pending batch directly. Splitting the vertex work of one draw
+between threads gained nothing, since the draws are too small. Measured: 59.9 to 60.0 fps at 3x and 6x.
+
+## Pointer, shake and options menu
+
+- The mouse and the gamepad no longer aim all the time: the pointer follows the mouse while Ctrl is held
+  (`keys.pointer`) and the right stick while L3 is held (`pad.pointer`), both remappable.
+- A sharp jolt of a gamepad with a motion sensor (more than 0.9 g away from rest) holds the Wii Remote shake for
+  250 ms.
+- F1 opens the options menu (tabs Display, Keyboard, Gamepad, Sound, Game). F10 no longer does anything.
+- The title screen and cutscenes are pre-rendered 30 fps movies, so they stay at 30 fps (see "60 fps").
+- Discord shows the game when `system.discord` is on and `discord_application` in the game description holds an
+  Application ID; it talks to the local client over its IPC pipe and retries every 15 s.

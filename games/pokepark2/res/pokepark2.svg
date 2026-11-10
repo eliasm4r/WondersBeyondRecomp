@@ -1,1 +1,29 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><rect width="256" height="256" rx="48" fill="#2e7d32"/><circle cx="128" cy="128" r="72" fill="#fdd835"/><text x="128" y="152" font-family="Arial" font-weight="700" font-size="72" text-anchor="middle" fill="#1b5e20">P2</text></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="wood" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#a86c38"/><stop offset="1" stop-color="#6a3d1b"/></linearGradient>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8fd8ff"/><stop offset="1" stop-color="#d8f2ff"/></linearGradient>
+    <linearGradient id="grass" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6cd05c"/><stop offset="1" stop-color="#2e7d32"/></linearGradient>
+    <radialGradient id="glow"><stop offset="0.6" stop-color="#fff080" stop-opacity="0.7"/><stop offset="1" stop-color="#fff080" stop-opacity="0"/></radialGradient>
+    <clipPath id="inside"><rect x="24" y="24" width="208" height="208" rx="38"/></clipPath>
+  </defs>
+  <rect x="4" y="4" width="248" height="248" rx="55" fill="url(#wood)"/>
+  <g stroke="#4e2c12" stroke-opacity="0.35" stroke-width="2.5">
+    <line x1="18" y1="22" x2="230" y2="24"/><line x1="30" y1="246" x2="228" y2="244"/>
+    <line x1="12" y1="60" x2="12" y2="200"/><line x1="244" y1="70" x2="244" y2="190"/>
+  </g>
+  <g clip-path="url(#inside)">
+    <rect x="24" y="24" width="208" height="208" fill="url(#sky)"/>
+    <ellipse cx="128" cy="262" rx="182" ry="112" fill="url(#grass)"/>
+    <circle cx="128" cy="118" r="92" fill="url(#glow)"/>
+  </g>
+  <circle cx="128" cy="118" r="70" fill="#f08a00"/>
+  <circle cx="128" cy="118" r="62.5" fill="#ffd23f"/>
+  <ellipse cx="100" cy="85" rx="17.5" ry="15" fill="#ffeca0"/>
+  <polygon points="140,62 95,125 125,125 107.5,180 162.5,107.5 131,107.5 152.5,62" fill="#4a2a10"/>
+  <polygon points="137,70 101,121 128,121 113,168 155,111 126,111 147,70" fill="#ffffff"/>
+  <g transform="rotate(-18 207 30)">
+    <ellipse cx="207" cy="30" rx="32.5" ry="20" fill="#2e7d32"/>
+    <ellipse cx="207" cy="30" rx="28.5" ry="16.5" fill="#4caf50"/>
+    <line x1="180" y1="37" x2="232" y2="22" stroke="#2e7d32" stroke-width="3.5"/>
+  </g>
+</svg>

@@ -35,7 +35,7 @@ constexpr uint32_t kControlHover = 0x2A2A2E;
 constexpr uint32_t kOff = 0x4A4A50;
 constexpr uint32_t kOffHover = 0x5C5C63;
 constexpr uint32_t kDanger = 0xC42B1C;
-constexpr uint32_t kPanelAlpha = 236;
+constexpr uint32_t kPanelAlpha = 250;
 constexpr char32_t kEllipsis = 0x2026;
 
 enum class Align { Left, Right, Center };
@@ -274,87 +274,222 @@ uint32_t corner_alpha(int x, int y, int width, int height, int radius) {
     return static_cast<uint32_t>(kPanelAlpha * coverage + 0.5);
 }
 
+// The menu is drawn in the spirit of PokéPark's own menus (a wooden board, a parchment sheet, sunny yellow and leaf
+// green), with shapes drawn here rather than images from the game.
+constexpr uint32_t kWoodTop = 0x9A6232;
+constexpr uint32_t kWoodBottom = 0x74441F;
+constexpr uint32_t kWoodRim = 0x4E2C12;
+constexpr uint32_t kWoodGrain = 0x6A3D1B;
+constexpr uint32_t kWoodLight = 0xB27840;
+constexpr uint32_t kWoodHover = 0xC48A4E;
+constexpr uint32_t kParchment = 0xFFF4D6;
+constexpr uint32_t kParchmentLine = 0xEAD7AC;
+constexpr uint32_t kParchmentShadow = 0x5A3416;
+constexpr uint32_t kInk = 0x4A2A10;
+constexpr uint32_t kInkSoft = 0x9C7A54;
+constexpr uint32_t kCream = 0xFFF8E7;
+constexpr uint32_t kSun = 0xFFD23F;
+constexpr uint32_t kSunDark = 0xE0A000;
+constexpr uint32_t kSunPale = 0xFFE89A;
+constexpr uint32_t kSunHover = 0xFCEFC4;
+constexpr uint32_t kLeaf = 0x4CAF50;
+constexpr uint32_t kLeafDark = 0x2E7D32;
+constexpr uint32_t kOffTrack = 0xCDB68C;
+constexpr uint32_t kPill = 0xF2E0B6;
+constexpr uint32_t kPillHover = 0xF8EACB;
+constexpr uint32_t kBerry = 0xE53935;
+constexpr uint32_t kBerryHover = 0xF4554F;
+constexpr uint32_t kOrange = 0xF57C00;
+constexpr uint32_t kOrangeHover = 0xFF9420;
+constexpr uint32_t kWhite = 0xFFFFFF;
+
+uint32_t mix(uint32_t a, uint32_t b, double t) {
+    uint32_t result = 0;
+    for (int shift = 0; shift < 24; shift += 8) {
+        double x = ((a >> shift) & 0xFF) * (1.0 - t) + ((b >> shift) & 0xFF) * t;
+        result |= static_cast<uint32_t>(x + 0.5) << shift;
+    }
+    return result;
+}
+
+// A rounded shape with a darker copy below it, like the raised buttons of the game.
+void raised(Canvas& canvas, const Rect& r, int radius, int depth, uint32_t face, uint32_t shadow) {
+    canvas.fill_round(r.x, r.y + depth, r.x + r.width, r.y + r.height + depth, radius, shadow);
+    canvas.fill_round(r.x, r.y, r.x + r.width, r.y + r.height, radius, face);
+}
+
+void wood(Canvas& canvas, int unit) {
+    for (int y = 0; y < canvas.height; y++) {
+        canvas.fill(0, y, canvas.width, y + 1, mix(kWoodTop, kWoodBottom, static_cast<double>(y) / std::max(1, canvas.height - 1)));
+    }
+    int plank = unit * 4;
+    for (int y = plank; y < canvas.height; y += plank) {
+        canvas.fill(0, y, canvas.width, y + std::max(1, unit / 10), kWoodGrain);
+    }
+    // Grain: a few long, slightly darker streaks at fixed places.
+    for (int i = 0; i < canvas.height / std::max(1, unit / 2); i++) {
+        int y = (i * 37 + 11) * unit / 6 % std::max(1, canvas.height);
+        int left = (i * 53) % std::max(1, canvas.width / 2);
+        int length = canvas.width / 3 + (i * 29) % std::max(1, canvas.width / 2);
+        for (int x = left; x < std::min(canvas.width, left + length); x++) {
+            canvas.blend(x, y, kWoodGrain, 70);
+        }
+    }
+    int rim = std::max(2, unit / 4);
+    canvas.fill(0, 0, canvas.width, rim, kWoodRim);
+    canvas.fill(0, canvas.height - rim, canvas.width, canvas.height, kWoodRim);
+    canvas.fill(0, 0, rim, canvas.height, kWoodRim);
+    canvas.fill(canvas.width - rim, 0, canvas.width, canvas.height, kWoodRim);
+}
+
 }
 
 Image render(const Menu& menu, int client_height) {
     Image image;
     std::vector<Row> rows = menu.rows();
-    Layout frame = layout(client_height, rows.size());
+    Layout frame = layout(client_height, rows.size(), menu.scroll());
     if (frame.width <= 0 || frame.height <= 0 || !font(false).ok) {
         return image;
     }
-    Canvas canvas{frame.width, frame.height, std::vector<uint32_t>(static_cast<size_t>(frame.width) * frame.height, kPanel)};
+    Canvas canvas{frame.width, frame.height, std::vector<uint32_t>(static_cast<size_t>(frame.width) * frame.height, kWoodTop)};
     int unit = frame.unit;
+    int depth = std::max(2, unit / 6);
+    int stroke = std::max(2, unit / 7);
     Face title_face = make_face(true, unit * 3 / 2);
+    Face tab_face = make_face(true, unit * 9 / 10);
     Face row_face = make_face(false, unit);
+    Face value_face = make_face(true, unit * 9 / 10);
     Face small_face = make_face(false, unit * 4 / 5);
     const ui::Text& strings = ui::text();
     const Hover& hover = menu.hover();
-    int left = frame.padding;
-    int right = frame.width - frame.padding;
-    int stroke = std::max(2, unit / 7);
-    canvas.text(title_face, kText, strings.menu_title, left, frame.padding, right, frame.padding + frame.title_height - unit / 2, Align::Left, false);
+    wood(canvas, unit);
+
+    // Title on a leaf-green banner, with a sun-yellow berry on its left.
     Rect close = close_rect(frame);
+    Rect banner{frame.padding, frame.padding, close.x - unit - frame.padding, frame.title_height - unit};
+    raised(canvas, banner, banner.height / 2, depth, kLeaf, kLeafDark);
+    int berry = banner.height - unit / 2;
+    int berry_x = banner.x + unit / 2;
+    int berry_y = banner.y + (banner.height - berry) / 2;
+    canvas.fill_round(berry_x, berry_y, berry_x + berry, berry_y + berry, berry / 2, kSun);
+    canvas.fill_round(berry_x + berry / 5, berry_y + berry / 5, berry_x + berry / 2, berry_y + berry / 2, berry / 6, kSunPale);
+    canvas.text(title_face, kCream, strings.menu_title, berry_x + berry + unit / 2, banner.y, banner.x + banner.width - unit, banner.y + banner.height, Align::Left, true);
     bool close_hover = hover.part == Part::Close;
-    if (close_hover) {
-        canvas.fill_round(close.x, close.y, close.x + close.width, close.y + close.height, unit / 2, kDanger);
+    raised(canvas, close, close.width / 2, depth, close_hover ? kBerryHover : kBerry, kWoodRim);
+    canvas.cross(close.x + close.width / 2, close.y + close.height / 2, unit / 3, stroke, kWhite);
+
+    for (size_t tab = 0; tab < kTabCount; tab++) {
+        Rect r = tab_rect(frame, tab);
+        bool active = tab == menu.tab();
+        bool hovered = hover.part == Part::Tab && hover.tab == static_cast<int>(tab);
+        raised(canvas, r, unit * 2 / 3, depth, active ? kSun : hovered ? kWoodHover : kWoodLight, active ? kSunDark : kWoodRim);
+        canvas.text(tab_face, active ? kInk : kCream, tab_label(tab), r.x + unit / 3, r.y, r.x + r.width - unit / 3, r.y + r.height, Align::Center, true);
     }
-    canvas.cross(close.x + close.width / 2, close.y + close.height / 2, unit / 3, stroke, close_hover ? kText : kMuted);
-    int rows_top = frame.padding + frame.title_height;
-    canvas.fill(left, rows_top - unit / 2, right, rows_top - unit / 2 + 1, kSeparator);
-    for (size_t i = 0; i < rows.size(); i++) {
+
+    Rect sheet = rows_rect(frame);
+    raised(canvas, sheet, unit, depth, kParchment, kParchmentShadow);
+    size_t first = menu.scroll();
+    size_t last = std::min(rows.size(), first + kVisibleRows);
+    for (size_t i = first; i < last; i++) {
         const Row& row = rows[i];
+        size_t visible = i - first;
+        Rect line = row_rect(frame, visible);
         bool selected = i == menu.selection();
         bool hovered = hover.row == static_cast<int>(i);
-        int top = rows_top + static_cast<int>(i) * frame.row_height;
-        int bottom = top + frame.row_height;
+        if (visible > 0) {
+            canvas.fill(line.x + unit / 2, line.y, line.x + line.width - unit / 2, line.y + 1, kParchmentLine);
+        }
         if (selected || hovered) {
-            canvas.fill_round(left - unit / 2, top + 2, right + unit / 2, bottom - 2, unit / 2, selected ? kSelected : kHover);
+            canvas.fill_round(line.x, line.y + 2, line.x + line.width, line.y + line.height - 2, unit / 2, selected ? kSunPale : kSunHover);
         }
         if (selected) {
-            canvas.fill_round(left - unit / 2 + unit / 4, top + unit / 2, left - unit / 2 + unit / 4 + std::max(3, unit / 5), bottom - unit / 2, std::max(2, unit / 10), kAccent);
+            canvas.fill_round(line.x + unit / 4, line.y + unit / 2, line.x + unit / 4 + std::max(3, unit / 4), line.y + line.height - unit / 2,
+                              std::max(2, unit / 8), kOrange);
         }
-        Rect control = control_rect(frame, i);
+        Rect control = control_rect(frame, visible);
+        int cy = control.y + control.height / 2;
+        bool over_control = hovered && hover.part != Part::Label;
         int value_left = control.x;
-        if (row.toggle) {
+        switch (row.kind) {
+        case Kind::Toggle: {
             int width = unit * 3;
-            int switch_left = control.x + control.width - width;
-            value_left = switch_left;
-            uint32_t track = row.on ? kAccent : kOff;
-            if (hovered && hover.part != Part::Label) {
-                track = row.on ? kAccentHover : kOffHover;
-            }
-            canvas.fill_round(switch_left, control.y, switch_left + width, control.y + control.height, control.height / 2, track);
+            int left = control.x + control.width - width;
+            value_left = left;
+            canvas.fill_round(left, control.y, left + width, control.y + control.height, control.height / 2,
+                              row.on ? (over_control ? kLeaf : kLeafDark) : (over_control ? kPill : kOffTrack));
             int knob = control.height - unit / 2;
-            int knob_left = row.on ? switch_left + width - knob - unit / 4 : switch_left + unit / 4;
-            canvas.fill_round(knob_left, control.y + unit / 4, knob_left + knob, control.y + unit / 4 + knob, knob / 2, kText);
-        } else {
-            canvas.fill_round(control.x, control.y, control.x + control.width, control.y + control.height, control.height / 2, hovered ? kControlHover : kControl);
+            int knob_left = row.on ? left + width - knob - unit / 4 : left + unit / 4;
+            canvas.fill_round(knob_left, control.y + unit / 4, knob_left + knob, control.y + unit / 4 + knob, knob / 2, kWhite);
+            break;
+        }
+        case Kind::Slider: {
+            int left = control.x + unit / 2;
+            int right = control.x + control.width - unit * 4;
+            int track = std::max(4, unit / 3);
+            canvas.fill_round(left, cy - track / 2, right, cy - track / 2 + track, track / 2, kOffTrack);
+            int filled = left + static_cast<int>((right - left) * row.fraction + 0.5);
+            canvas.fill_round(left, cy - track / 2, std::max(left + track, filled), cy - track / 2 + track, track / 2, kSunDark);
+            int knob = unit;
+            canvas.fill_round(filled - knob / 2, cy - knob / 2, filled + knob / 2, cy + knob / 2, knob / 2, kInk);
+            canvas.fill_round(filled - knob / 2 + 2, cy - knob / 2 + 2, filled + knob / 2 - 2, cy + knob / 2 - 2, knob / 2 - 2, over_control ? kSunPale : kWhite);
+            canvas.text(value_face, kInk, row.value, right + unit / 2, control.y, control.x + control.width, control.y + control.height, Align::Right, false);
+            break;
+        }
+        case Kind::Button: {
+            raised(canvas, control, control.height / 2, depth / 2, over_control ? kOrangeHover : kOrange, kWoodRim);
+            canvas.text(value_face, kCream, ui::label("menu.reset"), control.x + unit / 2, control.y, control.x + control.width - unit / 2,
+                        control.y + control.height, Align::Center, true);
+            break;
+        }
+        case Kind::Key:
+        case Kind::Pad: {
+            bool waiting = selected && menu.capturing();
+            canvas.fill_round(control.x, control.y, control.x + control.width, control.y + control.height, control.height / 2,
+                              waiting ? kSun : over_control ? kPillHover : kPill);
+            std::string shown = waiting ? ui::label(row.kind == Kind::Key ? "menu.press_key" : "menu.press_button") : row.value;
+            canvas.text(value_face, kInk, shown, control.x + unit / 2, control.y, control.x + control.width - unit / 2, control.y + control.height, Align::Center,
+                        true);
+            break;
+        }
+        case Kind::Choice: {
+            canvas.fill_round(control.x, control.y, control.x + control.width, control.y + control.height, control.height / 2, over_control ? kPillHover : kPill);
             int arrow = unit * 2;
-            uint32_t previous_color = hovered && hover.part == Part::Previous ? kAccent : kMuted;
-            uint32_t next_color = hovered && hover.part == Part::Next ? kAccent : kMuted;
-            int cy = control.y + control.height / 2;
+            uint32_t previous_color = hovered && hover.part == Part::Previous ? kOrange : kInkSoft;
+            uint32_t next_color = hovered && hover.part == Part::Next ? kOrange : kInkSoft;
             canvas.chevron(control.x + arrow / 2, cy, unit / 3, 1, stroke, previous_color);
             canvas.chevron(control.x + control.width - arrow / 2, cy, unit / 3, -1, stroke, next_color);
-            canvas.text(row_face, selected ? kAccent : kText, row.value, control.x + arrow, control.y, control.x + control.width - arrow, control.y + control.height,
-                        Align::Center, true);
+            canvas.text(value_face, kInk, row.value, control.x + arrow, control.y, control.x + control.width - arrow, control.y + control.height, Align::Center,
+                        true);
+            break;
+        }
         }
         int label_right = value_left - unit / 2;
         if (!row.live) {
             int note_width = static_cast<int>(std::ceil(text_width(small_face, decode(strings.menu_restart))));
             int note_left = value_left - unit / 2 - note_width;
-            canvas.text(small_face, kMuted, strings.menu_restart, note_left - unit, top, value_left - unit / 2, bottom, Align::Right, false);
+            canvas.text(small_face, kInkSoft, strings.menu_restart, note_left, line.y, value_left - unit / 2, line.y + line.height, Align::Right, false);
             label_right = note_left - unit / 2;
         }
-        canvas.text(row_face, kText, row.label, left + unit / 2, top, std::max(left + unit, label_right), bottom, Align::Left, true);
+        canvas.text(row_face, kInk, row.label, line.x + unit, line.y, std::max(line.x + unit * 2, label_right), line.y + line.height, Align::Left, true);
     }
-    int footer_top = rows_top + static_cast<int>(rows.size()) * frame.row_height;
-    canvas.fill(left, footer_top + unit / 2, right, footer_top + unit / 2 + 1, kSeparator);
-    canvas.text(small_face, kMuted, strings.menu_hint, left, footer_top + unit / 2, right, footer_top + frame.footer_height, Align::Center, true);
+    if (rows.size() > kVisibleRows) {
+        int track_left = sheet.x + sheet.width - unit;
+        int track_top = sheet.y + unit / 2;
+        int track_height = sheet.height - unit;
+        int width = std::max(4, unit / 3);
+        canvas.fill_round(track_left, track_top, track_left + width, track_top + track_height, width / 2, kParchmentLine);
+        int thumb = std::max(unit, static_cast<int>(track_height * kVisibleRows / rows.size()));
+        int top = track_top + static_cast<int>((track_height - thumb) * first / (rows.size() - kVisibleRows));
+        canvas.fill_round(track_left, top, track_left + width, top + thumb, width / 2, kSunDark);
+    }
+
+    int footer_top = sheet.y + sheet.height + depth;
+    canvas.text(small_face, kCream, strings.menu_hint, frame.padding, footer_top, frame.width - frame.padding, frame.height - frame.padding / 2, Align::Center, true);
+
     image.width = static_cast<uint32_t>(frame.width);
     image.height = static_cast<uint32_t>(frame.height);
     image.pixels.resize(canvas.pixels.size());
-    int radius = unit * 3 / 4;
+    int radius = unit;
     for (int y = 0; y < frame.height; y++) {
         for (int x = 0; x < frame.width; x++) {
             size_t index = static_cast<size_t>(y) * image.width + static_cast<size_t>(x);

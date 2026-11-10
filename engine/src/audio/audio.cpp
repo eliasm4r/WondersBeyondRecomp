@@ -181,8 +181,12 @@ public:
             dump_frames_ += available;
             write_wav_header(dump_, dump_frames_, static_cast<uint32_t>(device_rate_));
         }
-        if (muted()) {
-            std::fill(mixed, mixed + available, Frame{0.0f, 0.0f});
+        static const settings::LiveNumber volume("audio.volume", "WP_VOLUME");
+        float level = muted() ? 0.0f : std::clamp(volume(), 0, 100) / 100.0f;
+        if (level != 1.0f) {
+            for (uint32_t i = 0; i < available; i++) {
+                mixed[i] = {mixed[i].left * level, mixed[i].right * level};
+            }
         }
         Clock::time_point now = Clock::now();
         if (now - report_ >= std::chrono::seconds(1)) {

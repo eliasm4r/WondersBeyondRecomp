@@ -23,11 +23,52 @@ constexpr Label kEnglishLabels[] = {
     {"system.interface_language", "Interface language"},
     {"system.language", "Console language"},
     {"system.pal60", "60 Hz (PAL60)"},
-    {"system.options_menu", "Options menu (F10)"},
+    {"system.options_menu", "Options menu (F1)"},
+    {"system.discord", "Show the game in Discord"},
     {"audio.mute", "Mute"},
     {"audio.wiimote_speaker", "Wii Remote speaker"},
     {"saves.backups", "Save backups kept"},
     {"input.player1_keyboard_only", "Player 1: keyboard and mouse only"},
+    {"video.vsync", "Vertical sync"},
+    {"video.show_fps", "Frame rate in the title bar"},
+    {"video.smooth", "Anti-aliasing"},
+    {"video.anisotropy", "Anisotropic filtering"},
+    {"system.widescreen", "Widescreen (16:9)"},
+    {"input.rumble", "Vibration"},
+    {"input.stick_deadzone", "Stick dead zone"},
+    {"audio.volume", "Volume"},
+    {"tab.display", "Display"},
+    {"tab.keyboard", "Keyboard"},
+    {"tab.gamepad", "Gamepad"},
+    {"tab.audio", "Sound"},
+    {"tab.system", "Game"},
+    {"menu.auto", "Automatic"},
+    {"menu.press_key", "Press a key..."},
+    {"menu.press_button", "Press a button..."},
+    {"menu.reset", "Reset"},
+    {"keys.reset", "Default keys"},
+    {"pad.reset", "Default buttons"},
+    {"keys.a", "A button"},
+    {"keys.b", "B button"},
+    {"keys.one", "1 button"},
+    {"keys.two", "2 button"},
+    {"keys.plus", "+ button"},
+    {"keys.minus", "- button"},
+    {"keys.home", "HOME button"},
+    {"keys.up", "Up"},
+    {"keys.down", "Down"},
+    {"keys.left", "Left"},
+    {"keys.right", "Right"},
+    {"keys.shake", "Shake"},
+    {"keys.swing_up", "Swing up"},
+    {"keys.swing_down", "Swing down"},
+    {"keys.tilt_left", "Tilt left"},
+    {"keys.tilt_right", "Tilt right"},
+    {"keys.tilt_up", "Tilt up"},
+    {"keys.tilt_down", "Tilt down"},
+    {"keys.screenshot", "Screenshot"},
+    {"keys.mouse_motion", "Motion with the mouse (hold)"},
+    {"keys.pointer", "Pointer (hold)"},
     {"pad.use", "Use this controller"},
     {"pad.player", "Player"},
     {"pad.player_auto", "Automatic"},
@@ -42,6 +83,84 @@ constexpr Label kEnglishLabels[] = {
     {"pad.right_stick_left", "Right stick left"},
     {"pad.right_stick_right", "Right stick right"},
     {"pad.motion_help", "Motion without a gyroscope: the left trigger shakes. Hold the left shoulder button and push the right stick to tilt, or press up or down on the D-pad to swing. Each motion can also be given its own button below."},
+};
+
+constexpr Label kFrenchLabels[] = {
+    {"video.scale", "Résolution interne"},
+    {"video.fps", "Images par seconde"},
+    {"video.fullscreen", "Plein écran"},
+    {"video.copy_filter", "Filtre anti-scintillement"},
+    {"video.custom_textures", "Textures personnalisées"},
+    {"video.dump_textures", "Extraire les textures"},
+    {"video.vsync", "Synchronisation verticale"},
+    {"video.show_fps", "Images/s dans la barre de titre"},
+    {"video.smooth", "Anticrénelage"},
+    {"video.anisotropy", "Filtrage anisotrope"},
+    {"system.widescreen", "Écran large (16:9)"},
+    {"input.gamepads", "Manettes"},
+    {"input.joycon_pairs", "Associer les paires de Joy-Con"},
+    {"input.real_wiimotes", "Vraies Wiimotes"},
+    {"input.real_wiimote_mouse", "Viser avec la souris (Wiimote 1)"},
+    {"input.wake_on_mouse", "Reconnecter avec la souris"},
+    {"input.hide_cursor", "Masquer le curseur"},
+    {"input.rumble", "Vibrations"},
+    {"input.stick_deadzone", "Zone morte du stick"},
+    {"system.interface_language", "Langue du menu"},
+    {"system.language", "Langue du jeu"},
+    {"system.pal60", "60 Hz (PAL60)"},
+    {"system.options_menu", "Menu des options (F1)"},
+    {"system.discord", "Afficher le jeu sur Discord"},
+    {"audio.mute", "Couper le son"},
+    {"audio.volume", "Volume"},
+    {"audio.wiimote_speaker", "Haut-parleur de la Wiimote"},
+    {"saves.backups", "Copies de sauvegarde gardées"},
+    {"input.player1_keyboard_only", "Joueur 1 : clavier et souris seulement"},
+    {"tab.display", "Affichage"},
+    {"tab.keyboard", "Clavier"},
+    {"tab.gamepad", "Manette"},
+    {"tab.audio", "Son"},
+    {"tab.system", "Jeu"},
+    {"menu.auto", "Automatique"},
+    {"menu.press_key", "Appuie sur une touche..."},
+    {"menu.press_button", "Appuie sur un bouton..."},
+    {"menu.reset", "Réinitialiser"},
+    {"keys.reset", "Touches par défaut"},
+    {"pad.reset", "Boutons par défaut"},
+    {"keys.a", "Bouton A"},
+    {"keys.b", "Bouton B"},
+    {"keys.one", "Bouton 1"},
+    {"keys.two", "Bouton 2"},
+    {"keys.plus", "Bouton +"},
+    {"keys.minus", "Bouton -"},
+    {"keys.home", "Bouton HOME"},
+    {"keys.up", "Haut"},
+    {"keys.down", "Bas"},
+    {"keys.left", "Gauche"},
+    {"keys.right", "Droite"},
+    {"keys.shake", "Secouer"},
+    {"keys.swing_up", "Agiter vers le haut"},
+    {"keys.swing_down", "Agiter vers le bas"},
+    {"keys.tilt_left", "Pencher à gauche"},
+    {"keys.tilt_right", "Pencher à droite"},
+    {"keys.tilt_up", "Pencher en avant"},
+    {"keys.tilt_down", "Pencher en arrière"},
+    {"keys.screenshot", "Capture d'écran"},
+    {"keys.mouse_motion", "Mouvements à la souris (maintenir)"},
+    {"keys.pointer", "Pointeur (maintenir)"},
+    {"pad.use", "Utiliser cette manette"},
+    {"pad.player", "Joueur"},
+    {"pad.player_auto", "Automatique"},
+    {"pad.view_title", "Vue de la manette"},
+    {"pad.view_none", "Branche une manette pour voir ici ses boutons et ses sticks."},
+    {"pad.cross", "Croix"},
+    {"pad.circle", "Rond"},
+    {"pad.square", "Carré"},
+    {"pad.triangle", "Triangle"},
+    {"pad.right_stick_up", "Stick droit haut"},
+    {"pad.right_stick_down", "Stick droit bas"},
+    {"pad.right_stick_left", "Stick droit gauche"},
+    {"pad.right_stick_right", "Stick droit droite"},
+    {"pad.motion_help", "Mouvements sans gyroscope : la gâchette gauche secoue. Maintiens la touche L1/LB et pousse le stick droit pour pencher, ou appuie en haut ou en bas sur la croix pour agiter. Chaque mouvement peut aussi avoir son propre bouton plus bas."},
 };
 
 constexpr Label kSpanishLabels[] = {
@@ -60,7 +179,7 @@ constexpr Label kSpanishLabels[] = {
     {"system.interface_language", "Idioma de la interfaz"},
     {"system.language", "Idioma de la consola"},
     {"system.pal60", "60 Hz (PAL60)"},
-    {"system.options_menu", "Menú de opciones (F10)"},
+    {"system.options_menu", "Menú de opciones (F1)"},
     {"audio.mute", "Silenciar"},
     {"audio.wiimote_speaker", "Altavoz del Wii Remote"},
     {"saves.backups", "Copias de la partida"},
@@ -97,7 +216,7 @@ constexpr Label kGalicianLabels[] = {
     {"system.interface_language", "Idioma da interface"},
     {"system.language", "Idioma da consola"},
     {"system.pal60", "60 Hz (PAL60)"},
-    {"system.options_menu", "Menú de opcións (F10)"},
+    {"system.options_menu", "Menú de opcións (F1)"},
     {"audio.mute", "Silenciar"},
     {"audio.wiimote_speaker", "Altofalante do Wii Remote"},
     {"saves.backups", "Copias da partida"},
@@ -124,7 +243,7 @@ constexpr Text kEnglish{"FPS",
                         "INTERP",
                         "OFF",
                         "Options",
-                        "Up/Down: choose     Left/Right/Enter or click: change     Esc or right click: close",
+                        "Up/Down: choose   Left/Right: change   Q/E or LB/RB: tab   Enter: bind   Esc or F1: close",
                         "applies on restart",
                         "On",
                         "Off",
@@ -133,13 +252,28 @@ constexpr Text kEnglish{"FPS",
                         kEnglishLabels,
                         sizeof(kEnglishLabels) / sizeof(kEnglishLabels[0])};
 
+constexpr Text kFrench{"FPS",
+                       "DSP",
+                       "NATIF",
+                       "INTERP",
+                       "ARRÊT",
+                       "Options",
+                       "Haut/Bas : choisir   Gauche/Droite : changer   Q/E ou LB/RB : onglet   Entrée : assigner   Échap ou F1 : fermer",
+                       "au prochain lancement",
+                       "Oui",
+                       "Non",
+                       "Native",
+                       "Système",
+                       kFrenchLabels,
+                       sizeof(kFrenchLabels) / sizeof(kFrenchLabels[0])};
+
 constexpr Text kSpanish{"FPS",
                         "DSP",
                         "NATIVO",
                         "INTERP",
                         "APAGADO",
                         "Opciones",
-                        "Arriba/Abajo: elegir     Izquierda/Derecha/Intro o clic: cambiar     Esc o clic derecho: cerrar",
+                        "Arriba/Abajo: elegir   Izquierda/Derecha: cambiar   Q/E o LB/RB: pestaña   Esc o F1: cerrar",
                         "se aplica al reiniciar",
                         "Sí",
                         "No",
@@ -154,7 +288,7 @@ constexpr Text kGalician{"FPS",
                          "INTERP",
                          "APAGADO",
                          "Opcións",
-                         "Arriba/Abaixo: escoller     Esquerda/Dereita/Intro ou clic: cambiar     Esc ou clic dereito: pechar",
+                         "Arriba/Abaixo: escoller   Esquerda/Dereita: cambiar   Q/E ou LB/RB: lapela   Esc ou F1: pechar",
                          "aplícase ao reiniciar",
                          "Si",
                          "Non",
@@ -165,13 +299,20 @@ constexpr Text kGalician{"FPS",
 
 std::atomic<const Text*> g_text{&kEnglish};
 
-const char* label_in(const Text& current, const char* key) {
+const char* find_label(const Text& current, const char* key) {
     for (size_t i = 0; i < current.label_count; i++) {
         if (std::strcmp(current.labels[i].key, key) == 0) {
             return current.labels[i].text;
         }
     }
-    return key;
+    return nullptr;
+}
+
+// A label missing from a translation falls back to English.
+const char* label_in(const Text& current, const char* key) {
+    const char* found = find_label(current, key);
+    found = found ? found : find_label(kEnglish, key);
+    return found ? found : key;
 }
 
 const Text& text_for(Language language) {
@@ -180,6 +321,8 @@ const Text& text_for(Language language) {
         return kSpanish;
     case Language::Galician:
         return kGalician;
+    case Language::French:
+        return kFrench;
     default:
         return kEnglish;
     }
@@ -192,7 +335,7 @@ void set_language(Language language) {
 }
 
 Language language_of(const std::string& code) {
-    return code == "es" ? Language::Spanish : code == "gl" ? Language::Galician : Language::English;
+    return code == "es" ? Language::Spanish : code == "gl" ? Language::Galician : code == "fr" ? Language::French : Language::English;
 }
 
 void set_language(const std::string& code) {
