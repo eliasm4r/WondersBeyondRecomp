@@ -9,7 +9,11 @@
 #include <dxgi1_2.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -483,8 +487,8 @@ PixelOutput pixel_main(PixelInput p) {
             offset = shift >= 0 ? (offset >> shift) : (offset << (-shift));
         }
         int2 wrapped;
-        wrapped.x = wrap_s == 0 ? base.x : (wrap_s >= 6 ? 0 : (base.x & (kWraps[wrap_s - 1] - 1)));
-        wrapped.y = wrap_t == 0 ? base.y : (wrap_t >= 6 ? 0 : (base.y & (kWraps[wrap_t - 1] - 1)));
+        wrapped.x = wrap_s == 0 ? base.x : (wrap_s >= 6 ? 0 : (base.x & (kWraps[clamp(wrap_s, 1u, 5u) - 1] - 1)));
+        wrapped.y = wrap_t == 0 ? base.y : (wrap_t >= 6 ? 0 : (base.y & (kWraps[clamp(wrap_t, 1u, 5u) - 1] - 1)));
         tevcoord = ((ind >> 20) & 1) != 0 ? tevcoord + wrapped + offset : wrapped + offset;
         tevcoord = (tevcoord << 8) >> 8;
         int4 tex = int4(255, 255, 255, 255);
@@ -540,8 +544,8 @@ PixelOutput pixel_main(PixelInput p) {
     }
     int4 result = r[0];
     if (count > 0) {
-        uint last_color = (stage[count - 1].x >> 22) & 3;
-        uint last_alpha = (stage[count - 1].y >> 22) & 3;
+        uint last_color = (stage[max(count, 1u) - 1].x >> 22) & 3;
+        uint last_alpha = (stage[max(count, 1u) - 1].y >> 22) & 3;
         result = int4(r[last_color].rgb, r[last_alpha].a);
     }
     result &= 255;
@@ -1254,6 +1258,120 @@ ID3D11DepthStencilState* depth_for(uint32_t word) {
     return state;
 }
 
+// Specialised pixel shaders. kShaderSource interprets the whole TEV configuration for every pixel, which takes most
+// of the GPU time at high internal resolutions. A variant has that configuration compiled in as constants, so the
+// compiler folds the interpreter away. Variants compile on a worker thread; the generic shader draws until then.
+struct ShaderVariant {
+    std::atomic<ID3D11PixelShader*> shader{nullptr};
+};
+
+constexpr size_t kVariantHeader = 10;
+std::unordered_map<std::string, ShaderVariant> g_variants;
+std::mutex g_variant_mutex;
+std::condition_variable g_variant_wake;
+std::vector<std::pair<std::string, ShaderVariant*>> g_variant_jobs;
+
+// Key words: stage count, early depth, swaps, indirect, then five words per stage (the stage and its indirect setup).
+std::string variant_key(const Constants& constants, bool early_depth) {
+    uint32_t words[kVariantHeader + kMaxStages * 5] = {};
+    uint32_t count = std::min(constants.header[0], kMaxStages);
+    words[0] = count;
+    words[1] = early_depth ? 1 : 0;
+    std::memcpy(words + 2, constants.swaps, sizeof constants.swaps);
+    std::memcpy(words + 6, constants.indirect, sizeof constants.indirect);
+    for (uint32_t i = 0; i < count; i++) {
+        std::memcpy(words + kVariantHeader + i * 5, constants.stage[i], sizeof constants.stage[i]);
+        words[kVariantHeader + i * 5 + 4] = constants.tevind[i][0];
+    }
+    return std::string(reinterpret_cast<const char*>(words), (kVariantHeader + count * 5) * sizeof(uint32_t));
+}
+
+std::string variant_source(const std::string& key) {
+    std::vector<uint32_t> words(key.size() / sizeof(uint32_t));
+    std::memcpy(words.data(), key.data(), key.size());
+    uint32_t count = words[0];
+    std::string source = kShaderSource;
+    auto replace = [&source](const char* from, const std::string& to) {
+        size_t at = source.find(from);
+        if (at != std::string::npos) {
+            source.replace(at, std::strlen(from), to);
+        }
+    };
+    auto vector = [](const uint32_t* v) {
+        char text[96];
+        std::snprintf(text, sizeof text, "uint4(%uu, %uu, %uu, %uu)", v[0], v[1], v[2], v[3]);
+        return std::string(text);
+    };
+    std::string stages = "static const uint4 stage[16] = {";
+    std::string indirects = "static const uint4 tevind[16] = {";
+    const uint32_t zero[4] = {};
+    for (uint32_t i = 0; i < kMaxStages; i++) {
+        const uint32_t* stage = i < count ? &words[kVariantHeader + i * 5] : zero;
+        const uint32_t indirect[4] = {i < count ? words[kVariantHeader + i * 5 + 4] : 0, 0, 0, 0};
+        stages += vector(stage) + (i + 1 < kMaxStages ? ", " : "};\n");
+        indirects += vector(indirect) + (i + 1 < kMaxStages ? ", " : "};\n");
+    }
+    // The constant buffer keeps its layout; the members that became constants only change name.
+    replace("    uint4 stage[16];", "    uint4 stage_slot[16];");
+    replace("    uint4 swaps;", "    uint4 swaps_slot;");
+    replace("    uint4 indirect;", "    uint4 indirect_slot;");
+    replace("    uint4 tevind[16];", "    uint4 tevind_slot[16];");
+    replace("Texture2D t0 : register(t0);", stages + indirects + "static const uint4 swaps = " + vector(&words[2]) + ";\nstatic const uint4 indirect = " +
+                                                vector(&words[6]) + ";\nTexture2D t0 : register(t0);");
+    replace("uint count = header.x;", "const uint count = " + std::to_string(count) + ";");
+    uint32_t indirect_stages = std::min(words[6] & 7, 4u);
+    if (indirect_stages > 0) {
+        replace("for (uint j = 0; j < indirect_stages && j < 4; j++)", "[unroll] for (uint j = 0; j < " + std::to_string(indirect_stages) + "; j++)");
+    }
+    if (count > 0) {
+        replace("for (uint i = 0; i < count; i++)", "[unroll] for (uint i = 0; i < " + std::to_string(count) + "; i++)");
+    }
+    if (words[1] != 0) {
+        replace("PixelOutput pixel_main(", "[earlydepthstencil] PixelOutput pixel_main(");
+    }
+    return source;
+}
+
+void variant_worker() {
+    for (;;) {
+        std::pair<std::string, ShaderVariant*> job;
+        {
+            std::unique_lock<std::mutex> lock(g_variant_mutex);
+            g_variant_wake.wait(lock, [] { return !g_variant_jobs.empty(); });
+            job = std::move(g_variant_jobs.back());
+            g_variant_jobs.pop_back();
+        }
+        ID3DBlob* code = nullptr;
+        ID3D11PixelShader* shader = nullptr;
+        // A variant that does not compile stays null: the generic shader keeps drawing it.
+        if (compile(variant_source(job.first).c_str(), "pixel_main", "ps_5_0", &code)) {
+            g_device.device->CreatePixelShader(code->GetBufferPointer(), code->GetBufferSize(), nullptr, &shader);
+            release(code);
+        }
+        job.second->shader = shader;
+    }
+}
+
+// WP_GENERIC_SHADER=1 draws everything with the generic shader, to tell a specialisation fault from a renderer one.
+ID3D11PixelShader* variant_for(const Constants& constants, bool early_depth) {
+    static const bool generic = std::getenv("WP_GENERIC_SHADER") != nullptr;
+    if (generic) {
+        return nullptr;
+    }
+    std::string key = variant_key(constants, early_depth);
+    auto found = g_variants.find(key);
+    if (found == g_variants.end()) {
+        [[maybe_unused]] static const bool started = (std::thread(variant_worker).detach(), true);
+        found = g_variants.try_emplace(key).first;
+        {
+            std::lock_guard<std::mutex> lock(g_variant_mutex);
+            g_variant_jobs.emplace_back(key, &found->second);
+        }
+        g_variant_wake.notify_one();
+    }
+    return found->second.shader.load();
+}
+
 void flush_pending() {
     PendingBatch& pending = g_pending;
     if (pending.vertices.empty()) {
@@ -1297,7 +1415,8 @@ void flush_pending() {
     context->IASetInputLayout(g_device.layout);
     context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     context->VSSetShader(g_device.vertex_shader, nullptr, 0);
-    context->PSSetShader(pending.early_depth ? g_device.early_pixel_shader : g_device.pixel_shader, nullptr, 0);
+    ID3D11PixelShader* variant = variant_for(pending.constants, pending.early_depth);
+    context->PSSetShader(variant ? variant : (pending.early_depth ? g_device.early_pixel_shader : g_device.pixel_shader), nullptr, 0);
     context->PSSetConstantBuffers(0, 1, &g_device.constants);
     size_t total = pending.vertices.size();
     size_t offset = 0;

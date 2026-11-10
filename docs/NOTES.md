@@ -87,5 +87,12 @@ delivered at the very next poll site, even when interrupts were masked at the fi
 Draw done and tokens wait for pending copies to reach RAM, like the console. Not waiting was tried and reverted:
 a late write can land in memory the game has already reused. Dolphin needs RAM copies for this game only for the
 snapshot feature. All pending copies share one staging atlas, so a frame costs two GPU synchronisations instead of
-about forty. What remains is the GPU finishing the frame: about 5 ms at 1x, 10 ms at 3x and 28 ms at 6x in the first
-cave, which is why 6x cannot hold 30 fps there yet.
+about forty. 
+## Specialised pixel shaders
+
+The generic pixel shader interprets the TEV stages for every pixel. At 6x that took about 8 ms of GPU time per frame
+in the first cave, and with the read-back wait the game could not hold 30 fps (24 fps measured). Each TEV
+configuration now gets its own variant of the same source, with the stages, swap tables and indirect setup turned
+into constants so the compiler folds the interpreter away (about 30 ms to compile, on a worker thread; the generic
+shader draws until the variant is ready). Same scene at 6x: 30 fps. `WP_GENERIC_SHADER=1` turns the variants off.
+The OpenGL renderer still uses the generic shader only.
