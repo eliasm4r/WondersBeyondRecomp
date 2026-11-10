@@ -686,6 +686,8 @@ void test_gx_logic_ops() {
     CHECK(!disabled.enable && !disabled.logic_op && disabled.output == LogicSource::Tev);
 }
 
+[[gnu::used]] const char kTestSalt[] = "TSALT22826";
+
 void test_texture_keys() {
     using wp::gx::texture_key;
     // The old XOR key mixed address << 20 with height << 32: these two textures shared an entry.
@@ -698,6 +700,59 @@ void test_texture_keys() {
     CHECK(texture_key(image0_small, 0x1000, 0, 0x001) != texture_key(image0_small, 0x1000, 0, 0x400));
     CHECK(texture_key(image0_small, 0x1000, 12, 0xFFF) == texture_key(image0_small, 0x1000, 12, 0xFFF));
     CHECK(texture_key(0xFFFFFF, 0xFFFFFF, 15, 0xFFF) == ~0ull);
+}
+
+void test_fit_motion() {
+    const float camera[4][4] = {{0.99f, 0.0f, 0.00000002f, 0.03f}, {0.0f, 1.0f, 0.0f, -0.01f}, {50000.0f, 0.0f, 0.98f, 100000.0f}, {0.01f, 0.0f, 0.0f, 1.02f}};
+    std::mt19937 random(7);
+    std::uniform_real_distribution<float> unit(-1.0f, 1.0f);
+    std::vector<std::array<float, 4>> from;
+    std::vector<std::array<float, 4>> to;
+    for (int i = 0; i < 300; i++) {
+        float w = 5.0f + 100.0f * std::fabs(unit(random));
+        std::array<float, 4> f = {unit(random) * w, unit(random) * w, 16000000.0f * (0.5f + 0.4f * unit(random)) * w, w};
+        std::array<float, 4> t{};
+        for (int r = 0; r < 4; r++) {
+            for (int c = 0; c < 4; c++) {
+                t[r] += camera[r][c] * f[c];
+            }
+        }
+        if (i % 5 == 0) {
+            t[0] += 0.3f * w;
+            t[1] -= 0.2f * w;
+        }
+        from.push_back(f);
+        to.push_back(t);
+    }
+    auto points = [](const std::vector<std::array<float, 4>>& list) { return reinterpret_cast<const float(*)[4]>(list.data()); };
+    float fitted[4][4];
+    CHECK(wp::gx::fit_motion(points(from), points(to), from.size(), fitted));
+    for (size_t i = 1; i < from.size(); i += 7) {
+        if (i % 5 == 0) {
+            continue;
+        }
+        for (int r : {0, 1, 3}) {
+            float value = 0.0f;
+            for (int c = 0; c < 4; c++) {
+                value += fitted[r][c] * from[i][c];
+            }
+            CHECK(std::fabs(value - to[i][r]) < 0.002f * to[i][3]);
+        }
+    }
+    for (auto& t : to) {
+        t = {unit(random) * 50.0f, unit(random) * 50.0f, 0.0f, 50.0f};
+    }
+    CHECK(!wp::gx::fit_motion(points(from), points(to), from.size(), fitted));
+    CHECK(!wp::gx::fit_motion(points(from), points(to), 5, fitted));
+    from.clear();
+    to.clear();
+    for (int i = 0; i < 40; i++) {
+        std::array<float, 4> f = {unit(random), unit(random), 1000.0f, 1.0f};
+        from.push_back(f);
+        to.push_back({f[0] + 0.1f, f[1], f[2], f[3]});
+    }
+    CHECK(wp::gx::fit_motion(points(from), points(to), from.size(), fitted));
+    CHECK(std::fabs(fitted[0][0] * 0.5f + fitted[0][1] * 0.25f + fitted[0][2] * 1000.0f + fitted[0][3] - 0.6f) < 0.001f);
 }
 
 void test_gx_line_point_offsets() {
@@ -799,16 +854,37 @@ void test_key_defaults() {
     CHECK(format(keys.of(Action::Plus)) == "Plus,NumPlus");
     CHECK(format(keys.of(Action::Minus)) == "Minus,NumMinus");
     CHECK(format(keys.of(Action::Home)) == "H");
-    CHECK(format(keys.of(Action::Up)) == "Up,W");
     CHECK(format(keys.of(Action::Right)) == "Right,D");
+    CHECK(std::string(action(Action::Up).defaults) == "Up,W");
+    auto azerty = [](int letter) { return letter == 'W' ? 'Z' : letter == 'Z' ? 'W' : letter == 'A' ? 'Q' : letter == 'Q' ? 'A' : letter; };
+    CHECK(localize("Up,W", azerty) == "Up,Z");
+    CHECK(localize("Left,A", azerty) == "Left,Q");
+    CHECK(localize("Q", azerty) == "A");
+    CHECK(localize("Enter,Space,MouseLeft", azerty) == "Enter,Space,MouseLeft");
+    auto us_file = [](const std::string& key) {
+        for (size_t i = 0; i < kActionCount; i++) {
+            if (setting_key(i) == key) {
+                return std::string(action(static_cast<Action>(i)).defaults);
+            }
+        }
+        return std::string();
+    };
+    std::vector<size_t> pending = unlocalized(us_file);
+    for (size_t i = 0; i < kActionCount; i++) {
+        CHECK((std::find(pending.begin(), pending.end(), i) != pending.end()) == (local_defaults(i) != action(static_cast<Action>(i)).defaults));
+    }
+    if (!pending.empty()) {
+        std::string changed = setting_key(pending[0]);
+        CHECK(unlocalized([&](const std::string& key) { return key == changed ? std::string("F8") : us_file(key); }).empty());
+    }
     std::vector<std::string> ignored;
     auto old_file = [](const std::string& key) {
         return std::string(key == "keys.up" ? "Up,A" : key == "keys.down" ? "Down,D" : key == "keys.left" ? "left, s" : key == "keys.right" ? "Right,W" : key == "keys.a" ? "Z" : "");
     };
     CHECK(legacy_directions(old_file));
     Bindings upgraded = load(old_file, ignored);
-    CHECK(format(upgraded.of(Action::Left)) == "Left,A");
-    CHECK(format(upgraded.of(Action::Down)) == "Down,S");
+    CHECK(format(upgraded.of(Action::Left)) == local_defaults(static_cast<size_t>(Action::Left)));
+    CHECK(format(upgraded.of(Action::Down)) == local_defaults(static_cast<size_t>(Action::Down)));
     CHECK(format(upgraded.of(Action::A)) == "Z");
     auto custom_file = [](const std::string& key) {
         return std::string(key == "keys.up" ? "Up,A" : key == "keys.down" ? "Down,D" : key == "keys.left" ? "Left,S" : key == "keys.right" ? "Right,K" : "");
@@ -823,7 +899,8 @@ void test_key_defaults() {
     CHECK(setting_key(static_cast<size_t>(Action::Screenshot)) == "keys.screenshot");
     CHECK(action(Action::A).buttons == wp::input::kButtonA);
     CHECK(action(Action::TiltDown).buttons == wp::input::kMotionTiltDown);
-    CHECK(format(keys.of(Action::MouseMotion)) == "Z");
+    CHECK(std::string(action(Action::MouseMotion).defaults) == "Z");
+    CHECK(format(keys.of(Action::MouseMotion)) == local_defaults(static_cast<size_t>(Action::MouseMotion)));
     CHECK(action(Action::MouseMotion).buttons == 0);
     wp::input::MouseMotionState mouse;
     CHECK(wp::input::mouse_motion(mouse, false, 0, 0, 0) == 0);
@@ -1106,6 +1183,11 @@ void test_options_menu() {
     CHECK(wp::settings::number("audio.volume", nullptr) == 50);
     CHECK(menu.rows()[0].fraction == 0.5);
     CHECK(menu.set_fraction(1, 0.5).empty());
+    menu.select(1);
+    CHECK(menu.rows()[1].kind == wp::options::Kind::Toggle);
+    CHECK(menu.handle(wp::options::Action::Next).empty());
+    CHECK(menu.handle(wp::options::Action::Previous).empty());
+    CHECK(menu.handle(wp::options::Action::Accept) == menu.rows()[1].key);
     CHECK(menu.handle(wp::options::Action::TabPrevious).empty());
     CHECK(menu.tab() == 2);
     CHECK(menu.handle(wp::options::Action::Close).empty());
@@ -1364,6 +1446,7 @@ int main() {
     test_gx_logic_ops();
     test_gx_line_point_offsets();
     test_texture_keys();
+    test_fit_motion();
     test_key_names();
     test_key_defaults();
     test_settings_file_keys();

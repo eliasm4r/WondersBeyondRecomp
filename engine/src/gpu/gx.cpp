@@ -151,13 +151,12 @@ struct Layout {
 };
 
 struct Vertex {
-    float position[3] = {0, 0, 0};
-    float normal[3] = {0, 0, 1};
-    float color[2][4] = {{1, 1, 1, 1}, {1, 1, 1, 1}};
-    float texture[kTexCoordCount][2] = {};
-    uint32_t position_matrix = 0;
-    uint32_t texture_matrix[kTexCoordCount] = {};
-    bool has_color[2] = {false, false};
+    float position[3];
+    float normal[3];
+    uint8_t color[2][4];
+    float texture[kTexCoordCount][2];
+    uint32_t position_matrix;
+    uint32_t texture_matrix[kTexCoordCount];
 };
 
 std::vector<uint8_t> g_fifo;
@@ -363,49 +362,64 @@ float read_normal_component(const uint8_t* p, uint32_t format) {
     }
 }
 
-void read_color(const uint8_t* p, uint32_t format, float* out) {
-    float r = 1, g = 1, b = 1, a = 1;
+uint8_t color_byte(float value) {
+    return static_cast<uint8_t>(std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f);
+}
+
+template <int Bits>
+const std::array<uint8_t, 1 << Bits> kExpand = [] {
+    std::array<uint8_t, 1 << Bits> table{};
+    for (int i = 0; i < (1 << Bits); i++) {
+        table[i] = color_byte(i / static_cast<float>((1 << Bits) - 1));
+    }
+    return table;
+}();
+
+const std::array<float, 256> kUnit = [] {
+    std::array<float, 256> table{};
+    for (int i = 0; i < 256; i++) {
+        table[i] = static_cast<float>(i) / 255.0f;
+    }
+    return table;
+}();
+
+void read_color(const uint8_t* p, uint32_t format, uint8_t* out) {
     switch (format) {
     case 0: {
         uint32_t v = be16(p);
-        r = ((v >> 11) & 31) / 31.0f;
-        g = ((v >> 5) & 63) / 63.0f;
-        b = (v & 31) / 31.0f;
+        out[0] = kExpand<5>[(v >> 11) & 31];
+        out[1] = kExpand<6>[(v >> 5) & 63];
+        out[2] = kExpand<5>[v & 31];
+        out[3] = 255;
         break;
     }
     case 1:
     case 2:
-        r = p[0] / 255.0f;
-        g = p[1] / 255.0f;
-        b = p[2] / 255.0f;
+        out[0] = p[0];
+        out[1] = p[1];
+        out[2] = p[2];
+        out[3] = 255;
         break;
     case 3: {
         uint32_t v = be16(p);
-        r = ((v >> 12) & 15) / 15.0f;
-        g = ((v >> 8) & 15) / 15.0f;
-        b = ((v >> 4) & 15) / 15.0f;
-        a = (v & 15) / 15.0f;
+        out[0] = kExpand<4>[(v >> 12) & 15];
+        out[1] = kExpand<4>[(v >> 8) & 15];
+        out[2] = kExpand<4>[(v >> 4) & 15];
+        out[3] = kExpand<4>[v & 15];
         break;
     }
     case 4: {
         uint32_t v = (static_cast<uint32_t>(p[0]) << 16) | (static_cast<uint32_t>(p[1]) << 8) | p[2];
-        r = ((v >> 18) & 63) / 63.0f;
-        g = ((v >> 12) & 63) / 63.0f;
-        b = ((v >> 6) & 63) / 63.0f;
-        a = (v & 63) / 63.0f;
+        out[0] = kExpand<6>[(v >> 18) & 63];
+        out[1] = kExpand<6>[(v >> 12) & 63];
+        out[2] = kExpand<6>[(v >> 6) & 63];
+        out[3] = kExpand<6>[v & 63];
         break;
     }
     default:
-        r = p[0] / 255.0f;
-        g = p[1] / 255.0f;
-        b = p[2] / 255.0f;
-        a = p[3] / 255.0f;
+        std::memcpy(out, p, 4);
         break;
     }
-    out[0] = r;
-    out[1] = g;
-    out[2] = b;
-    out[3] = a;
 }
 
 struct ArrayState {
@@ -466,15 +480,12 @@ const uint8_t* fetch(const Element& element, uint32_t array, const uint8_t*& str
     return array_element(array, index);
 }
 
-Vertex decode_vertex(const Layout& layout, const uint8_t*& stream) {
-    Vertex vertex;
-    vertex.position_matrix = g_xf[0x1018] & 0x3F;
+void decode_vertex(const Layout& layout, const uint8_t*& stream, Vertex& vertex) {
     if (layout.position_matrix) {
         vertex.position_matrix = stream[0] & 0x3F;
         stream++;
     }
     for (uint32_t i = 0; i < kTexCoordCount; i++) {
-        vertex.texture_matrix[i] = g_default_texture_matrix[i];
         if (layout.texture_matrices & (1u << i)) {
             vertex.texture_matrix[i] = stream[0] & 0x3F;
             stream++;
@@ -496,9 +507,7 @@ Vertex decode_vertex(const Layout& layout, const uint8_t*& stream) {
     }
     for (uint32_t k = 0; k < 2; k++) {
         if (layout.color[k].mode != kNone) {
-            const uint8_t* p = fetch(layout.color[k], 2 + k, stream);
-            read_color(p, layout.color[k].format, vertex.color[k]);
-            vertex.has_color[k] = true;
+            read_color(fetch(layout.color[k], 2 + k, stream), layout.color[k].format, vertex.color[k]);
         }
     }
     for (uint32_t k = 0; k < kTexCoordCount; k++) {
@@ -511,33 +520,63 @@ Vertex decode_vertex(const Layout& layout, const uint8_t*& stream) {
             }
         }
     }
-    return vertex;
 }
 
-uint8_t color_byte(float value) {
-    return static_cast<uint8_t>(std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f);
-}
-
-void rasterize_colors(const Vertex& vertex, const float* eye, float out[2][4]) {
-    uint8_t vertex_color[2][4];
+void begin_vertex(Vertex& vertex) {
+    std::memset(&vertex, 0, sizeof vertex);
+    vertex.normal[2] = 1.0f;
     for (uint32_t k = 0; k < 2; k++) {
         uint32_t material = g_xf[0x100C + k];
         for (uint32_t i = 0; i < 4; i++) {
-            vertex_color[k][i] = vertex.has_color[k] ? color_byte(vertex.color[k][i]) : static_cast<uint8_t>(material >> (24 - 8 * i));
+            vertex.color[k][i] = static_cast<uint8_t>(material >> (24 - 8 * i));
         }
     }
-    float normal[3] = {0, 0, 1};
-    if ((g_xf[0x100E] | g_xf[0x100F] | g_xf[0x1010] | g_xf[0x1011]) & 2) {
-        lighting::transform_normal(g_xf, vertex.position_matrix, vertex.normal, normal);
-    }
-    uint8_t result[2][4];
-    lighting::light_channels(eye, normal, vertex_color, result);
+    vertex.position_matrix = g_xf[0x1018] & 0x3F;
+    std::memcpy(vertex.texture_matrix, g_default_texture_matrix, sizeof vertex.texture_matrix);
+}
+
+
+struct ColorState {
+    bool lit;
+    bool from_vertex[2][2];
+    uint8_t material[2][4];
+};
+
+ColorState g_colors;
+
+void begin_colors() {
+    g_colors.lit = ((g_xf[0x100E] | g_xf[0x100F] | g_xf[0x1010] | g_xf[0x1011]) & 2) != 0;
     for (uint32_t k = 0; k < 2; k++) {
+        g_colors.from_vertex[k][0] = (g_xf[0x100E + k] & 1) != 0;
+        g_colors.from_vertex[k][1] = (g_xf[0x1010 + k] & 1) != 0;
         for (uint32_t i = 0; i < 4; i++) {
-            out[k][i] = static_cast<float>(result[k][i]) / 255.0f;
+            g_colors.material[k][i] = static_cast<uint8_t>(g_xf[0x100C + k] >> (24 - 8 * i));
         }
     }
 }
+
+void rasterize_colors(const Vertex& vertex, const float* eye, float out[2][4]) {
+    uint8_t result[2][4];
+    if (g_colors.lit) {
+        float normal[3];
+        lighting::transform_normal(g_xf, vertex.position_matrix, vertex.normal, normal);
+        lighting::light_channels(eye, normal, vertex.color, result);
+    } else {
+        for (uint32_t k = 0; k < 2; k++) {
+            const uint8_t* color = g_colors.from_vertex[k][0] ? vertex.color[k] : g_colors.material[k];
+            result[k][0] = color[0];
+            result[k][1] = color[1];
+            result[k][2] = color[2];
+            result[k][3] = g_colors.from_vertex[k][1] ? vertex.color[k][3] : g_colors.material[k][3];
+        }
+    }
+    for (uint32_t k = 0; k < 2; k++) {
+        for (uint32_t i = 0; i < 4; i++) {
+            out[k][i] = kUnit[result[k][i]];
+        }
+    }
+}
+
 
 void transform_position(const Vertex& vertex, float* eye) {
     uint32_t base = vertex.position_matrix * 4;
@@ -688,8 +727,7 @@ struct Prepared {
     bool valid;
 };
 
-Prepared prepare(const Vertex& vertex) {
-    Prepared prepared;
+void prepare(const Vertex& vertex, Prepared& prepared) {
     std::memset(&prepared.vertex, 0, sizeof prepared.vertex);
     float eye[3];
     transform_position(vertex, eye);
@@ -701,8 +739,8 @@ Prepared prepare(const Vertex& vertex) {
     prepared.vertex.w = screen[3];
     rasterize_colors(vertex, eye, prepared.vertex.color);
     generate_texture_coordinates(vertex, prepared.vertex.uv);
-    return prepared;
 }
+
 
 bool culled(const ScreenVertex& a, const ScreenVertex& b, const ScreenVertex& c) {
     uint32_t mode = (g_bp[0x00] >> 14) & 3;
@@ -717,6 +755,11 @@ bool culled(const ScreenVertex& a, const ScreenVertex& b, const ScreenVertex& c)
     return mode == 1 ? !front : front;
 }
 
+bool g_recording = false;
+bool g_in_list = false;
+const Prepared* g_prepared = nullptr;
+std::vector<uint16_t> g_source_of;
+
 void emit_triangle(std::vector<ScreenVertex>& out, const Prepared& a, const Prepared& b, const Prepared& c) {
     if (!a.valid || !b.valid || !c.valid || culled(a.vertex, b.vertex, c.vertex)) {
         return;
@@ -724,6 +767,38 @@ void emit_triangle(std::vector<ScreenVertex>& out, const Prepared& a, const Prep
     out.push_back(a.vertex);
     out.push_back(b.vertex);
     out.push_back(c.vertex);
+    if (g_recording) {
+        g_source_of.push_back(static_cast<uint16_t>(&a - g_prepared));
+        g_source_of.push_back(static_cast<uint16_t>(&b - g_prepared));
+        g_source_of.push_back(static_cast<uint16_t>(&c - g_prepared));
+    }
+}
+
+uint64_t draw_key(uint8_t command, uint32_t count, const Layout& layout, const uint8_t* data) {
+    uint32_t vat = command & 7;
+    uint64_t words[8] = {command | (static_cast<uint64_t>(count) << 8), g_vcd_low | (static_cast<uint64_t>(g_vcd_high) << 32), g_vat[0][vat],
+                         g_vat[1][vat] | (static_cast<uint64_t>(g_vat[2][vat]) << 32), g_bp[0x94], g_bp[0x88], 0, 0};
+    uint64_t hash = 0x9E3779B97F4A7C15ull;
+    auto mix = [&hash](uint64_t value) {
+        hash = (hash ^ value) * 0xFF51AFD7ED558CCDull;
+        hash ^= hash >> 32;
+    };
+    for (uint64_t word : words) {
+        mix(word);
+    }
+    if (layout.position.mode == kIndex8 || layout.position.mode == kIndex16) {
+        size_t bytes = static_cast<size_t>(count) * layout.size;
+        size_t i = 0;
+        for (; i + 8 <= bytes; i += 8) {
+            uint64_t word;
+            std::memcpy(&word, data + i, 8);
+            mix(word);
+        }
+        for (; i < bytes; i++) {
+            mix(data[i] | 0x100);
+        }
+    }
+    return hash | 1;
 }
 
 uint32_t g_indirect_draws = 0;
@@ -784,6 +859,9 @@ void emit_unculled(std::vector<ScreenVertex>& out, const ScreenVertex& a, const 
     out.push_back(a);
     out.push_back(b);
     out.push_back(c);
+    if (g_recording) {
+        g_source_of.insert(g_source_of.end(), 3, render::kNoSource);
+    }
 }
 
 ScreenVertex shifted(const ScreenVertex& vertex, float dx, float dy) {
@@ -914,20 +992,25 @@ void draw_primitive(uint8_t command, const uint8_t* data, uint32_t count) {
     begin_texture_coordinates();
     begin_projection();
     const Layout& layout = make_layout(command & 7);
+    begin_colors();
     static std::vector<Prepared> vertices;
-    vertices.clear();
-    vertices.reserve(count);
+    vertices.resize(count);
     const uint8_t* stream = data;
     Vertex raw[3];
+    Vertex vertex;
+    begin_vertex(vertex);
     for (uint32_t i = 0; i < count; i++) {
-        Vertex vertex = decode_vertex(layout, stream);
+        decode_vertex(layout, stream, vertex);
         if (i < 3) {
             raw[i] = vertex;
         }
-        vertices.push_back(prepare(vertex));
+        prepare(vertex, vertices[i]);
     }
     static std::vector<ScreenVertex> triangles;
     triangles.clear();
+    g_recording = render::interpolating();
+    g_prepared = vertices.data();
+    g_source_of.clear();
     uint32_t primitive = (command >> 3) & 7;
     switch (primitive) {
     case 0:
@@ -988,7 +1071,32 @@ void draw_primitive(uint8_t command, const uint8_t* data, uint32_t count) {
     if (g_capture) {
         capture_draw(command, count, triangles.size() / 3, layout, raw, vertices);
     }
-    render::draw(triangles.data(), static_cast<uint32_t>(triangles.size()));
+    if (g_recording && count <= render::kNoSource) {
+        static std::vector<std::array<float, 4>> positions;
+        positions.resize(count);
+        for (uint32_t i = 0; i < count; i++) {
+            const ScreenVertex& v = vertices[i].vertex;
+            positions[i] = {vertices[i].valid ? v.x : NAN, v.y, v.z, v.w};
+        }
+        render::DrawSource source;
+        source.key = primitive < 5 ? draw_key(command, count, layout, data) : 0;
+        if (source.key != 0) {
+            bool indexed = layout.position.mode == kIndex8 || layout.position.mode == kIndex16;
+            if (indexed || g_in_list) {
+                uint64_t origin = indexed ? g_array_base[0] : reinterpret_cast<uintptr_t>(data);
+                source.exact = ((source.key ^ origin) * 0xFF51AFD7ED558CCDull) | 1;
+            }
+        }
+        for (uint32_t reg = 0x101A; reg <= 0x1026; reg++) {
+            source.camera = (source.camera ^ g_xf[reg]) * 0x9E3779B1u;
+        }
+        source.positions = reinterpret_cast<const float(*)[4]>(positions.data());
+        source.count = count;
+        source.source_of = g_source_of.data();
+        render::draw(triangles.data(), static_cast<uint32_t>(triangles.size()), &source);
+    } else {
+        render::draw(triangles.data(), static_cast<uint32_t>(triangles.size()));
+    }
 }
 
 void report_copy() {
@@ -1071,6 +1179,10 @@ render::CopyFilter copy_filter(uint32_t control) {
     return filter;
 }
 
+std::atomic<uint32_t> g_frame_holds{0};
+std::atomic<uint32_t> g_long_holds{0};
+std::atomic<bool> g_frame_late{false};
+
 void execute_copy(uint32_t value) {
     g_copy_total++;
     report_copy();
@@ -1100,6 +1212,7 @@ void execute_copy(uint32_t value) {
             }
             double seconds = std::chrono::duration<double>(now - g_fps_start).count();
             if (seconds >= 1.0) {
+                g_frames += static_cast<int>(render::take_interpolated_frames());
                 uint32_t batches = 0;
                 uint32_t vertices = 0;
                 double batch_seconds = 0.0;
@@ -1119,7 +1232,8 @@ void execute_copy(uint32_t value) {
                 static const ThreadClock gpu_clock = current_thread_clock();
                 double gpu = thread_seconds(gpu_clock);
                 log::write("copies", "%u EFB copies written back to RAM, %.1f ms waiting for the GPU", write_backs, write_back_seconds * 1000.0);
-                log::write("memory", "%zu MB private memory, %zu KB of graphics commands queued", private_memory_mb(), g_queued_bytes.load() >> 10);
+                log::write("memory", "%zu MB private memory, %zu KB of graphics commands queued, timers held %u times for a token, %u for over 1 ms", private_memory_mb(),
+                           g_queued_bytes.load() >> 10, g_frame_holds.exchange(0), g_long_holds.exchange(0));
                 double idle = idle_share();
                 if (idle >= 0.0) {
                     log::write("threads", "CPU thread busy %.0f%% (guest idle %.0f%%), GPU thread busy %.0f%%", (cpu - previous_cpu) * 100.0 / seconds, idle * 100.0, (gpu - previous_gpu) * 100.0 / seconds);
@@ -1162,6 +1276,8 @@ void execute_copy(uint32_t value) {
 std::atomic<bool> g_finish_pending{false};
 std::atomic<bool> g_token_pending{false};
 std::atomic<uint32_t> g_token{0};
+std::atomic<uint32_t> g_token_sent{0};
+std::atomic<uint32_t> g_token_done{0};
 
 uint64_t g_register_serial = 0;
 
@@ -1185,12 +1301,15 @@ void load_bp(uint32_t word) {
     if (reg == kBpDrawDone && (value & 2)) {
         render::finish_copies();
         g_finish_pending = true;
+        render::finish_frame();
     } else if (reg == kBpToken || reg == kBpTokenInterrupt) {
         render::finish_copies();
         g_token = value & 0xFFFF;
         if (reg == kBpTokenInterrupt) {
             g_token_pending = true;
+            g_token_done = value & 0xFFFF;
         }
+        render::finish_frame();
     } else if (reg == kBpCopyExecute) {
         execute_copy(g_bp[reg]);
     } else if (reg == kBpInvalidateTexture) {
@@ -1288,7 +1407,9 @@ size_t parse_one(const uint8_t* data, size_t size, bool list) {
             return 9;
         }
         if (!list) {
+            g_in_list = true;
             parse(host(address), length, true);
+            g_in_list = false;
         }
         return 9;
     }
@@ -1437,6 +1558,11 @@ void push(uint64_t value, unsigned bytes) {
     if (record_display_list(data, bytes)) {
         return;
     }
+    static bool bp_next = false;
+    if (bytes == 4 && bp_next && (value >> 24) == kBpTokenInterrupt) {
+        g_token_sent = static_cast<uint32_t>(value) & 0xFFFF;
+    }
+    bp_next = bytes == 1 && value == 0x61;
     if (linked_mode()) {
         for (unsigned i = 0; i < bytes; i++) {
             g_gather_pipe[g_gather_count++] = data[i];
@@ -1463,6 +1589,34 @@ bool take_token_interrupt() {
     bool pending = (register16(kPeControl) & kPeTokenEnable) && g_token_pending.exchange(false);
     store16(kPeToken, static_cast<uint16_t>(g_token.load()));
     return pending;
+}
+
+bool frame_owed() {
+    static bool holding = false;
+    static std::chrono::steady_clock::time_point since;
+    bool unreached = g_token_sent.load() != g_token_done.load();
+    bool owed = unreached || (g_token_pending.load() && (register16(kPeControl) & kPeTokenEnable));
+    if (!owed) {
+        holding = false;
+        return false;
+    }
+    auto now = std::chrono::steady_clock::now();
+    if (!holding) {
+        holding = true;
+        since = now;
+        g_frame_holds++;
+    }
+    if (now - since > std::chrono::milliseconds(100)) {
+        return false;
+    }
+    if (unreached && now - since > std::chrono::milliseconds(1) && !g_frame_late.exchange(true)) {
+        g_long_holds++;
+    }
+    return true;
+}
+
+bool take_frame_held() {
+    return g_frame_late.exchange(false);
 }
 
 void write_pixel_engine_control(uint16_t value) {
@@ -1513,6 +1667,7 @@ const bool g_threaded = [] {
 }();
 
 
+
 void gpu_thread() {
     std::vector<uint8_t> buffer;
     while (true) {
@@ -1520,14 +1675,26 @@ void gpu_thread() {
         if (g_gpu.items.empty()) {
             hold.unlock();
             render::finish_copies();
+            render::finish_frame();
             hold.lock();
         }
-        g_gpu.work.wait(hold, [] { return !g_gpu.items.empty(); });
+        while (g_gpu.items.empty()) {
+            hold.unlock();
+            bool waiting = render::service_presents();
+            if (waiting) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            hold.lock();
+            if (!waiting) {
+                g_gpu.work.wait(hold, [] { return !g_gpu.items.empty(); });
+            }
+        }
         GpuItem item = std::move(g_gpu.items.front());
         g_gpu.items.pop_front();
         g_queued_bytes -= item.bytes.size();
         hold.unlock();
         g_gpu.space.notify_all();
+        render::service_presents();
         if (!item.bytes.empty()) {
             buffer.insert(buffer.end(), item.bytes.begin(), item.bytes.end());
             size_t used = parse(buffer.data(), buffer.size(), false);
@@ -1564,6 +1731,10 @@ void enqueue(GpuItem item) {
     g_gpu.work.notify_one();
 }
 
+}
+
+size_t gpu_backlog() {
+    return g_queued_bytes.load();
 }
 
 void process() {

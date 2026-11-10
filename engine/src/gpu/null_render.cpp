@@ -34,7 +34,21 @@ const char* api_name() {
     return "no renderer";
 }
 
-void draw(const ScreenVertex*, uint32_t count) {
+bool interpolating() {
+    return false;
+}
+
+void finish_frame() {}
+
+bool service_presents() {
+    return false;
+}
+
+uint32_t take_interpolated_frames() {
+    return 0;
+}
+
+void draw(const ScreenVertex*, uint32_t count, const DrawSource*) {
     g_batches++;
     g_vertices += count;
 }

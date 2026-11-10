@@ -1,5 +1,6 @@
 #ifdef _WIN32
 #include <windows.h>
+#include <timeapi.h>
 #endif
 
 #include <chrono>
@@ -20,6 +21,7 @@
 #include "wp/disc.h"
 #include "wp/dol.h"
 #include "wp/game.h"
+#include "wp/input.h"
 #include "wp/log.h"
 #include "wp/nand.h"
 #include "wp/ipc.h"
@@ -119,6 +121,7 @@ void report_terminate() {
 
 int run(int argc, char** argv) {
     wp::settings::load(wp::game::description().settings_file);
+    wp::input::follow_keyboard_layout();
     std::string extracted = argc > 1 ? argv[1] : wp::game::description().data_directory;
     int timeout_seconds = argc > 2 ? std::atoi(argv[2]) : 0;
 
@@ -187,6 +190,7 @@ int main(int argc, char** argv) {
     std::setvbuf(stderr, nullptr, _IONBF, 0);
 #ifdef _WIN32
     SetUnhandledExceptionFilter(report_crash);
+    timeBeginPeriod(1);
     std::signal(SIGSEGV, report_crash);
     std::signal(SIGILL, report_crash);
     std::signal(SIGFPE, report_crash);

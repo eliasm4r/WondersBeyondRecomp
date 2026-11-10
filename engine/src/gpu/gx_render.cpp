@@ -1,4 +1,5 @@
 #include "wp/gx_render.h"
+#include "wp/gx.h"
 #include "wp/log.h"
 
 #include "gx_render_common.h"
@@ -9,9 +10,11 @@
 #include <dxgi1_2.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <deque>
 #include <mutex>
 #include <thread>
 #include <cmath>
@@ -19,6 +22,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <string>
 #include <unordered_map>
@@ -40,7 +44,7 @@ bool write_back_overlaps(uint32_t address, size_t size);
 
 namespace {
 
-constexpr uint32_t kVertexCapacity = 1 << 16;
+constexpr uint32_t kVertexCapacity = 1 << 18;
 
 const char* kPresentShaderSource = R"HLSL(
 Texture2D frame : register(t0);
@@ -261,6 +265,19 @@ PixelInput vertex_main(VertexInput input) {
     output.uv6 = input.uv6;
     output.uv7 = input.uv7;
     return output;
+}
+
+cbuffer Motion : register(b1) {
+    row_major float4x4 motion[8];
+};
+
+PixelInput vertex_moved(VertexInput input, float4 moved : MOVED) {
+    if (moved.w < -1.5e30) {
+        input.position = mul(motion[uint(moved.x)], input.position);
+    } else if (moved.w > -1e29) {
+        input.position = moved;
+    }
+    return vertex_main(input);
 }
 
 float2 projected(float3 uv) {
@@ -681,6 +698,9 @@ struct PendingWriteBack {
     uint64_t frame = 0;
 };
 
+constexpr size_t kMaxBetween = 3;
+constexpr size_t kMaxCameras = 8;
+
 struct Device {
     ID3D11Device* device = nullptr;
     ID3D11DeviceContext* context = nullptr;
@@ -689,6 +709,10 @@ struct Device {
     ID3D11PixelShader* early_pixel_shader = nullptr;
     ID3D11InputLayout* layout = nullptr;
     ID3D11Buffer* vertex_buffer = nullptr;
+    ID3D11VertexShader* moved_shader = nullptr;
+    ID3D11InputLayout* moved_layout = nullptr;
+    ID3D11Buffer* moved_buffer = nullptr;
+    ID3D11Buffer* motion = nullptr;
     ID3D11Buffer* constants = nullptr;
     ID3D11Texture2D* target = nullptr;
     ID3D11RenderTargetView* target_view = nullptr;
@@ -699,6 +723,11 @@ struct Device {
     ID3D11RenderTargetView* frame_target = nullptr;
     ID3D11Texture2D* frame = nullptr;
     ID3D11ShaderResourceView* frame_view = nullptr;
+    ID3D11Texture2D* interpolated[kMaxBetween] = {};
+    ID3D11ShaderResourceView* interpolated_view[kMaxBetween] = {};
+    ID3D11RenderTargetView* interpolated_target[kMaxBetween] = {};
+    uint32_t interpolated_width = 0;
+    uint32_t interpolated_height = 0;
     ID3D11Texture2D* write_back = nullptr;
     ID3D11ShaderResourceView* write_back_view = nullptr;
     ID3D11RenderTargetView* write_back_target = nullptr;
@@ -744,8 +773,7 @@ struct Device {
     bool ready = false;
 };
 
-struct PendingBatch {
-    std::vector<ScreenVertex> vertices;
+struct BatchState {
     Constants constants;
     // Owned references: a later texture lookup may replace the cache entry a view came from.
     ID3D11ShaderResourceView* views[kTextureMaps] = {};
@@ -758,8 +786,91 @@ struct PendingBatch {
     uint32_t scissor_offset = 0;
 };
 
+struct PendingBatch : BatchState {
+    size_t begin = 0;
+};
+
+struct RecordedDraw {
+    uint64_t key = 0;
+    uint64_t exact = 0;
+    uint32_t camera = 0;
+    uint32_t first_position = 0;
+    uint32_t positions = 0;
+    size_t first_vertex = 0;
+    uint32_t vertices = 0;
+};
+
+struct CopyCommand {
+    ID3D11RenderTargetView* target = nullptr;
+    uint32_t target_width = 0;
+    uint32_t target_height = 0;
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+    uint32_t format = 0;
+    bool intensity = false;
+    bool alpha = false;
+    bool depth = false;
+    CopyFilter filter;
+};
+
+struct ClearCommand {
+    UINT mask = 0;
+    bool depth_enable = false;
+    float constants[8] = {};
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+};
+
+struct RecordedCommand {
+    enum Kind { kBatch, kCopy, kClear } kind = kBatch;
+    BatchState batch;
+    size_t begin = 0;
+    size_t end = 0;
+    CopyCommand copy;
+    ClearCommand clear;
+};
+
+struct ReplayTarget {
+    ID3D11Texture2D* before = nullptr;
+    ID3D11Texture2D* texture = nullptr;
+    ID3D11ShaderResourceView* view = nullptr;
+    ID3D11RenderTargetView* target = nullptr;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint64_t frame = ~0ull;
+};
+
+struct RecordedTarget {
+    ID3D11RenderTargetView* target = nullptr;
+    ID3D11Texture2D* texture = nullptr;
+    ID3D11ShaderResourceView* view = nullptr;
+    bool twin = false;
+};
+
+struct FrameRecord {
+    std::vector<uint16_t> source_of;
+    std::vector<std::array<float, 4>> positions;
+    std::vector<RecordedDraw> draws;
+    std::vector<RecordedCommand> commands;
+    std::vector<RecordedTarget> targets;
+};
+
+[[gnu::used]] const char kBuildSalt[] = "SALT6335";
+
 Device g_device;
 PendingBatch g_pending;
+std::vector<ScreenVertex> g_triangles;
+size_t g_frame_vertices = 0;
+bool g_recording = false;
+bool g_record_broken = false;
+FrameRecord g_record;
+FrameRecord g_previous;
+uint32_t g_interpolated_ready = 0;
+std::atomic<uint32_t> g_interpolated_frames{0};
 TexturePack g_pack;
 uint32_t g_custom_maps = 0;
 
@@ -857,6 +968,16 @@ bool create_pipeline() {
         }
         ok = SUCCEEDED(g_device.device->CreateInputLayout(elements.data(), static_cast<UINT>(elements.size()), vertex_code->GetBufferPointer(),
                                                          vertex_code->GetBufferSize(), &g_device.layout));
+        ID3DBlob* moved_code = nullptr;
+        if (ok && compile(kShaderSource, "vertex_moved", "vs_5_0", &moved_code)) {
+            elements.push_back({"MOVED", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0, D3D11_INPUT_PER_VERTEX_DATA, 0});
+            if (FAILED(g_device.device->CreateVertexShader(moved_code->GetBufferPointer(), moved_code->GetBufferSize(), nullptr, &g_device.moved_shader)) ||
+                FAILED(g_device.device->CreateInputLayout(elements.data(), static_cast<UINT>(elements.size()), moved_code->GetBufferPointer(),
+                                                          moved_code->GetBufferSize(), &g_device.moved_layout))) {
+                release(g_device.moved_shader);
+            }
+            release(moved_code);
+        }
     }
     release(vertex_code);
     release(pixel_code);
@@ -870,6 +991,17 @@ bool create_pipeline() {
     buffer.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
     if (FAILED(g_device.device->CreateBuffer(&buffer, nullptr, &g_device.vertex_buffer))) {
         return false;
+    }
+    buffer.ByteWidth = kVertexCapacity * sizeof(float[4]);
+    if (g_device.moved_shader && FAILED(g_device.device->CreateBuffer(&buffer, nullptr, &g_device.moved_buffer))) {
+        release(g_device.moved_shader);
+    }
+    D3D11_BUFFER_DESC motion{};
+    motion.ByteWidth = sizeof(float[kMaxCameras][4][4]);
+    motion.Usage = D3D11_USAGE_DEFAULT;
+    motion.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    if (g_device.moved_shader && FAILED(g_device.device->CreateBuffer(&motion, nullptr, &g_device.motion))) {
+        release(g_device.moved_shader);
     }
     buffer.ByteWidth = sizeof(Constants);
     buffer.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
@@ -1353,6 +1485,7 @@ std::string variant_source(const std::string& key) {
 }
 
 void variant_worker() {
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
     for (;;) {
         std::pair<std::string, ShaderVariant*> job;
         {
@@ -1381,7 +1514,13 @@ ID3D11PixelShader* variant_for(const Constants& constants, bool early_depth) {
     std::string key = variant_key(constants, early_depth);
     auto found = g_variants.find(key);
     if (found == g_variants.end()) {
-        [[maybe_unused]] static const bool started = (std::thread(variant_worker).detach(), true);
+        [[maybe_unused]] static const bool started = [] {
+            unsigned workers = std::clamp(std::thread::hardware_concurrency() / 2, 1u, 6u);
+            for (unsigned i = 0; i < workers; i++) {
+                std::thread(variant_worker).detach();
+            }
+            return true;
+        }();
         found = g_variants.try_emplace(key).first;
         {
             std::lock_guard<std::mutex> lock(g_variant_mutex);
@@ -1392,14 +1531,7 @@ ID3D11PixelShader* variant_for(const Constants& constants, bool early_depth) {
     return found->second.shader.load();
 }
 
-void flush_pending() {
-    PendingBatch& pending = g_pending;
-    if (pending.vertices.empty()) {
-        return;
-    }
-    auto started = std::chrono::steady_clock::now();
-    g_batches++;
-    g_batch_vertices += static_cast<uint32_t>(pending.vertices.size());
+void set_batch_state(const BatchState& pending, bool moved) {
     ID3D11DeviceContext* context = g_device.context;
     D3D11_MAPPED_SUBRESOURCE mapped;
     if (SUCCEEDED(context->Map(g_device.constants, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
@@ -1429,16 +1561,23 @@ void flush_pending() {
     float blend_factor[4] = {1, 1, 1, 1};
     context->OMSetBlendState(blend_for(pending.blend), blend_factor, 0xFFFFFFFF);
     context->OMSetDepthStencilState(depth_for(pending.depth), 0);
-    UINT stride = sizeof(ScreenVertex);
-    UINT zero = 0;
-    context->IASetVertexBuffers(0, 1, &g_device.vertex_buffer, &stride, &zero);
-    context->IASetInputLayout(g_device.layout);
+    ID3D11Buffer* buffers[2] = {g_device.vertex_buffer, g_device.moved_buffer};
+    UINT strides[2] = {sizeof(ScreenVertex), sizeof(float[4])};
+    UINT offsets[2] = {0, 0};
+    context->IASetVertexBuffers(0, moved ? 2 : 1, buffers, strides, offsets);
+    context->IASetInputLayout(moved ? g_device.moved_layout : g_device.layout);
     context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    context->VSSetShader(g_device.vertex_shader, nullptr, 0);
+    context->VSSetShader(moved ? g_device.moved_shader : g_device.vertex_shader, nullptr, 0);
     ID3D11PixelShader* variant = variant_for(pending.constants, pending.early_depth);
     context->PSSetShader(variant ? variant : (pending.early_depth ? g_device.early_pixel_shader : g_device.pixel_shader), nullptr, 0);
     context->PSSetConstantBuffers(0, 1, &g_device.constants);
-    size_t total = pending.vertices.size();
+}
+
+uint32_t draw_batch(const BatchState& pending, const ScreenVertex* vertices, size_t total) {
+    set_batch_state(pending, false);
+    ID3D11DeviceContext* context = g_device.context;
+    D3D11_MAPPED_SUBRESOURCE mapped;
+    uint32_t start = total > kVertexCapacity ? ~0u : (g_vertex_cursor + total > kVertexCapacity ? 0u : g_vertex_cursor);
     size_t offset = 0;
     while (offset < total) {
         uint32_t batch = static_cast<uint32_t>(std::min<size_t>(total - offset, kVertexCapacity));
@@ -1450,15 +1589,72 @@ void flush_pending() {
         if (FAILED(context->Map(g_device.vertex_buffer, 0, mode, 0, &mapped))) {
             break;
         }
-        std::memcpy(static_cast<ScreenVertex*>(mapped.pData) + g_vertex_cursor, pending.vertices.data() + offset, batch * sizeof(ScreenVertex));
+        std::memcpy(static_cast<ScreenVertex*>(mapped.pData) + g_vertex_cursor, vertices + offset, batch * sizeof(ScreenVertex));
         context->Unmap(g_device.vertex_buffer, 0);
         context->Draw(batch, g_vertex_cursor);
         g_vertex_cursor += batch;
         offset += batch;
     }
-    pending.vertices.clear();
+    return start;
+}
+
+void flush_pending() {
+    PendingBatch& pending = g_pending;
+    size_t end = g_triangles.size();
+    if (pending.begin == end) {
+        return;
+    }
+    auto started = std::chrono::steady_clock::now();
+    g_batches++;
+    g_batch_vertices += static_cast<uint32_t>(end - pending.begin);
+    uint32_t start = draw_batch(pending, g_triangles.data() + pending.begin, end - pending.begin);
+    if (g_recording) {
+        if (start != g_frame_vertices) {
+            g_record_broken = true;
+        }
+        RecordedCommand command;
+        command.kind = RecordedCommand::kBatch;
+        command.batch = pending;
+        for (ID3D11ShaderResourceView* view : command.batch.views) {
+            if (view) {
+                view->AddRef();
+            }
+        }
+        command.begin = g_frame_vertices;
+        command.end = g_frame_vertices + (end - pending.begin);
+        g_record.commands.push_back(command);
+        g_frame_vertices += end - pending.begin;
+    }
+    g_triangles.clear();
+    pending.begin = 0;
     g_batch_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
 }
+
+void append(const ScreenVertex* vertices, uint32_t count, const DrawSource* source) {
+    size_t first = g_frame_vertices + g_triangles.size();
+    g_triangles.insert(g_triangles.end(), vertices, vertices + count);
+    if (!g_recording) {
+        return;
+    }
+    if (source && source->key != 0) {
+        RecordedDraw draw;
+        draw.key = source->key;
+        draw.exact = source->exact;
+        draw.camera = source->camera;
+        draw.first_position = static_cast<uint32_t>(g_record.positions.size());
+        draw.positions = source->count;
+        draw.first_vertex = first;
+        draw.vertices = count;
+        g_record.draws.push_back(draw);
+        const auto* positions = reinterpret_cast<const std::array<float, 4>*>(source->positions);
+        g_record.positions.insert(g_record.positions.end(), positions, positions + source->count);
+        g_record.source_of.insert(g_record.source_of.end(), source->source_of, source->source_of + count);
+    } else {
+        g_record.source_of.insert(g_record.source_of.end(), count, kNoSource);
+    }
+}
+
+void service_deferred();
 
 }
 
@@ -1466,9 +1662,24 @@ const char* api_name() {
     return "Direct3D 11";
 }
 
-void draw(const ScreenVertex* vertices, uint32_t count) {
-    if (count == 0 || !initialize()) {
+bool interpolating() {
+    return g_recording;
+}
+
+void draw(const ScreenVertex* vertices, uint32_t count, const DrawSource* source) {
+    finish_frame();
+    if (count == 0) {
+        if (g_recording && source && source->key != 0) {
+            append(vertices, 0, source);
+        }
         return;
+    }
+    if (!initialize()) {
+        return;
+    }
+    static uint32_t draws = 0;
+    if ((++draws & 31) == 0) {
+        service_deferred();
     }
     // Scenes such as the open zones send hundreds of thousands of tiny draws a second, mostly with only a new matrix in
     // between: when no register the batch depends on changed, this draw joins the pending batch without recomputing it.
@@ -1476,8 +1687,8 @@ void draw(const ScreenVertex* vertices, uint32_t count) {
     static uint64_t batched_epoch = 0;
     static int batched_scale = 0;
     PendingBatch& pending = g_pending;
-    if (!pending.vertices.empty() && batched_serial == register_serial() && batched_epoch == g_texture_epoch && batched_scale == g_scale) {
-        pending.vertices.insert(pending.vertices.end(), vertices, vertices + count);
+    if (pending.begin != g_triangles.size() && batched_serial == register_serial() && batched_epoch == g_texture_epoch && batched_scale == g_scale) {
+        append(vertices, count, source);
         return;
     }
     const uint32_t* bp = bp_registers();
@@ -1501,7 +1712,7 @@ void draw(const ScreenVertex* vertices, uint32_t count) {
                      (static_cast<uint32_t>(!alpha_test.can_pass) << 18);
     uint32_t depth = bp[0x40] & 0x1F;
     bool early_depth = (depth & 1) != 0 && (bp[0x43] & (1u << 6)) != 0 && alpha_test.can_pass && alpha_test.can_fail;
-    bool same = !pending.vertices.empty() && pending.blend == blend && pending.depth == depth && pending.early_depth == early_depth && pending.top_left == bp[0x20] &&
+    bool same = pending.begin != g_triangles.size() && pending.blend == blend && pending.depth == depth && pending.early_depth == early_depth && pending.top_left == bp[0x20] &&
                 pending.bottom_right == bp[0x21] && pending.scissor_offset == bp[kBpScissorOffset] && std::memcmp(&pending.constants, &constants, sizeof constants) == 0 &&
                 std::memcmp(pending.views, views, sizeof views) == 0 && std::memcmp(pending.samplers, samplers, sizeof samplers) == 0;
     if (same) {
@@ -1523,7 +1734,7 @@ void draw(const ScreenVertex* vertices, uint32_t count) {
         pending.bottom_right = bp[0x21];
         pending.scissor_offset = bp[kBpScissorOffset];
     }
-    pending.vertices.insert(pending.vertices.end(), vertices, vertices + count);
+    append(vertices, count, source);
     batched_serial = register_serial();
     batched_epoch = g_texture_epoch;
     batched_scale = g_scale;
@@ -1776,6 +1987,72 @@ bool write_back_overlaps(uint32_t address, size_t size) {
     return false;
 }
 
+std::unordered_map<ID3D11RenderTargetView*, ReplayTarget> g_replay_targets;
+
+void release_twin(ReplayTarget& twin) {
+    release(twin.target);
+    release(twin.view);
+    release(twin.texture);
+    release(twin.before);
+}
+
+void note_copy_target(ID3D11Texture2D* texture, ID3D11ShaderResourceView* view, ID3D11RenderTargetView* target, uint32_t width, uint32_t height) {
+    for (const RecordedTarget& seen : g_record.targets) {
+        if (seen.target == target) {
+            return;
+        }
+    }
+    bool sampled = false;
+    for (const RecordedCommand& command : g_record.commands) {
+        if (command.kind == RecordedCommand::kBatch && std::find(std::begin(command.batch.views), std::end(command.batch.views), view) != std::end(command.batch.views)) {
+            sampled = true;
+            break;
+        }
+    }
+    if (!sampled) {
+        texture->AddRef();
+        view->AddRef();
+        target->AddRef();
+        g_record.targets.push_back({target, texture, view, false});
+        return;
+    }
+    ReplayTarget& twin = g_replay_targets[target];
+    if (!twin.texture || twin.width != width || twin.height != height) {
+        release_twin(twin);
+        ID3D11ShaderResourceView* unused_view = nullptr;
+        ID3D11RenderTargetView* unused_target = nullptr;
+        bool made = create_copy_texture(twin.before, unused_view, unused_target, width, height) &&
+                    create_copy_texture(twin.texture, twin.view, twin.target, width, height);
+        release(unused_view);
+        release(unused_target);
+        if (!made) {
+            release_twin(twin);
+            g_replay_targets.erase(target);
+            g_record_broken = true;
+            return;
+        }
+        twin.width = width;
+        twin.height = height;
+    }
+    twin.frame = g_frame;
+    g_device.context->CopyResource(twin.before, texture);
+    texture->AddRef();
+    view->AddRef();
+    target->AddRef();
+    g_record.targets.push_back({target, texture, view, true});
+}
+
+void prune_twins() {
+    for (auto it = g_replay_targets.begin(); it != g_replay_targets.end();) {
+        if (it->second.frame + 600 < g_frame) {
+            release_twin(it->second);
+            it = g_replay_targets.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width, int height, bool half, uint32_t format, bool intensity, bool depth, bool alpha,
                      const CopyFilter& filter) {
     if (!initialize()) {
@@ -1800,6 +2077,7 @@ void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width,
     if (width <= 0 || height <= 0) {
         return;
     }
+    finish_frame();
     flush_pending();
     CopiedTexture& entry = g_device.copies[address];
     // A buffer copied again every frame is a render target of an effect, and the game only samples it: it stays on the
@@ -1824,10 +2102,20 @@ void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width,
         entry.converted_width = target_width;
         entry.converted_height = target_height;
     }
+    if (g_recording) {
+        note_copy_target(entry.converted, entry.converted_view, entry.converted_target, target_width, target_height);
+    }
     if (!run_copy(entry.converted_target, target_width, target_height, x, y, width, height, format, intensity, alpha || depth, depth, filter)) {
         release_copy(entry);
         g_device.copies.erase(address);
         return;
+    }
+    if (g_recording) {
+        RecordedCommand command;
+        command.kind = RecordedCommand::kCopy;
+        command.copy = {entry.converted_target, target_width, target_height, x, y, width, height, format, intensity, alpha || depth, depth, filter};
+        entry.converted_target->AddRef();
+        g_record.commands.push_back(command);
     }
     entry.view = entry.converted_view;
     entry.bytes = entry.logical_width * entry.logical_height * copy_bits(format) / 8;
@@ -1845,9 +2133,12 @@ void finish_copies() {
     }
 }
 
-void copy_to_framebuffer(int x, int y, int width, int height, bool depth, const CopyFilter& filter) {
+void run_clear(const ClearCommand& command);
+
+
+bool copy_frame(int& x, int& y, int& width, int& height, bool depth, const CopyFilter& filter) {
     if (!initialize()) {
-        return;
+        return false;
     }
     flush_pending();
     complete_write_backs(false);
@@ -1858,7 +2149,7 @@ void copy_to_framebuffer(int x, int y, int width, int height, bool depth, const 
     width = std::min(width, kEfbWidth - x);
     height = std::min(height, kEfbHeight - y);
     if (width <= 0 || height <= 0) {
-        return;
+        return false;
     }
     uint32_t physical_width = static_cast<uint32_t>(scaled(width));
     uint32_t physical_height = static_cast<uint32_t>(scaled(height));
@@ -1870,12 +2161,848 @@ void copy_to_framebuffer(int x, int y, int width, int height, bool depth, const 
             release(g_device.frame_target);
             release(g_device.frame_view);
             release(g_device.frame);
-            return;
+            return false;
         }
         g_device.frame_width = physical_width;
         g_device.frame_height = physical_height;
     }
-    run_copy(g_device.frame_target, physical_width, physical_height, x, y, width, height, kXfbFormat, false, false, depth, filter);
+    return run_copy(g_device.frame_target, physical_width, physical_height, x, y, width, height, kXfbFormat, false, false, depth, filter);
+}
+
+void release_record(FrameRecord& record) {
+    for (RecordedCommand& command : record.commands) {
+        for (ID3D11ShaderResourceView*& view : command.batch.views) {
+            release(view);
+        }
+        release(command.copy.target);
+    }
+    for (RecordedTarget& target : record.targets) {
+        release(target.target);
+        release(target.texture);
+        release(target.view);
+    }
+    record.targets.clear();
+    record.commands.clear();
+    record.source_of.clear();
+    record.positions.clear();
+    record.draws.clear();
+}
+
+constexpr float kMaxStep = 0.5f;
+
+bool close_enough(const std::array<float, 4>& a, const std::array<float, 4>& b) {
+    if (std::isnan(a[0]) || std::isnan(b[0]) || a[3] <= 0.0f || b[3] <= 0.0f) {
+        return true;
+    }
+    return std::fabs(b[0] / b[3] - a[0] / a[3]) <= kMaxStep && std::fabs(b[1] / b[3] - a[1] / a[3]) <= kMaxStep;
+}
+
+bool close_draw(const RecordedDraw& before, const RecordedDraw& draw) {
+    uint32_t step = std::max(1u, draw.positions / 8);
+    for (uint32_t i = 0; i < draw.positions; i += step) {
+        if (!close_enough(g_previous.positions[before.first_position + i], g_record.positions[draw.first_position + i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+struct EfbSnapshot {
+    ID3D11Texture2D* color = nullptr;
+    ID3D11Texture2D* depth = nullptr;
+};
+
+EfbSnapshot g_efb_before;
+EfbSnapshot g_efb_after;
+bool g_efb_before_valid = false;
+
+bool same_size(ID3D11Texture2D* source, ID3D11Texture2D*& copy) {
+    D3D11_TEXTURE2D_DESC wanted{};
+    source->GetDesc(&wanted);
+    if (copy) {
+        D3D11_TEXTURE2D_DESC held{};
+        copy->GetDesc(&held);
+        if (held.Width == wanted.Width && held.Height == wanted.Height && held.Format == wanted.Format) {
+            return true;
+        }
+        release(copy);
+    }
+    return SUCCEEDED(g_device.device->CreateTexture2D(&wanted, nullptr, &copy));
+}
+
+bool save_efb(EfbSnapshot& snapshot) {
+    if (!same_size(g_device.target, snapshot.color) || !same_size(g_device.depth, snapshot.depth)) {
+        return false;
+    }
+    g_device.context->CopyResource(snapshot.color, g_device.target);
+    g_device.context->CopyResource(snapshot.depth, g_device.depth);
+    return true;
+}
+
+void load_efb(const EfbSnapshot& snapshot) {
+    g_device.context->CopyResource(g_device.target, snapshot.color);
+    g_device.context->CopyResource(g_device.depth, snapshot.depth);
+}
+
+constexpr uint32_t kUnmatched = ~0u;
+constexpr uint32_t kRejected = ~0u - 1;
+constexpr uint32_t kByCamera = 0xFFFFFF00u;
+
+constexpr double kStillScreen = 2e-3;
+
+struct CameraMotion {
+    uint32_t id = 0;
+    bool claimed = false;
+    bool known = false;
+    float back[4][4] = {};
+    size_t second = kMaxCameras;
+    bool is_second = false;
+    std::vector<std::array<float, 4>> from;
+    std::vector<std::array<float, 4>> to;
+};
+
+CameraMotion g_cameras[kMaxCameras];
+
+double g_time_pairing = 0.0;
+double g_time_filling = 0.0;
+double g_time_sending = 0.0;
+
+std::vector<uint8_t> g_world_camera;
+std::vector<uint8_t> g_world_moving;
+double g_forward[kMaxCameras][4][4];
+
+bool invert(const float (&in)[4][4], double (&out)[4][4]) {
+    double m[4][8];
+    for (int r = 0; r < 4; r++) {
+        for (int c = 0; c < 4; c++) {
+            m[r][c] = in[r][c];
+            m[r][4 + c] = r == c ? 1.0 : 0.0;
+        }
+    }
+    for (int column = 0; column < 4; column++) {
+        int pivot = column;
+        for (int r = column + 1; r < 4; r++) {
+            if (std::fabs(m[r][column]) > std::fabs(m[pivot][column])) {
+                pivot = r;
+            }
+        }
+        if (std::fabs(m[pivot][column]) < 1e-300) {
+            return false;
+        }
+        std::swap(m[column], m[pivot]);
+        double scale = 1.0 / m[column][column];
+        for (double& value : m[column]) {
+            value *= scale;
+        }
+        for (int r = 0; r < 4; r++) {
+            if (r != column && m[r][column] != 0.0) {
+                double factor = m[r][column];
+                for (int c = 0; c < 8; c++) {
+                    m[r][c] -= factor * m[column][c];
+                }
+            }
+        }
+    }
+    for (int r = 0; r < 4; r++) {
+        for (int c = 0; c < 4; c++) {
+            out[r][c] = m[r][4 + c];
+        }
+    }
+    return true;
+}
+
+bool moves_in_world(const RecordedDraw& draw, const RecordedDraw& before, const CameraMotion& camera) {
+    constexpr double kScreen = kStillScreen;
+    constexpr double kDepth = 2e-5;
+    uint32_t step = std::max(1u, draw.positions / 8);
+    for (uint32_t i = 0; i < draw.positions; i += step) {
+        const std::array<float, 4>& a = g_previous.positions[before.first_position + i];
+        const std::array<float, 4>& b = g_record.positions[draw.first_position + i];
+        if (std::isnan(a[0]) || std::isnan(b[0]) || a[3] <= 0.0f || b[3] <= 0.0f || std::fabs(b[0]) > 1.5f * b[3] || std::fabs(b[1]) > 1.5f * b[3]) {
+            continue;
+        }
+        double p[4];
+        for (int r = 0; r < 4; r++) {
+            p[r] = static_cast<double>(camera.back[r][0]) * b[0] + static_cast<double>(camera.back[r][1]) * b[1] + static_cast<double>(camera.back[r][2]) * b[2] +
+                   static_cast<double>(camera.back[r][3]) * b[3];
+        }
+        if (p[3] <= 0.0 || std::fabs(p[0] / p[3] - a[0] / a[3]) > kScreen || std::fabs(p[1] / p[3] - a[1] / a[3]) > kScreen ||
+            std::fabs(p[2] / p[3] - a[2] / a[3]) > kDepth) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool replay_between(const std::vector<std::pair<uint32_t, uint32_t>>& matches, float t, ID3D11RenderTargetView* target, int x, int y, int width,
+                    int height, bool depth, const CopyFilter& filter) {
+    auto started = std::chrono::steady_clock::now();
+    ID3D11DeviceContext* context = g_device.context;
+    D3D11_MAPPED_SUBRESOURCE mapped;
+    if (FAILED(context->Map(g_device.moved_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+        return false;
+    }
+    auto* moved = static_cast<std::array<float, 4>*>(mapped.pData);
+    constexpr std::array<float, 4> kKeep = {0.0f, 0.0f, 0.0f, -1e30f};
+    float motion[kMaxCameras][4][4];
+    for (size_t k = 0; k < kMaxCameras; k++) {
+        for (int r = 0; r < 4; r++) {
+            for (int c = 0; c < 4; c++) {
+                motion[k][r][c] = g_cameras[k].back[r][c] * (1.0f - t) + (r == c ? t : 0.0f);
+            }
+        }
+    }
+    size_t written = 0;
+    for (const auto& [d, p] : matches) {
+        const RecordedDraw& draw = g_record.draws[d];
+        std::fill(moved + written, moved + draw.first_vertex, kKeep);
+        size_t camera = p >= kByCamera ? p - kByCamera : g_world_camera[d];
+        if (p >= kByCamera || (camera < kMaxCameras && !g_world_moving[d])) {
+            written = draw.first_vertex + draw.vertices;
+            std::fill(moved + draw.first_vertex, moved + written, std::array<float, 4>{static_cast<float>(camera), 0.0f, 0.0f, -2e30f});
+            continue;
+        }
+        const RecordedDraw& before = g_previous.draws[p];
+        if (camera < kMaxCameras) {
+            const double (*forward)[4] = g_forward[camera];
+            const float (*now)[4] = motion[camera];
+            for (uint32_t v = 0; v < draw.vertices; v++) {
+                size_t index = draw.first_vertex + v;
+                uint16_t source = g_record.source_of[index];
+                const std::array<float, 4>* a = source == kNoSource ? nullptr : &g_previous.positions[before.first_position + source];
+                const std::array<float, 4>* b = source == kNoSource ? nullptr : &g_record.positions[draw.first_position + source];
+                if (!a || std::isnan((*a)[0]) || std::isnan((*b)[0])) {
+                    moved[index] = kKeep;
+                    continue;
+                }
+                double world[4];
+                for (int r = 0; r < 4; r++) {
+                    double seen = forward[r][0] * (*a)[0] + forward[r][1] * (*a)[1] + forward[r][2] * (*a)[2] + forward[r][3] * (*a)[3];
+                    world[r] = seen + ((*b)[r] - seen) * t;
+                }
+                for (int r = 0; r < 4; r++) {
+                    moved[index][r] = static_cast<float>(now[r][0] * world[0] + now[r][1] * world[1] + now[r][2] * world[2] + now[r][3] * world[3]);
+                }
+            }
+            written = draw.first_vertex + draw.vertices;
+            continue;
+        }
+        for (uint32_t v = 0; v < draw.vertices; v++) {
+            size_t index = draw.first_vertex + v;
+            uint16_t source = g_record.source_of[index];
+            const std::array<float, 4>* a = source == kNoSource ? nullptr : &g_previous.positions[before.first_position + source];
+            const std::array<float, 4>* b = source == kNoSource ? nullptr : &g_record.positions[draw.first_position + source];
+            if (!a || std::isnan((*a)[0]) || std::isnan((*b)[0])) {
+                moved[index] = kKeep;
+                continue;
+            }
+            moved[index] = {(*a)[0] + ((*b)[0] - (*a)[0]) * t, (*a)[1] + ((*b)[1] - (*a)[1]) * t, (*a)[2] + ((*b)[2] - (*a)[2]) * t,
+                            (*a)[3] + ((*b)[3] - (*a)[3]) * t};
+        }
+        written = draw.first_vertex + draw.vertices;
+    }
+    std::fill(moved + written, moved + g_frame_vertices, kKeep);
+    context->Unmap(g_device.moved_buffer, 0);
+    auto filled = std::chrono::steady_clock::now();
+    g_time_filling += std::chrono::duration<double>(filled - started).count();
+    struct Sending {
+        std::chrono::steady_clock::time_point from;
+        ~Sending() { g_time_sending += std::chrono::duration<double>(std::chrono::steady_clock::now() - from).count(); }
+    } sending{filled};
+    context->UpdateSubresource(g_device.motion, 0, nullptr, motion, 0, 0);
+    context->VSSetConstantBuffers(1, 1, &g_device.motion);
+    load_efb(g_efb_before);
+    static std::vector<std::pair<const RecordedTarget*, ReplayTarget*>> twins;
+    twins.clear();
+    for (const RecordedTarget& target : g_record.targets) {
+        if (!target.twin) {
+            continue;
+        }
+        auto found = g_replay_targets.find(target.target);
+        if (found == g_replay_targets.end()) {
+            return false;
+        }
+        context->CopyResource(found->second.texture, found->second.before);
+        twins.emplace_back(&target, &found->second);
+    }
+    auto twin_of = [](ID3D11RenderTargetView* target) {
+        for (const auto& [recorded, twin] : twins) {
+            if (recorded->target == target) {
+                return twin->target;
+            }
+        }
+        return target;
+    };
+    BatchState swapped;
+    for (const RecordedCommand& command : g_record.commands) {
+        switch (command.kind) {
+        case RecordedCommand::kBatch: {
+            const BatchState* state = &command.batch;
+            for (size_t map = 0; map < kTextureMaps; map++) {
+                for (const auto& [recorded, twin] : twins) {
+                    if (command.batch.views[map] == recorded->view) {
+                        if (state != &swapped) {
+                            swapped = command.batch;
+                            state = &swapped;
+                        }
+                        swapped.views[map] = twin->view;
+                    }
+                }
+            }
+            set_batch_state(*state, true);
+            context->Draw(static_cast<UINT>(command.end - command.begin), static_cast<UINT>(command.begin));
+            break;
+        }
+        case RecordedCommand::kCopy: {
+            const CopyCommand& copy = command.copy;
+            run_copy(twin_of(copy.target), copy.target_width, copy.target_height, copy.x, copy.y, copy.width, copy.height, copy.format, copy.intensity, copy.alpha, copy.depth,
+                     copy.filter);
+            break;
+        }
+        case RecordedCommand::kClear:
+            run_clear(command.clear);
+            break;
+        }
+    }
+    return run_copy(target, g_device.frame_width, g_device.frame_height, x, y, width, height, kXfbFormat, false, false, depth, filter);
+}
+
+enum PairKind : uint8_t { kNoPair, kCountChanged, kSameCount, kOnly };
+
+template <typename Body>
+void parallel_for(size_t count, const Body& body) {
+    struct Pool {
+        std::mutex mutex;
+        std::condition_variable wake;
+        std::condition_variable done;
+        const std::function<void(size_t)>* job = nullptr;
+        size_t count = 0;
+        std::atomic<size_t> next{0};
+        uint64_t generation = 0;
+        size_t working = 0;
+        size_t helpers = 0;
+    };
+    constexpr size_t kChunk = 64;
+    static Pool* pool = [] {
+        Pool* made = new Pool;
+        size_t cores = std::thread::hardware_concurrency();
+        made->helpers = cores > 4 ? std::min<size_t>(3, cores - 3) : 0;
+        for (size_t h = 0; h < made->helpers; h++) {
+            std::thread([made] {
+                uint64_t seen = 0;
+                std::unique_lock<std::mutex> lock(made->mutex);
+                while (true) {
+                    made->wake.wait(lock, [&] { return made->generation != seen; });
+                    seen = made->generation;
+                    const std::function<void(size_t)>* job = made->job;
+                    size_t count = made->count;
+                    lock.unlock();
+                    for (size_t i = made->next.fetch_add(kChunk); i < count; i = made->next.fetch_add(kChunk)) {
+                        for (size_t j = i; j < std::min(count, i + kChunk); j++) {
+                            (*job)(j);
+                        }
+                    }
+                    lock.lock();
+                    if (--made->working == 0) {
+                        made->done.notify_all();
+                    }
+                }
+            }).detach();
+        }
+        return made;
+    }();
+    std::function<void(size_t)> job = body;
+    if (pool->helpers == 0 || count < 256) {
+        for (size_t i = 0; i < count; i++) {
+            job(i);
+        }
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(pool->mutex);
+        pool->job = &job;
+        pool->count = count;
+        pool->next = 0;
+        pool->working = pool->helpers;
+        pool->generation++;
+    }
+    pool->wake.notify_all();
+    for (size_t i = pool->next.fetch_add(kChunk); i < count; i = pool->next.fetch_add(kChunk)) {
+        for (size_t j = i; j < std::min(count, i + kChunk); j++) {
+            job(j);
+        }
+    }
+    std::unique_lock<std::mutex> lock(pool->mutex);
+    pool->done.wait(lock, [&] { return pool->working == 0; });
+}
+
+void match_by(uint64_t RecordedDraw::*key, bool trusted, std::vector<uint32_t>& partner, std::vector<uint8_t>& taken, std::vector<uint8_t>& kind,
+              uint32_t& moved_too_far) {
+    static std::vector<std::pair<uint32_t, uint32_t>> candidates;
+    static std::vector<uint8_t> close;
+    candidates.clear();
+    struct Slot {
+        uint64_t key = 0;
+        uint32_t next = ~0u;
+        uint32_t before = 0;
+        uint32_t now = 0;
+    };
+    static std::vector<Slot> table;
+    static std::vector<uint32_t> next_same;
+    size_t size = 1;
+    while (size < (g_previous.draws.size() + g_record.draws.size()) * 2) {
+        size <<= 1;
+    }
+    table.assign(size, Slot{});
+    auto slot = [&](uint64_t value) -> Slot& {
+        size_t i = (value * 0x9E3779B97F4A7C15ull) >> 20 & (size - 1);
+        while (table[i].key != 0 && table[i].key != value) {
+            i = (i + 1) & (size - 1);
+        }
+        table[i].key = value;
+        return table[i];
+    };
+    next_same.assign(g_previous.draws.size(), ~0u);
+    for (size_t i = g_previous.draws.size(); i-- > 0;) {
+        uint64_t value = g_previous.draws[i].*key;
+        if (value == 0 || taken[i]) {
+            continue;
+        }
+        Slot& entry = slot(value);
+        next_same[i] = entry.next;
+        entry.next = static_cast<uint32_t>(i);
+        entry.before++;
+    }
+    for (size_t d = 0; d < g_record.draws.size(); d++) {
+        if (partner[d] == kUnmatched && g_record.draws[d].*key != 0) {
+            slot(g_record.draws[d].*key).now++;
+        }
+    }
+    for (size_t d = 0; d < g_record.draws.size(); d++) {
+        const RecordedDraw& draw = g_record.draws[d];
+        if (partner[d] != kUnmatched || draw.*key == 0) {
+            continue;
+        }
+        Slot& entry = slot(draw.*key);
+        uint32_t p = entry.next;
+        if (p == ~0u) {
+            continue;
+        }
+        entry.next = next_same[p];
+        kind[d] = entry.before != entry.now ? kCountChanged : (entry.now == 1 ? kOnly : kSameCount);
+        const RecordedDraw& before = g_previous.draws[p];
+        if (before.positions != draw.positions || draw.vertices == 0) {
+            continue;
+        }
+        candidates.emplace_back(static_cast<uint32_t>(d), p);
+    }
+    close.assign(candidates.size(), 0);
+    parallel_for(candidates.size(), [](size_t i) {
+        close[i] = close_draw(g_previous.draws[candidates[i].second], g_record.draws[candidates[i].first]);
+    });
+    for (size_t i = 0; i < candidates.size(); i++) {
+        auto [d, p] = candidates[i];
+        if (!close[i]) {
+            moved_too_far++;
+            if (!trusted) {
+                partner[d] = kRejected;
+                continue;
+            }
+        }
+        partner[d] = p;
+        taken[p] = 1;
+    }
+}
+
+bool interpolated_targets() {
+    if (g_device.interpolated[0] && g_device.interpolated_width == g_device.frame_width && g_device.interpolated_height == g_device.frame_height) {
+        return true;
+    }
+    for (size_t i = 0; i < kMaxBetween; i++) {
+        release(g_device.interpolated_target[i]);
+        release(g_device.interpolated_view[i]);
+        release(g_device.interpolated[i]);
+    }
+    for (size_t i = 0; i < kMaxBetween; i++) {
+        if (!create_copy_texture(g_device.interpolated[i], g_device.interpolated_view[i], g_device.interpolated_target[i], g_device.frame_width,
+                                 g_device.frame_height)) {
+            for (size_t j = 0; j <= i; j++) {
+                release(g_device.interpolated_target[j]);
+                release(g_device.interpolated_view[j]);
+                release(g_device.interpolated[j]);
+            }
+            return false;
+        }
+    }
+    g_device.interpolated_width = g_device.frame_width;
+    g_device.interpolated_height = g_device.frame_height;
+    return true;
+}
+
+uint32_t g_match[6] = {};
+
+void find_cameras(const std::vector<uint32_t>& partner, const std::vector<uint8_t>& kind) {
+    for (CameraMotion& camera : g_cameras) {
+        camera.claimed = false;
+        camera.known = false;
+        camera.second = kMaxCameras;
+        camera.is_second = false;
+        camera.from.clear();
+        camera.to.clear();
+    }
+    constexpr size_t kMaxSamples = 8192;
+    constexpr size_t kThreePoints = 2048;
+    for (size_t d = 0; d < partner.size(); d++) {
+        if (partner[d] >= kRejected || kind[d] != kOnly) {
+            continue;
+        }
+        const RecordedDraw& draw = g_record.draws[d];
+        const RecordedDraw& before = g_previous.draws[partner[d]];
+        CameraMotion* camera = nullptr;
+        for (CameraMotion& candidate : g_cameras) {
+            if (!candidate.claimed) {
+                candidate.claimed = true;
+                candidate.id = draw.camera;
+            }
+            if (candidate.id == draw.camera) {
+                camera = &candidate;
+                break;
+            }
+        }
+        if (!camera || camera->from.size() >= kMaxSamples || draw.positions == 0) {
+            continue;
+        }
+        bool three = camera->from.size() < kThreePoints;
+        for (uint32_t i : {draw.positions / 2, 0u, draw.positions - 1}) {
+            const std::array<float, 4>& a = g_previous.positions[before.first_position + i];
+            const std::array<float, 4>& b = g_record.positions[draw.first_position + i];
+            if (!std::isnan(a[0]) && !std::isnan(b[0])) {
+                camera->from.push_back(b);
+                camera->to.push_back(a);
+            }
+            if (!three) {
+                break;
+            }
+        }
+    }
+    for (CameraMotion& camera : g_cameras) {
+        camera.known = camera.claimed && gx::fit_motion(reinterpret_cast<const float(*)[4]>(camera.from.data()), reinterpret_cast<const float(*)[4]>(camera.to.data()),
+                                                        camera.from.size(), camera.back);
+    }
+    static std::vector<std::array<float, 4>> rest_from;
+    static std::vector<std::array<float, 4>> rest_to;
+    for (size_t k = 0; k < kMaxCameras; k++) {
+        CameraMotion& camera = g_cameras[k];
+        if (!camera.known || camera.is_second) {
+            continue;
+        }
+        size_t free = kMaxCameras;
+        for (size_t j = 0; j < kMaxCameras; j++) {
+            if (!g_cameras[j].claimed) {
+                free = j;
+                break;
+            }
+        }
+        if (free == kMaxCameras) {
+            break;
+        }
+        rest_from.clear();
+        rest_to.clear();
+        for (size_t i = 0; i < camera.from.size(); i++) {
+            const std::array<float, 4>& b = camera.from[i];
+            const std::array<float, 4>& a = camera.to[i];
+            if (a[3] <= 0.0f || b[3] <= 0.0f) {
+                continue;
+            }
+            double p[4];
+            for (int r = 0; r < 4; r++) {
+                p[r] = static_cast<double>(camera.back[r][0]) * b[0] + static_cast<double>(camera.back[r][1]) * b[1] + static_cast<double>(camera.back[r][2]) * b[2] +
+                       static_cast<double>(camera.back[r][3]) * b[3];
+            }
+            if (p[3] <= 0.0 || std::max(std::fabs(p[0] / p[3] - a[0] / a[3]), std::fabs(p[1] / p[3] - a[1] / a[3])) > kStillScreen) {
+                rest_from.push_back(b);
+                rest_to.push_back(a);
+            }
+        }
+        constexpr size_t kMinimumRest = 96;
+        CameraMotion& other = g_cameras[free];
+        if (rest_from.size() < kMinimumRest ||
+            !gx::fit_motion(reinterpret_cast<const float(*)[4]>(rest_from.data()), reinterpret_cast<const float(*)[4]>(rest_to.data()), rest_from.size(), other.back)) {
+            continue;
+        }
+        other.claimed = true;
+        other.known = true;
+        other.is_second = true;
+        other.id = camera.id;
+        camera.second = free;
+    }
+}
+
+size_t camera_of(uint32_t id) {
+    for (size_t k = 0; k < kMaxCameras; k++) {
+        if (g_cameras[k].known && g_cameras[k].id == id) {
+            return k;
+        }
+    }
+    return kMaxCameras;
+}
+
+bool near_camera_path(const RecordedDraw& draw, const RecordedDraw& before, const CameraMotion& camera) {
+    const std::array<float, 4>& a = g_previous.positions[before.first_position];
+    const std::array<float, 4>& b = g_record.positions[draw.first_position];
+    if (std::isnan(a[0]) || std::isnan(b[0])) {
+        return false;
+    }
+    float p[4];
+    for (int r = 0; r < 4; r++) {
+        p[r] = camera.back[r][0] * b[0] + camera.back[r][1] * b[1] + camera.back[r][2] * b[2] + camera.back[r][3] * b[3];
+    }
+    constexpr float kNear = 0.05f;
+    return p[3] > 0.0f && a[3] > 0.0f && std::fabs(p[0] / p[3] - a[0] / a[3]) <= kNear && std::fabs(p[1] / p[3] - a[1] / a[3]) <= kNear;
+}
+
+std::vector<std::pair<uint32_t, uint32_t>> g_matches;
+bool g_camera_cut = false;
+
+void pair_frame() {
+    auto started = std::chrono::steady_clock::now();
+    static std::vector<uint32_t> partner;
+    static std::vector<uint8_t> taken;
+    partner.assign(g_record.draws.size(), kUnmatched);
+    taken.assign(g_previous.draws.size(), 0);
+    uint32_t moved_too_far = 0;
+    static std::vector<uint8_t> kind;
+    kind.assign(g_record.draws.size(), kNoPair);
+    match_by(&RecordedDraw::exact, true, partner, taken, kind, moved_too_far);
+    match_by(&RecordedDraw::key, false, partner, taken, kind, moved_too_far);
+    find_cameras(partner, kind);
+    static bool forward[kMaxCameras];
+    for (size_t k = 0; k < kMaxCameras; k++) {
+        forward[k] = g_cameras[k].known && invert(g_cameras[k].back, g_forward[k]);
+    }
+    g_world_camera.assign(g_record.draws.size(), static_cast<uint8_t>(kMaxCameras));
+    g_world_moving.assign(g_record.draws.size(), 0);
+    constexpr uint8_t kNoDraw = 255;
+    static std::vector<uint32_t> target;
+    static std::vector<uint8_t> column;
+    target.assign(partner.size(), kUnmatched);
+    column.assign(partner.size(), 0);
+    parallel_for(partner.size(), [](size_t d) {
+        const RecordedDraw& draw = g_record.draws[d];
+        if (draw.vertices == 0) {
+            column[d] = kNoDraw;
+            return;
+        }
+        bool pair = partner[d] < kRejected;
+        size_t camera = camera_of(draw.camera);
+        if (pair && camera < kMaxCameras && forward[camera]) {
+            bool moving = moves_in_world(draw, g_previous.draws[partner[d]], g_cameras[camera]);
+            size_t second = g_cameras[camera].second;
+            if (moving && second < kMaxCameras && forward[second] && !moves_in_world(draw, g_previous.draws[partner[d]], g_cameras[second])) {
+                camera = second;
+                moving = false;
+            }
+            g_world_camera[d] = static_cast<uint8_t>(camera);
+            g_world_moving[d] = moving;
+        }
+        if (camera < kMaxCameras && !(pair && (kind[d] == kOnly || (kind[d] == kSameCount && near_camera_path(draw, g_previous.draws[partner[d]], g_cameras[camera]))))) {
+            target[d] = kByCamera + static_cast<uint32_t>(camera);
+            column[d] = 5;
+        } else if (pair && camera == kMaxCameras && kind[d] != kOnly) {
+            column[d] = 2;
+        } else if (pair) {
+            target[d] = partner[d];
+            column[d] = kind[d] == kOnly ? 0 : 1;
+        } else {
+            column[d] = partner[d] == kRejected ? 2 : (draw.exact != 0 ? 3 : 4);
+        }
+    });
+    g_matches.clear();
+    for (size_t d = 0; d < partner.size(); d++) {
+        if (column[d] == kNoDraw) {
+            continue;
+        }
+        g_match[column[d]]++;
+        if (target[d] != kUnmatched) {
+            g_matches.emplace_back(static_cast<uint32_t>(d), target[d]);
+        }
+    }
+    g_camera_cut = moved_too_far > 8 && moved_too_far * 3 > g_matches.size();
+    g_time_pairing += std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+}
+
+bool g_paired = false;
+
+bool can_pair() {
+    return g_recording && !g_record_broken && !g_previous.draws.empty() && !g_record.draws.empty();
+}
+
+uint32_t run_interpolated(int x, int y, int width, int height, bool depth, const CopyFilter& filter, uint32_t count) {
+    if (!can_pair() || !g_efb_before_valid || !g_device.moved_shader || g_frame_vertices > kVertexCapacity || !interpolated_targets()) {
+        return 0;
+    }
+    if (!g_paired) {
+        pair_frame();
+        g_paired = true;
+    }
+    if (g_camera_cut) {
+        return 0;
+    }
+    count = std::clamp<uint32_t>(count, 1, kMaxBetween);
+    for (uint32_t step = 0; step < count; step++) {
+        if (!replay_between(g_matches, static_cast<float>(step + 1) / static_cast<float>(count + 1), g_device.interpolated_target[step], x, y, width, height, depth,
+                            filter)) {
+            return step;
+        }
+    }
+    return count;
+}
+
+int g_display_hz = 0;
+
+void end_record() {
+    if (g_recording && !g_record_broken) {
+        g_previous.positions.swap(g_record.positions);
+        g_previous.draws.swap(g_record.draws);
+    } else {
+        g_previous.positions.clear();
+        g_previous.draws.clear();
+    }
+    release_record(g_record);
+    g_paired = false;
+    if (g_frame % 600 == 0) {
+        prune_twins();
+    }
+    g_triangles.clear();
+    g_pending.begin = 0;
+    g_frame_vertices = 0;
+    static const settings::LiveNumber fps("video.fps", "WP_FPS");
+    g_recording = fps() >= 120 && (g_display_hz == 0 || g_display_hz >= 100);
+    g_record_broken = false;
+    if (g_recording) {
+        g_vertex_cursor = kVertexCapacity;
+    }
+}
+
+double g_period = 1.0 / 60.0;
+double g_slot = 1.0 / 120.0;
+
+struct FrameEnd {
+    bool due = false;
+    bool copied = false;
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+    bool depth = false;
+    CopyFilter filter;
+    bool has_clear = false;
+    ClearCommand clear;
+};
+
+FrameEnd g_frame_end;
+
+void apply_clear(const ClearCommand& command) {
+    run_clear(command);
+    if (g_recording) {
+        RecordedCommand recorded;
+        recorded.kind = RecordedCommand::kClear;
+        recorded.clear = command;
+        g_record.commands.push_back(recorded);
+    }
+}
+
+void copy_to_framebuffer(int x, int y, int width, int height, bool depth, const CopyFilter& filter) {
+    auto now = std::chrono::steady_clock::now();
+    static auto previous = now;
+    double period = std::chrono::duration<double>(now - previous).count();
+    previous = now;
+    if (period > 0.004 && period < 0.1) {
+        g_period = g_period * 0.9 + std::min(period, 0.05) * 0.1;
+    }
+    finish_frame();
+    bool copied = copy_frame(x, y, width, height, depth, filter);
+    g_interpolated_ready = 0;
+    g_frame_end = {true, copied, x, y, width, height, depth, filter, false, {}};
+}
+
+bool read_texture(ID3D11Texture2D* texture, std::vector<uint32_t>& pixels, uint32_t& width, uint32_t& height);
+
+const char* const g_dump_sequence = std::getenv("WP_DUMP_SEQUENCE");
+
+void dump_sequence(uint32_t images) {
+    static const uint64_t first = std::strtoull(g_dump_sequence, nullptr, 10);
+    static const uint64_t frames = std::strchr(g_dump_sequence, ',') ? std::strtoull(std::strchr(g_dump_sequence, ',') + 1, nullptr, 10) : 30;
+    if (g_frame < first || g_frame >= first + frames) {
+        return;
+    }
+    std::error_code created;
+    std::filesystem::create_directories("captures/seq", created);
+    auto save = [](ID3D11Texture2D* texture, const char* name) {
+        std::vector<uint32_t> pixels;
+        uint32_t width = 0;
+        uint32_t height = 0;
+        if (texture && read_texture(texture, pixels, width, height)) {
+            video::save_png(name, pixels, width, height);
+        }
+    };
+    char name[96];
+    for (uint32_t i = 0; i < images; i++) {
+        std::snprintf(name, sizeof name, "captures/seq/%06llu_%u.png", static_cast<unsigned long long>(g_frame), i);
+        save(g_device.interpolated[i], name);
+    }
+    std::snprintf(name, sizeof name, "captures/seq/%06llu_f.png", static_cast<unsigned long long>(g_frame));
+    save(g_device.frame, name);
+}
+
+void finish_frame() {
+    if (!g_frame_end.due) {
+        return;
+    }
+    FrameEnd end = g_frame_end;
+    g_frame_end.due = false;
+    uint32_t between = static_cast<uint32_t>(std::max(1.0, std::round(g_period * 120.0) - 1.0));
+    constexpr size_t kBehindBytes = 256 << 10;
+    bool late = gx::take_frame_held();
+    bool saved = end.copied && g_recording && save_efb(g_efb_after);
+    auto started = std::chrono::steady_clock::now();
+    if (saved) {
+        if (g_dump_sequence || (!late && gx::gpu_backlog() < kBehindBytes)) {
+            g_interpolated_ready = run_interpolated(end.x, end.y, end.width, end.height, end.depth, end.filter, between);
+            load_efb(g_efb_after);
+        }
+        std::swap(g_efb_before, g_efb_after);
+    }
+    if (g_dump_sequence && end.copied) {
+        dump_sequence(g_interpolated_ready);
+    }
+    if (g_recording) {
+        static auto report = started;
+        static uint32_t frames = 0, with_images = 0, late_frames = 0, draws = 0;
+        static double seconds = 0.0;
+        auto now = std::chrono::steady_clock::now();
+        frames++;
+        with_images += g_interpolated_ready != 0;
+        late_frames += late;
+        draws += static_cast<uint32_t>(g_record.draws.size());
+        seconds += std::chrono::duration<double>(now - started).count();
+        if (now - report >= std::chrono::seconds(1)) {
+            uint32_t n = std::max(1u, with_images);
+            log::write("replay", "%u frames, %u with images, %u late, %.2f ms per frame for the images (pairing %.2f, positions %.2f, commands %.2f), %u draws per frame: %u sure pairs, %u by order, %u rejected, %u unpaired, %u unpaired inline, %u with the camera (%u cameras)",
+                       frames, with_images, late_frames, seconds * 1000.0 / frames, g_time_pairing * 1000.0 / frames, g_time_filling * 1000.0 / frames, g_time_sending * 1000.0 / frames, draws / frames, g_match[0] / n, g_match[1] / n, g_match[2] / n, g_match[3] / n, g_match[4] / n,
+                       g_match[5] / n, static_cast<uint32_t>(std::count_if(std::begin(g_cameras), std::end(g_cameras), [](const CameraMotion& c) { return c.known; })));
+            std::fill(std::begin(g_match), std::end(g_match), 0u);
+            report = now;
+            frames = with_images = late_frames = draws = 0;
+            seconds = 0.0;
+            g_time_pairing = g_time_filling = g_time_sending = 0.0;
+        }
+    }
+    g_efb_before_valid = saved;
+    end_record();
+    if (end.has_clear) {
+        apply_clear(end.clear);
+    }
 }
 
 bool create_present_pipeline() {
@@ -2019,6 +3146,7 @@ void apply_scale() {
         return;
     }
     flush_pending();
+    g_record_broken = true;
     ID3D11DeviceContext* context = g_device.context;
     context->OMSetRenderTargets(0, nullptr, nullptr);
     ID3D11ShaderResourceView* none[2] = {};
@@ -2128,11 +3256,7 @@ void draw_overlay(const RECT& client) {
     context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
 }
 
-bool present_frame(void* window_handle, double aspect) {
-    if (!g_device.ready || !g_device.frame_view || !window_handle) {
-        return false;
-    }
-    HWND window = static_cast<HWND>(window_handle);
+bool present_view(HWND window, double aspect, ID3D11ShaderResourceView* view) {
     RECT client;
     GetClientRect(window, &client);
     if (client.right <= 0 || client.bottom <= 0 || !ensure_swapchain(window, static_cast<UINT>(client.right), static_cast<UINT>(client.bottom))) {
@@ -2160,7 +3284,7 @@ bool present_frame(void* window_handle, double aspect) {
     context->VSSetShader(g_device.present_vertex, nullptr, 0);
     static const settings::LiveFlag smooth("video.smooth", "WP_SMOOTH");
     context->PSSetShader(smooth() && g_device.present_smooth ? g_device.present_smooth : g_device.present_pixel, nullptr, 0);
-    context->PSSetShaderResources(0, 1, &g_device.frame_view);
+    context->PSSetShaderResources(0, 1, &view);
     context->PSSetSamplers(0, 1, &g_device.present_sampler);
     context->Draw(3, 0);
     ID3D11ShaderResourceView* none = nullptr;
@@ -2168,15 +3292,174 @@ bool present_frame(void* window_handle, double aspect) {
     draw_overlay(client);
     static const settings::LiveFlag vsync("video.vsync", "WP_VSYNC");
     HRESULT presented = g_device.swapchain->Present(vsync() ? 1 : 0, 0);
+    static auto last = std::chrono::steady_clock::now();
+    static auto report = last;
+    static double longest = 0.0;
+    static double shortest = 1e9;
+    static double total = 0.0;
+    static uint32_t shown = 0;
+    auto now = std::chrono::steady_clock::now();
+    double interval = std::chrono::duration<double, std::milli>(now - last).count();
+    last = now;
+    longest = std::max(longest, interval);
+    shortest = std::min(shortest, interval);
+    total += interval;
+    shown++;
+    if (now - report >= std::chrono::seconds(1)) {
+        log::write("present", "%u frames shown, %.1f ms apart on average, from %.1f to %.1f ms", shown, total / shown, shortest, longest);
+        report = now;
+        longest = 0.0;
+        shortest = 1e9;
+        total = 0.0;
+        shown = 0;
+    }
     static bool logged_present_failure = false;
     if (FAILED(presented) && !logged_present_failure) {
         logged_present_failure = true;
         HRESULT removed = g_device.device->GetDeviceRemovedReason();
         log::write("video", "Present failed with %08lx, device removed reason %08lx", static_cast<unsigned long>(presented), static_cast<unsigned long>(removed));
     }
+    return true;
+}
+
+namespace {
+
+HWND g_present_window = nullptr;
+double g_present_aspect = 4.0 / 3.0;
+
+struct ShownImage {
+    ID3D11Texture2D* texture = nullptr;
+    ID3D11ShaderResourceView* view = nullptr;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    std::chrono::steady_clock::time_point due;
+    bool interpolated = false;
+};
+
+constexpr size_t kShownImages = kMaxBetween + 3;
+ShownImage g_shown[kShownImages];
+std::deque<size_t> g_show_queue;
+std::chrono::steady_clock::time_point g_last_shown;
+
+bool queue_image(ID3D11Texture2D* source, std::chrono::steady_clock::time_point due, bool interpolated) {
+    size_t free = kShownImages;
+    for (size_t i = 0; i < kShownImages && free == kShownImages; i++) {
+        if (std::find(g_show_queue.begin(), g_show_queue.end(), i) == g_show_queue.end()) {
+            free = i;
+        }
+    }
+    if (free == kShownImages || !source) {
+        return false;
+    }
+    ShownImage& image = g_shown[free];
+    if (!image.texture || image.width != g_device.frame_width || image.height != g_device.frame_height) {
+        release(image.view);
+        release(image.texture);
+        ID3D11RenderTargetView* unused = nullptr;
+        if (!create_copy_texture(image.texture, image.view, unused, g_device.frame_width, g_device.frame_height)) {
+            release(unused);
+            release(image.view);
+            release(image.texture);
+            return false;
+        }
+        release(unused);
+        image.width = g_device.frame_width;
+        image.height = g_device.frame_height;
+    }
+    g_device.context->CopyResource(image.texture, source);
+    image.due = due;
+    image.interpolated = interpolated;
+    g_show_queue.push_back(free);
+    return true;
+}
+
+void service_deferred() {
+    auto now = std::chrono::steady_clock::now();
+    size_t ready = 0;
+    while (ready < g_show_queue.size() && g_shown[g_show_queue[ready]].due <= now) {
+        ready++;
+    }
+    if (ready == 0) {
+        return;
+    }
+    size_t skipped = ready > 2 ? ready - 2 : 0;
+    ready = skipped + 1;
+    const ShownImage& image = g_shown[g_show_queue[ready - 1]];
+    if (present_view(g_present_window, g_present_aspect, image.view) && image.interpolated) {
+        g_interpolated_frames++;
+    }
+    g_last_shown = now - image.due < std::chrono::duration<double>(g_slot) ? image.due : now;
+    g_show_queue.erase(g_show_queue.begin(), g_show_queue.begin() + static_cast<std::ptrdiff_t>(ready));
+}
+
+}
+
+bool present_frame(void* window_handle, double aspect) {
+    if (!g_device.ready || !g_device.frame_view || !window_handle) {
+        return false;
+    }
+    finish_frame();
+    HWND window = static_cast<HWND>(window_handle);
+    g_present_window = window;
+    g_present_aspect = aspect;
+    static auto checked = std::chrono::steady_clock::time_point{};
+    if (std::chrono::steady_clock::now() - checked > std::chrono::seconds(2)) {
+        checked = std::chrono::steady_clock::now();
+        MONITORINFOEXA monitor{};
+        monitor.cbSize = sizeof monitor;
+        DEVMODEA mode{};
+        mode.dmSize = sizeof mode;
+        int hz = 0;
+        if (GetMonitorInfoA(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &monitor) && EnumDisplaySettingsA(monitor.szDevice, ENUM_CURRENT_SETTINGS, &mode)) {
+            hz = static_cast<int>(mode.dmDisplayFrequency);
+        }
+        if (hz != g_display_hz) {
+            log::write("video", "display refresh rate %d Hz%s", hz, hz > 0 && hz < 100 ? ", too low for interpolated frames" : "");
+            g_display_hz = hz;
+        }
+    }
+    static uint64_t queued_frame = 0;
+    bool fresh = queued_frame != g_frame;
+    queued_frame = g_frame;
+    bool presented = true;
+    if (g_interpolated_ready == 0 && g_show_queue.empty()) {
+        if (fresh || !g_recording) {
+            presented = present_view(window, aspect, g_device.frame_view);
+            g_last_shown = std::chrono::steady_clock::now();
+        }
+    } else if (!fresh) {
+        service_deferred();
+    } else {
+        auto now = std::chrono::steady_clock::now();
+        auto last = g_show_queue.empty() ? g_last_shown : g_shown[g_show_queue.back()].due;
+        if (last - now > std::chrono::duration<double>(g_period / 2)) {
+            g_show_queue.clear();
+            last = g_last_shown;
+        }
+        g_slot = std::clamp(g_period / (g_interpolated_ready + 1), 0.002, 0.025);
+        auto step = std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(g_slot));
+        auto slot = std::max(now, last + step);
+        for (uint32_t i = 0; i < g_interpolated_ready; i++) {
+            if (queue_image(g_device.interpolated[i], slot, true)) {
+                slot += step;
+            }
+        }
+        g_interpolated_ready = 0;
+        queue_image(g_device.frame, slot, false);
+        service_deferred();
+    }
     apply_scale();
     apply_anisotropy();
-    return true;
+    return presented;
+}
+
+bool service_presents() {
+    service_deferred();
+    return !g_show_queue.empty();
+}
+
+uint32_t take_interpolated_frames() {
+    return g_interpolated_frames.exchange(0);
 }
 
 bool read_texture(ID3D11Texture2D* texture, std::vector<uint32_t>& pixels, uint32_t& width, uint32_t& height) {
@@ -2249,6 +3532,8 @@ bool read_frame(std::vector<uint32_t>& pixels, uint32_t& width, uint32_t& height
     return read_texture(g_device.frame, pixels, width, height);
 }
 
+void run_clear(const ClearCommand& command);
+
 void clear(int x, int y, int width, int height) {
     if (!initialize() || !create_present_pipeline()) {
         return;
@@ -2309,9 +3594,25 @@ void clear(int x, int y, int width, int height) {
     if (width <= 0 || height <= 0) {
         return;
     }
-    float constants[8] = {red / 255.0f, green / 255.0f, blue / 255.0f, alpha / 255.0f, static_cast<float>(depth) / 16777215.0f, 0, 0, 0};
+    ClearCommand command{mask, depth_enable, {red / 255.0f, green / 255.0f, blue / 255.0f, alpha / 255.0f, static_cast<float>(depth) / 16777215.0f, 0, 0, 0}, x, y, width, height};
+    if (g_frame_end.due && !g_frame_end.has_clear) {
+        g_frame_end.has_clear = true;
+        g_frame_end.clear = command;
+        return;
+    }
+    finish_frame();
+    apply_clear(command);
+}
+
+void run_clear(const ClearCommand& command) {
+    UINT mask = command.mask;
+    bool depth_enable = command.depth_enable;
+    int x = command.x;
+    int y = command.y;
+    int width = command.width;
+    int height = command.height;
     ID3D11DeviceContext* context = g_device.context;
-    context->UpdateSubresource(g_device.clear_constants, 0, nullptr, constants, 0, 0);
+    context->UpdateSubresource(g_device.clear_constants, 0, nullptr, command.constants, 0, 0);
     context->OMSetRenderTargets(1, &g_device.target_view, g_device.depth_view);
     D3D11_VIEWPORT viewport{0, 0, static_cast<float>(scaled(kEfbWidth)), static_cast<float>(scaled(kEfbHeight)), 0.0f, 1.0f};
     context->RSSetViewports(1, &viewport);

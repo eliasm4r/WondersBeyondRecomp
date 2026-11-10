@@ -109,6 +109,12 @@ Sample scripted(const std::vector<ScriptEntry>& script, int milliseconds) {
 
 }
 
+void follow_keyboard_layout() {
+    for (size_t i : keymap::unlocalized([](const std::string& key) { return settings::text(key.c_str(), nullptr); })) {
+        settings::store(keymap::setting_key(i).c_str(), keymap::local_defaults(i));
+    }
+}
+
 const keymap::Bindings& bindings() {
     static std::mutex mutex;
     static std::atomic<const keymap::Bindings*> current{nullptr};

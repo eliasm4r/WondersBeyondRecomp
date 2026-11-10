@@ -68,6 +68,10 @@ struct Bindings {
     bool bound(int code) const;
 };
 
+std::string localize(const std::string& list, const std::function<int(int letter)>& letter);
+std::string local_defaults(size_t index);
+std::vector<size_t> unlocalized(const std::function<std::string(const std::string& key)>& value);
+
 Bindings defaults();
 bool legacy_directions(const std::function<std::string(const std::string& key)>& value);
 bool direction(size_t index);

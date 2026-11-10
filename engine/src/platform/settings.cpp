@@ -59,7 +59,7 @@ const std::vector<Option>& options() {
     static const std::vector<Option> list = [] {
         std::vector<Option> result(std::begin(kBaseOptions), std::end(kBaseOptions));
         for (size_t i = 0; i < keymap::kActionCount; i++) {
-            result.push_back({keymap::setting_key(i), keymap::action(i).defaults});
+            result.push_back({keymap::setting_key(i), keymap::local_defaults(i)});
         }
         for (size_t i = 0; i < padmap::kActionCount; i++) {
             result.push_back({padmap::setting_key(i), "auto"});

@@ -182,7 +182,7 @@ void poll_interrupts(Cpu& c) {
     }
     // Only an unmasked poll renews the allowance: a long masked wait that times the sample counter must see it advance.
     quick_polls = 0;
-    if (decrementer_due()) {
+    if (decrementer_due() && !gx::frame_owed()) {
         deliver_decrementer(c);
     }
     if (ipc::interrupt_pending()) {

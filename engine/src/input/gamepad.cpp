@@ -494,16 +494,18 @@ uint32_t menu_buttons() {
         auto held = [&](SDL_GamepadButton button) { return current.buttons[button]; };
         SDL_GamepadButton accept = current.nintendo_layout ? SDL_GAMEPAD_BUTTON_EAST : SDL_GAMEPAD_BUTTON_SOUTH;
         SDL_GamepadButton cancel = current.nintendo_layout ? SDL_GAMEPAD_BUTTON_SOUTH : SDL_GAMEPAD_BUTTON_EAST;
-        if (held(SDL_GAMEPAD_BUTTON_DPAD_UP) || current.left_y < -stick_threshold()) {
+        constexpr float kMenuStick = 0.6f;
+        bool vertical = std::fabs(current.left_y) >= std::fabs(current.left_x);
+        if (held(SDL_GAMEPAD_BUTTON_DPAD_UP) || (vertical && current.left_y < -kMenuStick)) {
             result |= kMenuUp;
         }
-        if (held(SDL_GAMEPAD_BUTTON_DPAD_DOWN) || current.left_y > stick_threshold()) {
+        if (held(SDL_GAMEPAD_BUTTON_DPAD_DOWN) || (vertical && current.left_y > kMenuStick)) {
             result |= kMenuDown;
         }
-        if (held(SDL_GAMEPAD_BUTTON_DPAD_LEFT) || current.left_x < -stick_threshold()) {
+        if (held(SDL_GAMEPAD_BUTTON_DPAD_LEFT) || (!vertical && current.left_x < -kMenuStick)) {
             result |= kMenuLeft;
         }
-        if (held(SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || current.left_x > stick_threshold()) {
+        if (held(SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || (!vertical && current.left_x > kMenuStick)) {
             result |= kMenuRight;
         }
         if (held(accept)) {

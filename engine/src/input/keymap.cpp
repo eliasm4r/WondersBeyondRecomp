@@ -3,6 +3,10 @@
 #include <algorithm>
 #include <cctype>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include "wp/input.h"
 
 namespace wp::keymap {
@@ -186,10 +190,56 @@ bool Bindings::bound(int code) const {
     return false;
 }
 
+std::string localize(const std::string& list, const std::function<int(int letter)>& letter) {
+    std::string result;
+    size_t start = 0;
+    while (start <= list.size()) {
+        size_t comma = list.find(',', start);
+        std::string token = list.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+        if (token.size() == 1 && std::isalpha(static_cast<unsigned char>(token[0]))) {
+            token = std::string(1, static_cast<char>(letter(std::toupper(static_cast<unsigned char>(token[0])))));
+        }
+        result += (result.empty() && start == 0 ? "" : ",") + token;
+        if (comma == std::string::npos) {
+            break;
+        }
+        start = comma + 1;
+    }
+    return result;
+}
+
+std::string local_defaults(size_t index) {
+#ifdef _WIN32
+    static constexpr UINT kScanCodes[26] = {0x1E, 0x30, 0x2E, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17, 0x24, 0x25, 0x26, 0x32,
+                                            0x31, 0x18, 0x19, 0x10, 0x13, 0x1F, 0x14, 0x16, 0x2F, 0x11, 0x2D, 0x15, 0x2C};
+    return localize(kActions[index].defaults, [](int us) {
+        UINT local = MapVirtualKeyExA(kScanCodes[us - 'A'], MAPVK_VSC_TO_VK, GetKeyboardLayout(0));
+        return local >= 'A' && local <= 'Z' ? static_cast<int>(local) : us;
+    });
+#else
+    return kActions[index].defaults;
+#endif
+}
+
 Bindings defaults() {
     Bindings result;
     for (size_t i = 0; i < kActionCount; i++) {
-        result.codes[i] = parse(kActions[i].defaults).codes;
+        result.codes[i] = parse(local_defaults(i)).codes;
+    }
+    return result;
+}
+
+std::vector<size_t> unlocalized(const std::function<std::string(const std::string& key)>& value) {
+    std::vector<size_t> result;
+    for (size_t i = 0; i < kActionCount; i++) {
+        const char* us = action(static_cast<Action>(i)).defaults;
+        if (local_defaults(i) == us) {
+            continue;
+        }
+        if (parse(value(setting_key(i))).codes != parse(us).codes) {
+            return {};
+        }
+        result.push_back(i);
     }
     return result;
 }
@@ -212,7 +262,7 @@ Bindings load(const std::function<std::string(const std::string& key)>& value, s
     bool legacy = legacy_directions(value);
     for (size_t i = 0; i < kActionCount; i++) {
         std::string key = setting_key(i);
-        Parsed parsed = parse(legacy && direction(i) ? std::string(kActions[i].defaults) : value(key));
+        Parsed parsed = parse(legacy && direction(i) ? local_defaults(i) : value(key));
         for (const std::string& name : parsed.invalid) {
             invalid.push_back(key + ": " + name);
         }

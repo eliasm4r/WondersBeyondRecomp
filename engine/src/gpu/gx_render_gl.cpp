@@ -1377,7 +1377,21 @@ const char* api_name() {
     return "OpenGL";
 }
 
-void draw(const ScreenVertex* vertices, uint32_t count) {
+bool interpolating() {
+    return false;
+}
+
+void finish_frame() {}
+
+bool service_presents() {
+    return false;
+}
+
+uint32_t take_interpolated_frames() {
+    return 0;
+}
+
+void draw(const ScreenVertex* vertices, uint32_t count, const DrawSource*) {
     if (count == 0 || !initialize()) {
         return;
     }

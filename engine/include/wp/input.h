@@ -53,6 +53,7 @@ void set_auto_confirm(bool enabled);
 bool wakes_remote(uint32_t channel);
 void note_wheel(int delta);
 const keymap::Bindings& bindings();
+void follow_keyboard_layout();
 void set_blocked(bool blocked);
 
 }

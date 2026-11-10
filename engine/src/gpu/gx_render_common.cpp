@@ -546,4 +546,120 @@ uint64_t texture_key(uint32_t image0, uint32_t image3, uint32_t mip_levels, uint
            (static_cast<uint64_t>(tlut_register & 0xFFF) << 52);
 }
 
+bool fit_motion(const float (*from)[4], const float (*to)[4], size_t count, float matrix[4][4]) {
+    constexpr size_t kMinimum = 12;
+    if (count < kMinimum) {
+        return false;
+    }
+    double scale[4] = {};
+    for (size_t i = 0; i < count; i++) {
+        for (int j = 0; j < 4; j++) {
+            scale[j] += static_cast<double>(from[i][j]) * from[i][j];
+        }
+    }
+    for (double& s : scale) {
+        s = s > 0.0 ? 1.0 / std::sqrt(s / static_cast<double>(count)) : 1.0;
+    }
+    std::vector<uint8_t> used(count, 1);
+    double solved[4][4] = {};
+    constexpr int kRounds = 5;
+    constexpr double kLimits[kRounds] = {0.0, 0.05, 0.01, 0.0, 0.0};
+    size_t kept = count;
+    std::vector<double> error(count);
+    std::vector<double> sorted;
+    for (int round = 0; round < kRounds; round++) {
+        if (round > 0) {
+            for (size_t i = 0; i < count; i++) {
+                double out[4];
+                for (int r = 0; r < 4; r++) {
+                    out[r] = 0.0;
+                    for (int c = 0; c < 4; c++) {
+                        out[r] += solved[r][c] * from[i][c];
+                    }
+                }
+                double w = std::max(std::fabs(static_cast<double>(to[i][3])), 1e-6);
+                error[i] = std::max({std::fabs(out[0] - to[i][0]), std::fabs(out[1] - to[i][1]), std::fabs(out[3] - to[i][3])}) / w;
+            }
+            double limit = kLimits[round];
+            if (round == 1) {
+                sorted = error;
+                std::nth_element(sorted.begin(), sorted.begin() + static_cast<std::ptrdiff_t>(count / 2), sorted.end());
+                limit = std::max(limit, 3.0 * sorted[count / 2]);
+            } else if (round >= 3) {
+                sorted.clear();
+                for (size_t i = 0; i < count; i++) {
+                    if (used[i]) {
+                        sorted.push_back(error[i]);
+                    }
+                }
+                std::nth_element(sorted.begin(), sorted.begin() + static_cast<std::ptrdiff_t>(sorted.size() / 2), sorted.end());
+                limit = std::min(0.01, std::max(1e-4, 4.0 * sorted[sorted.size() / 2]));
+            }
+            kept = 0;
+            for (size_t i = 0; i < count; i++) {
+                used[i] = error[i] <= limit;
+                kept += used[i];
+            }
+            if (kept < kMinimum || kept * 10 < count * 6) {
+                return false;
+            }
+        }
+        double system[4][8] = {};
+        for (size_t i = 0; i < count; i++) {
+            if (!used[i]) {
+                continue;
+            }
+            double f[4];
+            for (int j = 0; j < 4; j++) {
+                f[j] = from[i][j] * scale[j];
+            }
+            for (int r = 0; r < 4; r++) {
+                for (int c = 0; c < 4; c++) {
+                    system[r][c] += f[r] * f[c];
+                    system[r][4 + c] += f[r] * to[i][c];
+                }
+            }
+        }
+        double trace = system[0][0] + system[1][1] + system[2][2] + system[3][3];
+        for (int j = 0; j < 4; j++) {
+            system[j][j] += trace * 1e-12 + 1e-30;
+        }
+        for (int column = 0; column < 4; column++) {
+            int pivot = column;
+            for (int r = column + 1; r < 4; r++) {
+                if (std::fabs(system[r][column]) > std::fabs(system[pivot][column])) {
+                    pivot = r;
+                }
+            }
+            if (std::fabs(system[pivot][column]) < 1e-300) {
+                return false;
+            }
+            std::swap_ranges(system[column], system[column] + 8, system[pivot]);
+            for (int r = 0; r < 4; r++) {
+                if (r == column) {
+                    continue;
+                }
+                double factor = system[r][column] / system[column][column];
+                for (int c = column; c < 8; c++) {
+                    system[r][c] -= factor * system[column][c];
+                }
+            }
+        }
+        for (int r = 0; r < 4; r++) {
+            for (int j = 0; j < 4; j++) {
+                solved[r][j] = system[j][4 + r] / system[j][j] * scale[j];
+            }
+        }
+    }
+    for (int r = 0; r < 4; r++) {
+        for (int c = 0; c < 4; c++) {
+            matrix[r][c] = static_cast<float>(solved[r][c]);
+            if (!std::isfinite(matrix[r][c])) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 }

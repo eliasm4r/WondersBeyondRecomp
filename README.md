@@ -3,7 +3,7 @@
 **PokéPark 2: Wonders Beyond** running natively on PC through static recompilation.
 
 > [!NOTE]
-> **Project status: playable, in development.** The game boots, plays and saves on Windows at up to 60 fps and high internal resolutions. Expect rough edges; see [CHANGELOG.md](CHANGELOG.md) for what changed.
+> **Project status: playable, in development.** The game boots, plays and saves on Windows at up to 120 fps and high internal resolutions. Expect rough edges; see [CHANGELOG.md](CHANGELOG.md) for what changed.
 
 ## Overview
 
@@ -16,6 +16,7 @@ Supported disc: Europe (`S2LP01`). Other regions are planned.
 ## Features
 
 - **60 fps** gameplay (`video.fps`), with movies and cutscenes kept at their native 30 fps
+- **120 fps** through frame interpolation (Direct3D 11): images are drawn between the game's frames
 - **Internal resolution** up to 6x, 16:9 or 4:3, optional supersampled smoothing, anisotropic filtering, vsync
 - **Options menu (F1)** drawn in the game's style, with five tabs (Display, Keyboard, Gamepad, Sound, Game), usable with keyboard, mouse or gamepad, without pausing the game
 - **Keyboard and mouse**: every action can be rebound; hold **Ctrl** to aim the Wii Remote pointer with the mouse
@@ -28,11 +29,11 @@ Supported disc: Europe (`S2LP01`). Other regions are planned.
 
 ## Playing
 
-After building (below), start the game with `Jouer PokePark 2.bat` or `build/out/pokepark2.exe`. Press **F1** for the options menu. Settings are stored in `games/pokepark2/settings.ini` and saves in `games/pokepark2/nand`.
+After building (below), start the game with `build/out/pokepark2.exe`. Press **F1** for the options menu. Settings are stored in `games/pokepark2/settings.ini` and saves in `games/pokepark2/nand`.
 
 ## Roadmap
 
-- 120 fps and beyond
+- A steady 120 fps on more PCs
 - Free camera with the mouse or the right stick
 - Shader cache on disk to remove first-time stutters
 - Installer, then Linux and macOS builds

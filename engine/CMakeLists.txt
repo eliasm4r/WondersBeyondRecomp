@@ -53,7 +53,7 @@ target_compile_definitions(wp_engine PRIVATE WP_BUILD="${WP_BUILD}"
 set_source_files_properties(src/audio/dsp_roms.cpp PROPERTIES OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/third_party/dolphin/Data/Sys/GC/dsp_rom.bin;${CMAKE_SOURCE_DIR}/third_party/dolphin/Data/Sys/GC/dsp_coef.bin")
 target_link_libraries(wp_engine PUBLIC wp_dolphin_dsp)
 if(WIN32)
-    target_link_libraries(wp_engine PUBLIC gdi32 user32 d3d11 d3dcompiler dxgi ole32 windowscodecs dwmapi)
+    target_link_libraries(wp_engine PUBLIC gdi32 user32 d3d11 d3dcompiler dxgi ole32 windowscodecs dwmapi winmm)
 else()
     find_package(Threads REQUIRED)
     target_link_libraries(wp_engine PUBLIC Threads::Threads)

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 
@@ -14,6 +15,9 @@ void set_screen_hidden(bool hidden);
 void write_pixel_engine_control(uint16_t value);
 void request_capture();
 uint64_t frames_drawn();
+size_t gpu_backlog();
+bool frame_owed();
+bool take_frame_held();
 void run_frame_task(std::function<void()> task);
 
 }

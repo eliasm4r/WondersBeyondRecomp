@@ -159,7 +159,7 @@ std::vector<std::string> choices(const std::string& key) {
         return scales;
     }
     if (key == "video.fps") {
-        return {"30", "60"};
+        return {"30", "60", "120"};
     }
     if (key == "video.anisotropy") {
         return {"1", "2", "4", "8", "16"};
@@ -394,7 +394,7 @@ std::string Menu::handle(Action action) {
         if (type == Kind::Button) {
             if (key == kResetKeys) {
                 for (size_t i = 0; i < keymap::kActionCount; i++) {
-                    settings::store(keymap::setting_key(i).c_str(), keymap::action(i).defaults);
+                    settings::store(keymap::setting_key(i).c_str(), keymap::local_defaults(i));
                 }
             } else {
                 for (size_t i = 0; i < padmap::kActionCount; i++) {
@@ -409,7 +409,7 @@ std::string Menu::handle(Action action) {
         [[fallthrough]];
     case Action::Previous:
     case Action::Next: {
-        if (type != Kind::Choice && type != Kind::Toggle && type != Kind::Slider) {
+        if (type != Kind::Choice && type != Kind::Slider && !(type == Kind::Toggle && action == Action::Accept)) {
             return "";
         }
         std::string current = settings::text(key.c_str(), nullptr);

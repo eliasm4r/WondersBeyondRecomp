@@ -2,6 +2,25 @@
 
 All notable changes to WondersBeyondRecomp. Dates are when the change landed on `main`.
 
+## 2026-11-11
+
+### Added
+- 120 fps mode (`video.fps=120`, Direct3D 11 only): each frame is recorded, every draw is paired with the one it was
+  in the previous frame, and the frame is drawn again at evenly spaced times in between. Draws that stand still follow
+  the camera's fitted motion, movers are blended in the world, and camera cuts are shown as they are.
+- Default key bindings follow the keyboard layout (Z, Q, S, D on AZERTY); bindings files still holding the US letters
+  move to the local ones once.
+
+### Changed
+- The Windows timer runs at 1 ms, so images 8 ms apart are shown on time.
+- In the options menu the stick moves only along its main axis, and on/off boxes change only when accepted.
+
+### Fixed
+- The game's frame alarms wait for the draw token the GPU thread still owes (100 ms at most): with the GPU thread
+  a little late the game took fresh buffers every frame and ran out of heap in the pause menu.
+- Flickering shadows, footprints, far scenery and sea at 120 fps, and thin lines of sea showing through the ground
+  during camera turns.
+
 ## 2026-11-10
 
 ### Added
@@ -13,7 +32,6 @@ All notable changes to WondersBeyondRecomp. Dates are when the change landed on 
 - A sharp jolt of a gamepad with a motion sensor simulates a Wii Remote shake.
 - Discord Rich Presence.
 - Window titled "WondersBeyondRecomp" and a new icon.
-- `Jouer PokePark 2.bat` starts the game without a console window and keeps the last two logs.
 
 ### Changed
 - One pixel shader is compiled per TEV configuration, in the background.

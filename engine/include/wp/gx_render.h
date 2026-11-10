@@ -36,11 +36,26 @@ bool guest_range_valid(uint32_t address, size_t size);
 void take_statistics(uint32_t& batches, uint32_t& vertices, double& seconds);
 void take_copy_statistics(uint32_t& write_backs, double& wait_seconds);
 
+struct DrawSource {
+    uint64_t key = 0;
+    uint64_t exact = 0;
+    uint32_t camera = 0;
+    const float (*positions)[4] = nullptr;
+    uint32_t count = 0;
+    const uint16_t* source_of = nullptr;
+};
+
+constexpr uint16_t kNoSource = 0xFFFF;
+
 const char* api_name();
-void draw(const ScreenVertex* vertices, uint32_t count);
+bool interpolating();
+void draw(const ScreenVertex* vertices, uint32_t count, const DrawSource* source = nullptr);
 void finish_copies();
+void finish_frame();
 void copy_to_framebuffer(int x, int y, int width, int height, bool depth, const CopyFilter& filter);
 bool present_frame(void* window, double aspect);
+bool service_presents();
+uint32_t take_interpolated_frames();
 bool read_frame(std::vector<uint32_t>& pixels, uint32_t& width, uint32_t& height);
 void dump_copies(const char* prefix);
 void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width, int height, bool half, uint32_t format, bool intensity, bool depth, bool alpha,

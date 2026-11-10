@@ -211,6 +211,9 @@ std::string menu_click(void* window, int x, int y, bool right) {
         sync(window);
         return "";
     }
+    if (type == Kind::Toggle) {
+        return act(window, Action::Accept);
+    }
     return act(window, target.part == Part::Previous ? Action::Previous : Action::Next);
 }
 
