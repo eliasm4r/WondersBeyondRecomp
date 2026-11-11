@@ -29,6 +29,7 @@
 #include "wp/threads.h"
 #include "wp/video.h"
 #include "wp/watch.h"
+#include "wp/play_time.h"
 #include "wp/runtime.h"
 
 namespace {
@@ -121,6 +122,7 @@ void report_terminate() {
 
 int run(int argc, char** argv) {
     wp::settings::load(wp::game::description().settings_file);
+    wp::play_time::start(wp::play_time::stats_path(wp::game::description().settings_file));
     wp::input::follow_keyboard_layout();
     std::string extracted = argc > 1 ? argv[1] : wp::game::description().data_directory;
     int timeout_seconds = argc > 2 ? std::atoi(argv[2]) : 0;
@@ -165,6 +167,7 @@ int run(int argc, char** argv) {
             wp::print_thread_stacks();
             wp::ipc::report();
             wp::print_profile();
+            wp::play_time::save();
             std::_Exit(3);
         }).detach();
     }

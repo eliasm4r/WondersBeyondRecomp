@@ -48,6 +48,14 @@ uint32_t take_interpolated_frames() {
     return 0;
 }
 
+uint32_t take_late_frames() {
+    return 0;
+}
+
+GpuFigures gpu_figures() {
+    return {};
+}
+
 void draw(const ScreenVertex*, uint32_t count, const DrawSource*) {
     g_batches++;
     g_vertices += count;

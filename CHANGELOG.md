@@ -10,8 +10,17 @@ All notable changes to WondersBeyondRecomp. Dates are when the change landed on 
   the camera's fitted motion, movers are blended in the world, and camera cuts are shown as they are.
 - Default key bindings follow the keyboard layout (Z, Q, S, D on AZERTY); bindings files still holding the US letters
   move to the local ones once.
+- Performance overlay on F2 (or in the Advanced tab): frame rate, processor, graphics card and memory figures, in three
+  levels of detail and in any corner of the window.
+- Play time, counted in `games/pokepark2/stats.ini` and shown in the Game tab.
+- 45 and 90 fps limits. At 45 fps the game's logic still runs 60 steps a second; 90 fps uses the frame interpolation
+  (Direct3D 11, on a screen of 85 Hz or more) and shows every other game frame.
+- A help line under the options menu's rows describes the selected setting.
 
 ### Changed
+- The options menu is drawn as the game's dialog bubble (orange edge, Nunito font) with six tabs in a column: Screen,
+  Game, Sound, Controls (keyboard or gamepad), Language and Advanced.
+- Gamepads keep working while the window is in the background.
 - The Windows timer runs at 1 ms, so images 8 ms apart are shown on time.
 - In the options menu the stick moves only along its main axis, and on/off boxes change only when accepted.
 

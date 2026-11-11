@@ -107,6 +107,10 @@ bool menu_open() {
     return g_menu.open();
 }
 
+bool menu_capturing() {
+    return g_menu.open() && g_menu.capturing();
+}
+
 void toggle_menu(void* window) {
     if (!g_menu.open() && !menu_enabled()) {
         return;
@@ -212,7 +216,9 @@ std::string menu_click(void* window, int x, int y, bool right) {
         return "";
     }
     if (type == Kind::Toggle) {
-        return act(window, Action::Accept);
+        std::string changed = g_menu.set_toggle(row, control_fraction(frame, placed, row - g_menu.scroll(), x) < 0.5);
+        sync(window);
+        return changed;
     }
     return act(window, target.part == Part::Previous ? Action::Previous : Action::Next);
 }

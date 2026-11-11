@@ -28,6 +28,7 @@
 #include "wp/gx_state.h"
 #include "wp/log.h"
 #include "wp/memory.h"
+#include "wp/perf.h"
 #include "wp/profile.h"
 #include "wp/settings.h"
 #include "wp/video.h"
@@ -45,6 +46,37 @@ constexpr size_t kFlushThreshold = 1u << 20;
 constexpr size_t kMaxQueuedBytes = size_t{64} << 20;
 std::atomic<size_t> g_queued_bytes{0};
 std::atomic<bool> g_screen_hidden{false};
+
+void publish_performance(double fps, double game_fps, double seconds, double game_thread, double gpu_thread) {
+    static const settings::LiveNumber scale("video.scale", "WP_SCALE");
+    static const settings::LiveFlag vsync("video.vsync", nullptr);
+    perf::Sample sample;
+    sample.fps = fps;
+    sample.frame_ms = fps > 0.0 ? 1000.0 / fps : -1.0;
+    sample.game_fps = game_fps;
+    uint32_t late = render::take_late_frames();
+    sample.late_per_second = render::interpolating() ? late / seconds : -1.0;
+    sample.game_thread_percent = game_thread;
+    sample.gpu_thread_percent = gpu_thread;
+    perf::SystemFigures system = perf::system_figures();
+    sample.cpu_percent = system.cpu_percent;
+    sample.gpu_percent = system.gpu_percent;
+    sample.gpu_ms = system.gpu_process_percent >= 0.0 && fps > 0.0 ? system.gpu_process_percent * 10.0 / fps : -1.0;
+    sample.ram_used_gb = system.ram_used_gb;
+    sample.ram_total_gb = system.ram_total_gb;
+    render::GpuFigures gpu = render::gpu_figures();
+    sample.vram_used_gb = gpu.vram_used_gb;
+    sample.vram_total_gb = gpu.vram_total_gb;
+    sample.gpu_name = gpu.adapter;
+    sample.render_width = gpu.width;
+    sample.render_height = gpu.height;
+    sample.refresh_hz = gpu.refresh_hz;
+    sample.cpu_name = perf::cpu_name();
+    sample.api = render::api_name();
+    sample.scale = scale();
+    sample.vsync = vsync();
+    perf::publish(sample);
+}
 
 size_t private_memory_mb() {
 #ifdef _WIN32
@@ -1212,6 +1244,7 @@ void execute_copy(uint32_t value) {
             }
             double seconds = std::chrono::duration<double>(now - g_fps_start).count();
             if (seconds >= 1.0) {
+                int real_frames = g_frames;
                 g_frames += static_cast<int>(render::take_interpolated_frames());
                 uint32_t batches = 0;
                 uint32_t vertices = 0;
@@ -1240,6 +1273,8 @@ void execute_copy(uint32_t value) {
                 } else {
                     log::write("threads", "CPU thread busy %.0f%%, GPU thread busy %.0f%%", (cpu - previous_cpu) * 100.0 / seconds, (gpu - previous_gpu) * 100.0 / seconds);
                 }
+                publish_performance(g_frames / seconds, real_frames / seconds, seconds, g_cpu_clock_known.load() ? (cpu - previous_cpu) * 100.0 / seconds : -1.0,
+                                    (gpu - previous_gpu) * 100.0 / seconds);
                 previous_cpu = cpu;
                 previous_gpu = gpu;
                 g_indirect_draws = 0;

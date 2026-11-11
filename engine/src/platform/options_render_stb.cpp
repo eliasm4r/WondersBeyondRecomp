@@ -1,345 +1,240 @@
 #include "wp/options_window.h"
 
-#define STB_TRUETYPE_IMPLEMENTATION
-#define STBTT_STATIC
-#include <stb_truetype.h>
-
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <filesystem>
-#include <fstream>
-#include <iterator>
 #include <string>
 #include <vector>
 
-#include "wp/log.h"
+#include "wp/canvas.h"
 #include "wp/ui_text.h"
 
 namespace wp::options {
 
 namespace {
 
-constexpr uint32_t kPanel = 0x161618;
+using canvas::Align;
+using canvas::Canvas;
+using canvas::Face;
+using canvas::FontId;
+
 constexpr uint32_t kSelected = 0x2C2C30;
 constexpr uint32_t kSeparator = 0x3A3A3E;
 constexpr uint32_t kText = 0xFFFFFF;
 constexpr uint32_t kMuted = 0xA1A1A6;
-constexpr uint32_t kAccent = 0xD4146F;
-constexpr uint32_t kAccentHover = 0xE8307F;
-constexpr uint32_t kHover = 0x202023;
-constexpr uint32_t kControl = 0x1E1E21;
-constexpr uint32_t kControlHover = 0x2A2A2E;
-constexpr uint32_t kOff = 0x4A4A50;
-constexpr uint32_t kOffHover = 0x5C5C63;
-constexpr uint32_t kDanger = 0xC42B1C;
-constexpr uint32_t kPanelAlpha = 250;
-constexpr char32_t kEllipsis = 0x2026;
-
-enum class Align { Left, Right, Center };
-
-struct Font {
-    std::vector<unsigned char> data;
-    stbtt_fontinfo info{};
-    bool ok = false;
-};
-
-std::string matched_font(const char* pattern) {
-#ifdef _WIN32
-    (void)pattern;
-    return "";
-#else
-    std::string command = std::string("fc-match -f '%{file}' '") + pattern + "' 2>/dev/null";
-    FILE* pipe = popen(command.c_str(), "r");
-    if (!pipe) {
-        return "";
-    }
-    std::string path;
-    char buffer[512];
-    while (std::fgets(buffer, sizeof buffer, pipe)) {
-        path += buffer;
-    }
-    pclose(pipe);
-    return path;
-#endif
-}
-
-Font load_font(bool bold) {
-    std::vector<std::string> candidates = {matched_font(bold ? "sans-serif:weight=180" : "sans-serif")};
-    const char* fallbacks[] = {
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",   "/usr/share/fonts/TTF/DejaVuSans.ttf",
-        "/usr/share/fonts/dejavu/DejaVuSans.ttf",            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/noto/NotoSans-Regular.ttf",        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        "/System/Library/Fonts/Supplemental/Arial.ttf",      "/Library/Fonts/Arial.ttf",
-    };
-    candidates.insert(candidates.end(), std::begin(fallbacks), std::end(fallbacks));
-    if (const char* windows = std::getenv("WINDIR")) {
-        std::string folder = std::string(windows) + "/Fonts/";
-        candidates.insert(candidates.begin(), folder + (bold ? "seguisb.ttf" : "segoeui.ttf"));
-        candidates.push_back(folder + "segoeui.ttf");
-        candidates.push_back(folder + "arial.ttf");
-    }
-    Font font;
-    for (const std::string& path : candidates) {
-        std::error_code error;
-        if (path.empty() || !std::filesystem::is_regular_file(path, error)) {
-            continue;
-        }
-        std::ifstream file(path, std::ios::binary);
-        font.data.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
-        int offset = stbtt_GetFontOffsetForIndex(font.data.data(), 0);
-        if (offset >= 0 && stbtt_InitFont(&font.info, font.data.data(), offset)) {
-            font.ok = true;
-            log::write("options", "menu font %s", path.c_str());
-            return font;
-        }
-    }
-    log::write("options", "no usable font for the options menu");
-    return font;
-}
-
-const Font& font(bool bold) {
-    static const Font regular = load_font(false);
-    static const Font semibold = load_font(true);
-    return bold && semibold.ok ? semibold : regular;
-}
-
-std::u32string decode(const std::string& text) {
-    std::u32string result;
-    for (size_t i = 0; i < text.size();) {
-        unsigned char lead = static_cast<unsigned char>(text[i]);
-        int length = lead < 0x80 ? 1 : (lead >> 5) == 6 ? 2 : (lead >> 4) == 14 ? 3 : (lead >> 3) == 30 ? 4 : 1;
-        char32_t value = length == 1 ? lead : lead & (0x7F >> length);
-        for (int k = 1; k < length && i + k < text.size(); k++) {
-            value = (value << 6) | (static_cast<unsigned char>(text[i + k]) & 0x3F);
-        }
-        result.push_back(value);
-        i += static_cast<size_t>(length);
-    }
-    return result;
-}
-
-struct Face {
-    const Font* font;
-    float scale;
-    int ascent;
-    int descent;
-};
 
 Face make_face(bool bold, int height) {
-    const Font& chosen = font(bold);
-    Face face{&chosen, stbtt_ScaleForMappingEmToPixels(&chosen.info, static_cast<float>(height)), 0, 0};
-    int ascent = 0;
-    int descent = 0;
-    int gap = 0;
-    stbtt_GetFontVMetrics(&chosen.info, &ascent, &descent, &gap);
-    face.ascent = static_cast<int>(std::lround(ascent * face.scale));
-    face.descent = static_cast<int>(std::lround(descent * face.scale));
-    return face;
+    return canvas::make_face(bold ? FontId::SystemBold : FontId::System, height);
 }
 
-float advance(const Face& face, char32_t codepoint, char32_t next) {
-    int width = 0;
-    int bearing = 0;
-    stbtt_GetCodepointHMetrics(&face.font->info, static_cast<int>(codepoint), &width, &bearing);
-    int kern = next ? stbtt_GetCodepointKernAdvance(&face.font->info, static_cast<int>(codepoint), static_cast<int>(next)) : 0;
-    return (width + kern) * face.scale;
-}
+constexpr uint32_t kPanel = 0xF8F8F6;
+constexpr uint32_t kOrange = 0xF27D0C;
+constexpr uint32_t kOrangeHover = 0xF59A40;
+constexpr uint32_t kInk = 0x3B3531;
+constexpr uint32_t kInkMuted = 0x8D847C;
+constexpr uint32_t kHelpInk = 0x6B625B;
+constexpr uint32_t kChipOffInk = 0x9A928A;
+constexpr uint32_t kChip = 0xECE9E4;
+constexpr uint32_t kChipHover = 0xF5E6D6;
+constexpr uint32_t kRowSelected = 0xFFEBD2;
+constexpr uint32_t kRowHover = 0xFFF4E8;
+constexpr uint32_t kMarker = 0xE2343B;
+constexpr uint32_t kRule = 0xE2DDD6;
+constexpr uint32_t kWhite = 0xFFFFFF;
+constexpr float kTitleSpacing = 0.12f;
+constexpr float kTabSpacing = 0.05f;
+constexpr float kRowSpacing = 0.04f;
 
-float text_width(const Face& face, const std::u32string& text) {
-    float width = 0.0f;
-    for (size_t i = 0; i < text.size(); i++) {
-        width += advance(face, text[i], i + 1 < text.size() ? text[i + 1] : 0);
+using Points = std::vector<std::array<float, 2>>;
+
+constexpr float kOutline[][2] = {{0.04f, 0.03f}, {0.55f, 0.0f}, {0.96f, 0.02f}, {1.0f, 0.24f}, {0.98f, 0.95f},
+                                 {0.70f, 0.98f}, {0.50f, 1.0f}, {0.30f, 0.97f}, {0.03f, 0.99f}, {0.0f, 0.46f}};
+
+Points outline(float left, float top, float width, float height) {
+    Points points;
+    for (const auto& point : kOutline) {
+        points.push_back({left + point[0] * width, top + point[1] * height});
     }
-    return width;
+    return points;
 }
 
-struct Canvas {
-    int width;
-    int height;
-    std::vector<uint32_t> pixels;
-
-    void fill(int left, int top, int right, int bottom, uint32_t color) {
-        left = std::max(left, 0);
-        top = std::max(top, 0);
-        right = std::min(right, width);
-        bottom = std::min(bottom, height);
-        for (int y = top; y < bottom; y++) {
-            std::fill(pixels.begin() + static_cast<std::ptrdiff_t>(y) * width + left, pixels.begin() + static_cast<std::ptrdiff_t>(y) * width + right, color);
-        }
+void triangle(Canvas& canvas, float cx, float cy, float half, int direction, uint32_t color) {
+    if (direction == 0) {
+        canvas.fill_polygon({{cx - half, cy + half * 0.8f}, {cx + half, cy + half * 0.8f}, {cx, cy - half * 0.8f}}, color);
+    } else if (direction == 2) {
+        canvas.fill_polygon({{cx - half, cy - half * 0.8f}, {cx + half, cy - half * 0.8f}, {cx, cy + half * 0.8f}}, color);
+    } else {
+        float tip = direction > 0 ? half * 0.8f : -half * 0.8f;
+        canvas.fill_polygon({{cx - tip, cy - half}, {cx + tip, cy}, {cx - tip, cy + half}}, color);
     }
+}
 
-    void fill_round(int left, int top, int right, int bottom, int radius, uint32_t color) {
-        radius = std::max(0, std::min({radius, (right - left) / 2, (bottom - top) / 2}));
-        for (int y = std::max(top, 0); y < std::min(bottom, height); y++) {
-            for (int x = std::max(left, 0); x < std::min(right, width); x++) {
-                double cx = x + 0.5;
-                double cy = y + 0.5;
-                double ox = cx < left + radius ? left + radius - cx : cx > right - radius ? cx - (right - radius) : 0.0;
-                double oy = cy < top + radius ? top + radius - cy : cy > bottom - radius ? cy - (bottom - radius) : 0.0;
-                double coverage = 1.0;
-                if (ox > 0.0 && oy > 0.0) {
-                    coverage = std::clamp(radius - std::sqrt(ox * ox + oy * oy) + 0.5, 0.0, 1.0);
+void dashes(Canvas& canvas, int left, int right, int y, int unit) {
+    int dash = std::max(3, unit / 2);
+    int gap = std::max(2, unit / 3);
+    int thickness = std::max(1, unit / 12);
+    for (int x = left; x < right; x += dash + gap) {
+        canvas.fill(x, y, std::min(x + dash, right), y + thickness, kRule);
+    }
+}
+
+std::vector<std::string> wrap(const Face& face, const std::string& text, int width, size_t max_lines) {
+    std::vector<std::string> lines;
+    std::string line;
+    size_t start = 0;
+    while (start <= text.size()) {
+        size_t end = text.find(' ', start);
+        std::string word = text.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        std::string candidate = line.empty() ? word : line + " " + word;
+        if (!line.empty() && canvas::text_width(face, candidate) > width) {
+            lines.push_back(line);
+            line = word;
+            if (lines.size() + 1 == max_lines) {
+                if (end != std::string::npos) {
+                    line += text.substr(end);
                 }
-                blend(x, y, color, static_cast<unsigned>(coverage * 255.0 + 0.5));
+                break;
             }
+        } else {
+            line = candidate;
         }
+        if (end == std::string::npos) {
+            break;
+        }
+        start = end + 1;
     }
+    if (!line.empty()) {
+        lines.push_back(line);
+    }
+    return lines;
+}
 
-    void dot(int x, int y, int stroke, uint32_t color) {
-        fill(x - stroke / 2, y - stroke / 2, x - stroke / 2 + stroke, y - stroke / 2 + stroke, color);
-    }
-
-    void cross(int cx, int cy, int half, int stroke, uint32_t color) {
-        for (int k = -half; k <= half; k++) {
-            dot(cx + k, cy + k, stroke, color);
-            dot(cx + k, cy - k, stroke, color);
-        }
-    }
-
-    void chevron(int cx, int cy, int half, int direction, int stroke, uint32_t color) {
-        for (int k = 0; k <= half; k++) {
-            int x = cx + direction * (half / 2 - k);
-            dot(x, cy - half + k, stroke, color);
-            dot(x, cy + half - k, stroke, color);
-        }
-    }
-
-    void blend(int x, int y, uint32_t color, unsigned coverage) {
-        if (x < 0 || y < 0 || x >= width || y >= height || coverage == 0) {
-            return;
-        }
-        uint32_t& target = pixels[static_cast<size_t>(y) * width + x];
-        uint32_t result = 0;
-        for (int shift = 0; shift < 24; shift += 8) {
-            unsigned below = (target >> shift) & 0xFF;
-            unsigned above = (color >> shift) & 0xFF;
-            unsigned mixed = (below * (255 - coverage) + above * coverage + 127) / 255;
-            result |= mixed << shift;
-        }
-        target = result;
-    }
-
-    void text(const Face& face, uint32_t color, const std::string& value, int left, int top, int right, int bottom, Align align, bool ellipsis) {
-        if (!face.font->ok) {
-            return;
-        }
-        std::u32string glyphs = decode(value);
-        if (ellipsis && text_width(face, glyphs) > right - left) {
-            while (!glyphs.empty() && text_width(face, glyphs + kEllipsis) > right - left) {
-                glyphs.pop_back();
-            }
-            glyphs.push_back(kEllipsis);
-        }
-        float width = text_width(face, glyphs);
-        float x = align == Align::Left ? static_cast<float>(left) : align == Align::Right ? right - width : left + (right - left - width) / 2.0f;
-        int baseline = top + (bottom - top - (face.ascent - face.descent)) / 2 + face.ascent;
-        for (size_t i = 0; i < glyphs.size(); i++) {
-            int codepoint = static_cast<int>(glyphs[i]);
-            float origin = std::floor(x);
-            float shift = x - origin;
-            int x0 = 0;
-            int y0 = 0;
-            int x1 = 0;
-            int y1 = 0;
-            stbtt_GetCodepointBitmapBoxSubpixel(&face.font->info, codepoint, face.scale, face.scale, shift, 0.0f, &x0, &y0, &x1, &y1);
-            int glyph_width = x1 - x0;
-            int glyph_height = y1 - y0;
-            if (glyph_width > 0 && glyph_height > 0) {
-                std::vector<unsigned char> bitmap(static_cast<size_t>(glyph_width) * glyph_height);
-                stbtt_MakeCodepointBitmapSubpixel(&face.font->info, bitmap.data(), glyph_width, glyph_height, glyph_width, face.scale, face.scale, shift, 0.0f,
-                                                  codepoint);
-                for (int gy = 0; gy < glyph_height; gy++) {
-                    for (int gx = 0; gx < glyph_width; gx++) {
-                        blend(static_cast<int>(origin) + x0 + gx, baseline + y0 + gy, color, bitmap[static_cast<size_t>(gy) * glyph_width + gx]);
-                    }
-                }
-            }
-            x += advance(face, glyphs[i], i + 1 < glyphs.size() ? glyphs[i + 1] : 0);
-        }
-    }
+struct Hint {
+    std::vector<std::string> caps;
+    const char* word;
 };
 
-uint32_t corner_alpha(int x, int y, int width, int height, int radius) {
-    double cx = x + 0.5;
-    double cy = y + 0.5;
-    double ox = cx < radius ? radius - cx : cx > width - radius ? cx - (width - radius) : 0.0;
-    double oy = cy < radius ? radius - cy : cy > height - radius ? cy - (height - radius) : 0.0;
-    if (ox <= 0.0 || oy <= 0.0) {
-        return kPanelAlpha;
+void key_cap(Canvas& canvas, const Face& face, const std::string& cap, int x, int y, int width, int height) {
+    canvas.fill_round(x, y, x + width, y + height, std::max(2, height / 4), kInk);
+    float cx = x + width / 2.0f;
+    float cy = y + height / 2.0f;
+    float half = height * 0.22f;
+    if (cap == "up") {
+        triangle(canvas, cx, cy, half, 0, kWhite);
+    } else if (cap == "down") {
+        triangle(canvas, cx, cy, half, 2, kWhite);
+    } else if (cap == "left") {
+        triangle(canvas, cx, cy, half, -1, kWhite);
+    } else if (cap == "right") {
+        triangle(canvas, cx, cy, half, 1, kWhite);
+    } else {
+        canvas.text(face, kWhite, cap, x, y, x + width, y + height, Align::Center, false);
     }
-    double coverage = std::clamp(radius - std::sqrt(ox * ox + oy * oy) + 0.5, 0.0, 1.0);
-    return static_cast<uint32_t>(kPanelAlpha * coverage + 0.5);
 }
 
-// The menu is drawn in the spirit of PokéPark's own menus (a wooden board, a parchment sheet, sunny yellow and leaf
-// green), with shapes drawn here rather than images from the game.
-constexpr uint32_t kWoodTop = 0x9A6232;
-constexpr uint32_t kWoodBottom = 0x74441F;
-constexpr uint32_t kWoodRim = 0x4E2C12;
-constexpr uint32_t kWoodGrain = 0x6A3D1B;
-constexpr uint32_t kWoodLight = 0xB27840;
-constexpr uint32_t kWoodHover = 0xC48A4E;
-constexpr uint32_t kParchment = 0xFFF4D6;
-constexpr uint32_t kParchmentLine = 0xEAD7AC;
-constexpr uint32_t kParchmentShadow = 0x5A3416;
-constexpr uint32_t kInk = 0x4A2A10;
-constexpr uint32_t kInkSoft = 0x9C7A54;
-constexpr uint32_t kCream = 0xFFF8E7;
-constexpr uint32_t kSun = 0xFFD23F;
-constexpr uint32_t kSunDark = 0xE0A000;
-constexpr uint32_t kSunPale = 0xFFE89A;
-constexpr uint32_t kSunHover = 0xFCEFC4;
-constexpr uint32_t kLeaf = 0x4CAF50;
-constexpr uint32_t kLeafDark = 0x2E7D32;
-constexpr uint32_t kOffTrack = 0xCDB68C;
-constexpr uint32_t kPill = 0xF2E0B6;
-constexpr uint32_t kPillHover = 0xF8EACB;
-constexpr uint32_t kBerry = 0xE53935;
-constexpr uint32_t kBerryHover = 0xF4554F;
-constexpr uint32_t kOrange = 0xF57C00;
-constexpr uint32_t kOrangeHover = 0xFF9420;
-constexpr uint32_t kWhite = 0xFFFFFF;
-
-uint32_t mix(uint32_t a, uint32_t b, double t) {
-    uint32_t result = 0;
-    for (int shift = 0; shift < 24; shift += 8) {
-        double x = ((a >> shift) & 0xFF) * (1.0 - t) + ((b >> shift) & 0xFF) * t;
-        result |= static_cast<uint32_t>(x + 0.5) << shift;
+int cap_width(const Face& face, const std::string& cap, int height) {
+    if (cap == "up" || cap == "down" || cap == "left" || cap == "right") {
+        return height;
     }
-    return result;
+    return std::max(height, static_cast<int>(std::ceil(canvas::text_width(face, cap))) + height / 2);
 }
 
-// A rounded shape with a darker copy below it, like the raised buttons of the game.
-void raised(Canvas& canvas, const Rect& r, int radius, int depth, uint32_t face, uint32_t shadow) {
-    canvas.fill_round(r.x, r.y + depth, r.x + r.width, r.y + r.height + depth, radius, shadow);
-    canvas.fill_round(r.x, r.y, r.x + r.width, r.y + r.height, radius, face);
-}
-
-void wood(Canvas& canvas, int unit) {
-    for (int y = 0; y < canvas.height; y++) {
-        canvas.fill(0, y, canvas.width, y + 1, mix(kWoodTop, kWoodBottom, static_cast<double>(y) / std::max(1, canvas.height - 1)));
-    }
-    int plank = unit * 4;
-    for (int y = plank; y < canvas.height; y += plank) {
-        canvas.fill(0, y, canvas.width, y + std::max(1, unit / 10), kWoodGrain);
-    }
-    // Grain: a few long, slightly darker streaks at fixed places.
-    for (int i = 0; i < canvas.height / std::max(1, unit / 2); i++) {
-        int y = (i * 37 + 11) * unit / 6 % std::max(1, canvas.height);
-        int left = (i * 53) % std::max(1, canvas.width / 2);
-        int length = canvas.width / 3 + (i * 29) % std::max(1, canvas.width / 2);
-        for (int x = left; x < std::min(canvas.width, left + length); x++) {
-            canvas.blend(x, y, kWoodGrain, 70);
+void draw_hints(Canvas& canvas, const Rect& area, int unit) {
+    Face cap_face = canvas::make_face(FontId::Body, unit * 3 / 4);
+    Face word_face = canvas::make_face(FontId::Body, unit * 17 / 20, kRowSpacing);
+    const Hint hints[] = {{{"up", "down"}, "hint.choose"}, {{"left", "right"}, "hint.change"}, {{"Q", "E"}, "hint.tab"}, {{ui::label("hint.escape")}, "hint.close"}};
+    int cap_height = unit * 6 / 5;
+    int inner = std::max(2, unit / 5);
+    int after_caps = unit / 3;
+    int between = unit + unit / 2;
+    int total = 0;
+    for (const Hint& hint : hints) {
+        for (const std::string& cap : hint.caps) {
+            total += cap_width(cap_face, cap, cap_height) + inner;
         }
+        total += after_caps - inner + static_cast<int>(std::ceil(canvas::text_width(word_face, ui::label(hint.word)))) + between;
     }
-    int rim = std::max(2, unit / 4);
-    canvas.fill(0, 0, canvas.width, rim, kWoodRim);
-    canvas.fill(0, canvas.height - rim, canvas.width, canvas.height, kWoodRim);
-    canvas.fill(0, 0, rim, canvas.height, kWoodRim);
-    canvas.fill(canvas.width - rim, 0, canvas.width, canvas.height, kWoodRim);
+    total -= between;
+    int x = area.x + std::max(0, (area.width - total) / 2);
+    int y = area.y + (area.height - cap_height) / 2;
+    for (const Hint& hint : hints) {
+        for (const std::string& cap : hint.caps) {
+            int width = cap_width(cap_face, cap, cap_height);
+            key_cap(canvas, cap_face, cap, x, y, width, cap_height);
+            x += width + inner;
+        }
+        x += after_caps - inner;
+        std::string word = ui::label(hint.word);
+        int word_width = static_cast<int>(std::ceil(canvas::text_width(word_face, word)));
+        canvas.text(word_face, kInkMuted, word, x, y, x + word_width + 1, y + cap_height, Align::Left, false);
+        x += word_width + between;
+    }
+}
+
+void draw_control(Canvas& canvas, const Menu& menu, const Row& row, bool selected, const Hover& hover, bool hovered, const Rect& control, int unit) {
+    Face value_face = canvas::make_face(FontId::Body, unit * 9 / 10, kRowSpacing);
+    int cy = control.y + control.height / 2;
+    bool over_control = hovered && hover.part != Part::Label && hover.part != Part::None;
+    switch (row.kind) {
+    case Kind::Info:
+        canvas.text(value_face, kInk, row.value, control.x, control.y, control.x + control.width, control.y + control.height, Align::Right, true);
+        break;
+    case Kind::Toggle: {
+        int gap = std::max(2, unit / 3);
+        int chip = (control.width - gap) / 2;
+        const char* labels[] = {ui::label("menu.yes"), ui::label("menu.no")};
+        for (int side = 0; side < 2; side++) {
+            int left = control.x + side * (chip + gap);
+            bool active = (side == 0) == row.on;
+            bool over = over_control && !active && ((side == 0) == (hover.part != Part::Next));
+            uint32_t fill = active ? kOrange : over ? kChipHover : kChip;
+            canvas.fill_round(left, control.y, left + chip, control.y + control.height, control.height / 2, fill);
+            canvas.text(value_face, active ? kWhite : kChipOffInk, labels[side], left + unit / 3, control.y, left + chip - unit / 3, control.y + control.height,
+                        Align::Center, true);
+        }
+        break;
+    }
+    case Kind::Slider: {
+        int left = control.x + unit / 2;
+        int right = control.x + control.width - unit * 4;
+        int thickness = std::max(4, unit / 3);
+        int knob = std::max(5, unit * 11 / 20);
+        int fill = left + static_cast<int>(std::lround((right - left) * row.fraction));
+        canvas.fill_round(left, cy - thickness / 2, right, cy - thickness / 2 + thickness, thickness / 2, kChip);
+        canvas.fill_round(left, cy - thickness / 2, std::max(fill, left + thickness), cy - thickness / 2 + thickness, thickness / 2, kOrange);
+        canvas.fill_round(fill - knob, cy - knob, fill + knob, cy + knob, knob, over_control ? kOrangeHover : kOrange);
+        canvas.fill_round(fill - knob / 2, cy - knob / 2, fill + knob / 2, cy + knob / 2, knob / 2, kWhite);
+        canvas.text(value_face, kInk, row.value, right + unit, control.y, control.x + control.width, control.y + control.height, Align::Right, false);
+        break;
+    }
+    case Kind::Key:
+    case Kind::Pad: {
+        bool waiting = selected && menu.capturing();
+        uint32_t fill = waiting ? kOrange : over_control ? kChipHover : kChip;
+        canvas.fill_round(control.x, control.y, control.x + control.width, control.y + control.height, control.height / 2, fill);
+        std::string text = waiting ? ui::label(row.kind == Kind::Key ? "menu.press_key" : "menu.press_button") : row.value;
+        canvas.text(value_face, waiting ? kWhite : kInk, text, control.x + unit / 2, control.y, control.x + control.width - unit / 2, control.y + control.height,
+                    Align::Center, true);
+        break;
+    }
+    case Kind::Button:
+        canvas.fill_round(control.x, control.y, control.x + control.width, control.y + control.height, control.height / 2, over_control ? kOrangeHover : kOrange);
+        canvas.text(value_face, kWhite, ui::label("menu.reset"), control.x + unit / 2, control.y, control.x + control.width - unit / 2, control.y + control.height,
+                    Align::Center, true);
+        break;
+    case Kind::Choice: {
+        float half = unit * 0.42f;
+        float arrow = unit * 0.8f;
+        bool over_previous = over_control && hover.part == Part::Previous;
+        bool over_next = over_control && hover.part == Part::Next;
+        triangle(canvas, control.x + arrow, static_cast<float>(cy), half, -1, over_previous ? kOrangeHover : kOrange);
+        triangle(canvas, control.x + control.width - arrow, static_cast<float>(cy), half, 1, over_next ? kOrangeHover : kOrange);
+        int margin = static_cast<int>(arrow * 2);
+        canvas.text(value_face, kInk, row.value, control.x + margin, control.y, control.x + control.width - margin, control.y + control.height, Align::Center, true);
+        break;
+    }
+    }
 }
 
 }
@@ -348,154 +243,104 @@ Image render(const Menu& menu, int client_height) {
     Image image;
     std::vector<Row> rows = menu.rows();
     Layout frame = layout(client_height, rows.size(), menu.scroll());
-    if (frame.width <= 0 || frame.height <= 0 || !font(false).ok) {
+    if (frame.width <= 0 || frame.height <= 0 || !canvas::font_ok(FontId::Body)) {
         return image;
     }
-    Canvas canvas{frame.width, frame.height, std::vector<uint32_t>(static_cast<size_t>(frame.width) * frame.height, kWoodTop)};
+    Canvas canvas{frame.width, frame.height, std::vector<uint32_t>(static_cast<size_t>(frame.width) * frame.height, 0)};
     int unit = frame.unit;
-    int depth = std::max(2, unit / 6);
-    int stroke = std::max(2, unit / 7);
-    Face title_face = make_face(true, unit * 3 / 2);
-    Face tab_face = make_face(true, unit * 9 / 10);
-    Face row_face = make_face(false, unit);
-    Face value_face = make_face(true, unit * 9 / 10);
-    Face small_face = make_face(false, unit * 4 / 5);
     const ui::Text& strings = ui::text();
     const Hover& hover = menu.hover();
-    wood(canvas, unit);
+    float panel_width = static_cast<float>(frame.width - frame.edge);
+    float panel_height = static_cast<float>(frame.height - frame.edge);
+    canvas.fill_polygon(outline(static_cast<float>(frame.edge), static_cast<float>(frame.edge), panel_width, panel_height), kOrange);
+    canvas.fill_polygon(outline(0.0f, 0.0f, panel_width, panel_height), kPanel);
 
-    // Title on a leaf-green banner, with a sun-yellow berry on its left.
     Rect close = close_rect(frame);
-    Rect banner{frame.padding, frame.padding, close.x - unit - frame.padding, frame.title_height - unit};
-    raised(canvas, banner, banner.height / 2, depth, kLeaf, kLeafDark);
-    int berry = banner.height - unit / 2;
-    int berry_x = banner.x + unit / 2;
-    int berry_y = banner.y + (banner.height - berry) / 2;
-    canvas.fill_round(berry_x, berry_y, berry_x + berry, berry_y + berry, berry / 2, kSun);
-    canvas.fill_round(berry_x + berry / 5, berry_y + berry / 5, berry_x + berry / 2, berry_y + berry / 2, berry / 6, kSunPale);
-    canvas.text(title_face, kCream, strings.menu_title, berry_x + berry + unit / 2, banner.y, banner.x + banner.width - unit, banner.y + banner.height, Align::Left, true);
-    bool close_hover = hover.part == Part::Close;
-    raised(canvas, close, close.width / 2, depth, close_hover ? kBerryHover : kBerry, kWoodRim);
-    canvas.cross(close.x + close.width / 2, close.y + close.height / 2, unit / 3, stroke, kWhite);
+    Face title_face = canvas::make_face(FontId::Heavy, unit * 3 / 2, kTitleSpacing);
+    canvas.text(title_face, kOrange, strings.menu_title, frame.padding, frame.padding, close.x - unit, frame.padding + frame.title_height, Align::Left, true);
+    canvas.fill_round(close.x, close.y, close.x + close.width, close.y + close.height, close.width / 2, hover.part == Part::Close ? kOrangeHover : kOrange);
+    canvas.cross(close.x + close.width / 2, close.y + close.height / 2, close.width / 5, std::max(2, unit / 7), kWhite);
 
+    Face tab_face = canvas::make_face(FontId::Body, unit, kTabSpacing);
     for (size_t tab = 0; tab < kTabCount; tab++) {
         Rect r = tab_rect(frame, tab);
         bool active = tab == menu.tab();
-        bool hovered = hover.part == Part::Tab && hover.tab == static_cast<int>(tab);
-        raised(canvas, r, unit * 2 / 3, depth, active ? kSun : hovered ? kWoodHover : kWoodLight, active ? kSunDark : kWoodRim);
-        canvas.text(tab_face, active ? kInk : kCream, tab_label(tab), r.x + unit / 3, r.y, r.x + r.width - unit / 3, r.y + r.height, Align::Center, true);
+        bool over = !active && hover.part == Part::Tab && hover.tab == static_cast<int>(tab);
+        float skew = std::tan(12.0f * 3.14159265f / 180.0f) * r.height;
+        float left = static_cast<float>(r.x);
+        float right = static_cast<float>(r.x + r.width);
+        float top = static_cast<float>(r.y);
+        float bottom = static_cast<float>(r.y + r.height);
+        canvas.fill_polygon({{left + skew, top}, {right, top}, {right - skew, bottom}, {left, bottom}}, active ? kOrange : over ? kChipHover : kChip);
+        canvas.text(tab_face, active ? kWhite : kInkMuted, tab_label(tab), r.x + unit / 2, r.y, r.x + r.width - unit / 2, r.y + r.height, Align::Center, true);
     }
 
-    Rect sheet = rows_rect(frame);
-    raised(canvas, sheet, unit, depth, kParchment, kParchmentShadow);
-    size_t first = menu.scroll();
+    Face label_face = canvas::make_face(FontId::Body, unit, kRowSpacing);
+    Face note_face = canvas::make_face(FontId::Body, unit * 3 / 4);
+    size_t first = frame.scroll;
     size_t last = std::min(rows.size(), first + kVisibleRows);
-    for (size_t i = first; i < last; i++) {
-        const Row& row = rows[i];
-        size_t visible = i - first;
-        Rect line = row_rect(frame, visible);
-        bool selected = i == menu.selection();
-        bool hovered = hover.row == static_cast<int>(i);
-        if (visible > 0) {
-            canvas.fill(line.x + unit / 2, line.y, line.x + line.width - unit / 2, line.y + 1, kParchmentLine);
-        }
+    for (size_t index = first; index < last; index++) {
+        const Row& row = rows[index];
+        size_t visible = index - first;
+        Rect r = row_rect(frame, visible);
+        Rect control = control_rect(frame, visible);
+        bool selected = index == menu.selection();
+        bool hovered = hover.row == static_cast<int>(index);
         if (selected || hovered) {
-            canvas.fill_round(line.x, line.y + 2, line.x + line.width, line.y + line.height - 2, unit / 2, selected ? kSunPale : kSunHover);
+            canvas.fill_round(r.x, r.y + 1, r.x + r.width, r.y + r.height - 1, unit / 3, selected ? kRowSelected : kRowHover);
         }
         if (selected) {
-            canvas.fill_round(line.x + unit / 4, line.y + unit / 2, line.x + unit / 4 + std::max(3, unit / 4), line.y + line.height - unit / 2,
-                              std::max(2, unit / 8), kOrange);
+            float cy = r.y + r.height / 2.0f;
+            float size = unit * 0.38f;
+            canvas.fill_polygon({{r.x + unit * 0.35f, cy - size}, {r.x + unit * 0.35f + size * 1.3f, cy}, {r.x + unit * 0.35f, cy + size}}, kMarker);
         }
-        Rect control = control_rect(frame, visible);
-        int cy = control.y + control.height / 2;
-        bool over_control = hovered && hover.part != Part::Label;
-        int value_left = control.x;
-        switch (row.kind) {
-        case Kind::Toggle: {
-            int width = unit * 3;
-            int left = control.x + control.width - width;
-            value_left = left;
-            canvas.fill_round(left, control.y, left + width, control.y + control.height, control.height / 2,
-                              row.on ? (over_control ? kLeaf : kLeafDark) : (over_control ? kPill : kOffTrack));
-            int knob = control.height - unit / 2;
-            int knob_left = row.on ? left + width - knob - unit / 4 : left + unit / 4;
-            canvas.fill_round(knob_left, control.y + unit / 4, knob_left + knob, control.y + unit / 4 + knob, knob / 2, kWhite);
-            break;
+        if (index + 1 < last && !selected && index + 1 != menu.selection()) {
+            dashes(canvas, r.x + unit / 2, r.x + r.width - unit / 2, r.y + r.height - 1, unit);
         }
-        case Kind::Slider: {
-            int left = control.x + unit / 2;
-            int right = control.x + control.width - unit * 4;
-            int track = std::max(4, unit / 3);
-            canvas.fill_round(left, cy - track / 2, right, cy - track / 2 + track, track / 2, kOffTrack);
-            int filled = left + static_cast<int>((right - left) * row.fraction + 0.5);
-            canvas.fill_round(left, cy - track / 2, std::max(left + track, filled), cy - track / 2 + track, track / 2, kSunDark);
-            int knob = unit;
-            canvas.fill_round(filled - knob / 2, cy - knob / 2, filled + knob / 2, cy + knob / 2, knob / 2, kInk);
-            canvas.fill_round(filled - knob / 2 + 2, cy - knob / 2 + 2, filled + knob / 2 - 2, cy + knob / 2 - 2, knob / 2 - 2, over_control ? kSunPale : kWhite);
-            canvas.text(value_face, kInk, row.value, right + unit / 2, control.y, control.x + control.width, control.y + control.height, Align::Right, false);
-            break;
-        }
-        case Kind::Button: {
-            raised(canvas, control, control.height / 2, depth / 2, over_control ? kOrangeHover : kOrange, kWoodRim);
-            canvas.text(value_face, kCream, ui::label("menu.reset"), control.x + unit / 2, control.y, control.x + control.width - unit / 2,
-                        control.y + control.height, Align::Center, true);
-            break;
-        }
-        case Kind::Key:
-        case Kind::Pad: {
-            bool waiting = selected && menu.capturing();
-            canvas.fill_round(control.x, control.y, control.x + control.width, control.y + control.height, control.height / 2,
-                              waiting ? kSun : over_control ? kPillHover : kPill);
-            std::string shown = waiting ? ui::label(row.kind == Kind::Key ? "menu.press_key" : "menu.press_button") : row.value;
-            canvas.text(value_face, kInk, shown, control.x + unit / 2, control.y, control.x + control.width - unit / 2, control.y + control.height, Align::Center,
-                        true);
-            break;
-        }
-        case Kind::Choice: {
-            canvas.fill_round(control.x, control.y, control.x + control.width, control.y + control.height, control.height / 2, over_control ? kPillHover : kPill);
-            int arrow = unit * 2;
-            uint32_t previous_color = hovered && hover.part == Part::Previous ? kOrange : kInkSoft;
-            uint32_t next_color = hovered && hover.part == Part::Next ? kOrange : kInkSoft;
-            canvas.chevron(control.x + arrow / 2, cy, unit / 3, 1, stroke, previous_color);
-            canvas.chevron(control.x + control.width - arrow / 2, cy, unit / 3, -1, stroke, next_color);
-            canvas.text(value_face, kInk, row.value, control.x + arrow, control.y, control.x + control.width - arrow, control.y + control.height, Align::Center,
-                        true);
-            break;
-        }
-        }
-        int label_right = value_left - unit / 2;
+        int label_left = r.x + unit + unit / 2;
+        int label_right = control.x - unit / 2;
         if (!row.live) {
-            int note_width = static_cast<int>(std::ceil(text_width(small_face, decode(strings.menu_restart))));
-            int note_left = value_left - unit / 2 - note_width;
-            canvas.text(small_face, kInkSoft, strings.menu_restart, note_left, line.y, value_left - unit / 2, line.y + line.height, Align::Right, false);
+            int note_width = static_cast<int>(std::ceil(canvas::text_width(note_face, std::string(strings.menu_restart))));
+            int note_left = std::max(label_left + unit * 4, label_right - note_width);
+            canvas.text(note_face, kInkMuted, strings.menu_restart, note_left, r.y, label_right, r.y + r.height, Align::Right, true);
             label_right = note_left - unit / 2;
         }
-        canvas.text(row_face, kInk, row.label, line.x + unit, line.y, std::max(line.x + unit * 2, label_right), line.y + line.height, Align::Left, true);
-    }
-    if (rows.size() > kVisibleRows) {
-        int track_left = sheet.x + sheet.width - unit;
-        int track_top = sheet.y + unit / 2;
-        int track_height = sheet.height - unit;
-        int width = std::max(4, unit / 3);
-        canvas.fill_round(track_left, track_top, track_left + width, track_top + track_height, width / 2, kParchmentLine);
-        int thumb = std::max(unit, static_cast<int>(track_height * kVisibleRows / rows.size()));
-        int top = track_top + static_cast<int>((track_height - thumb) * first / (rows.size() - kVisibleRows));
-        canvas.fill_round(track_left, top, track_left + width, top + thumb, width / 2, kSunDark);
+        canvas.text(label_face, kInk, row.label, label_left, r.y, label_right, r.y + r.height, Align::Left, true);
+        draw_control(canvas, menu, row, selected, hover, hovered, control, unit);
     }
 
-    int footer_top = sheet.y + sheet.height + depth;
-    canvas.text(small_face, kCream, strings.menu_hint, frame.padding, footer_top, frame.width - frame.padding, frame.height - frame.padding / 2, Align::Center, true);
+    if (rows.size() > kVisibleRows) {
+        Rect area = rows_rect(frame);
+        int width = std::max(3, unit / 4);
+        int x = area.x + area.width - unit * 3 / 4;
+        int top = area.y + unit / 2;
+        int height = area.height - unit;
+        int thumb = std::max(unit, static_cast<int>(height * kVisibleRows / rows.size()));
+        int offset = static_cast<int>((height - thumb) * static_cast<double>(first) / (rows.size() - kVisibleRows));
+        canvas.fill_round(x, top, x + width, top + height, width / 2, kChip);
+        canvas.fill_round(x, top + offset, x + width, top + offset + thumb, width / 2, kOrange);
+    }
+
+    Rect help = help_rect(frame);
+    canvas.fill(help.x, help.y + unit / 3, help.x + help.width, help.y + unit / 3 + std::max(2, unit / 8), kOrange);
+    size_t described = hover.row >= 0 && static_cast<size_t>(hover.row) < rows.size() ? static_cast<size_t>(hover.row) : menu.selection();
+    if (described < rows.size()) {
+        Face help_face = canvas::make_face(FontId::Body, unit * 17 / 20, 0.02f);
+        int line_height = unit * 11 / 10;
+        int text_left = help.x + unit + unit / 3;
+        int text_top = help.y + unit * 2 / 3;
+        triangle(canvas, help.x + unit * 0.4f, text_top + line_height / 2.0f, unit * 0.32f, 1, kOrange);
+        std::vector<std::string> lines = wrap(help_face, rows[described].help, help.x + help.width - text_left, 2);
+        for (size_t i = 0; i < lines.size(); i++) {
+            int top = text_top + static_cast<int>(i) * line_height;
+            canvas.text(help_face, kHelpInk, lines[i], text_left, top, help.x + help.width, top + line_height, Align::Left, true);
+        }
+    }
+    draw_hints(canvas, hints_rect(frame), unit);
 
     image.width = static_cast<uint32_t>(frame.width);
     image.height = static_cast<uint32_t>(frame.height);
-    image.pixels.resize(canvas.pixels.size());
-    int radius = unit;
-    for (int y = 0; y < frame.height; y++) {
-        for (int x = 0; x < frame.width; x++) {
-            size_t index = static_cast<size_t>(y) * image.width + static_cast<size_t>(x);
-            image.pixels[index] = (canvas.pixels[index] & 0xFFFFFF) | (corner_alpha(x, y, frame.width, frame.height, radius) << 24);
-        }
-    }
+    image.pixels = std::move(canvas.pixels);
     return image;
 }
 
@@ -515,7 +360,7 @@ Image render_titlebar(int width, int height, const std::string& title, int hover
     int step = std::max(2, height * 2 / 32);
     int buttons_left = width - button * kButtonCount;
     int margin = height * 12 / 32;
-    if (font(false).ok) {
+    if (canvas::font_ok(FontId::System)) {
         Face face = make_face(false, std::max(8, height * 13 / 32));
         canvas.text(face, focused ? kText : kMuted, title, margin, 0, std::max(margin, buttons_left - margin), height - stroke, Align::Left, true);
     }

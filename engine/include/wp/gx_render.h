@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace wp::gx {
@@ -56,6 +57,18 @@ void copy_to_framebuffer(int x, int y, int width, int height, bool depth, const 
 bool present_frame(void* window, double aspect);
 bool service_presents();
 uint32_t take_interpolated_frames();
+uint32_t take_late_frames();
+
+struct GpuFigures {
+    double vram_used_gb = -1;
+    double vram_total_gb = -1;
+    std::string adapter;
+    int width = 0;
+    int height = 0;
+    int refresh_hz = 0;
+};
+
+GpuFigures gpu_figures();
 bool read_frame(std::vector<uint32_t>& pixels, uint32_t& width, uint32_t& height);
 void dump_copies(const char* prefix);
 void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width, int height, bool half, uint32_t format, bool intensity, bool depth, bool alpha,

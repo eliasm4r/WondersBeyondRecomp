@@ -272,9 +272,6 @@ Sample device_sample(uint32_t channel) {
         std::fprintf(stderr, "input window=%p focused=%d", window, focused ? 1 : 0);
         std::fputc(10, stderr);
     }
-    if (window != nullptr && !focused) {
-        return result;
-    }
     if (channel != 0) {
         return gamepad_sample(channel, sideways_grip());
     }
@@ -288,7 +285,7 @@ Sample device_sample(uint32_t channel) {
         settings::reload_if_changed();
     }
     const keymap::Bindings& keys = bindings();
-    for (size_t i = 0; i < keymap::kActionCount; i++) {
+    for (size_t i = 0; i < keymap::kActionCount && focused; i++) {
         if (keymap::action(i).buttons != 0 && any_pressed(keys.codes[i])) {
             result.buttons |= keymap::action(i).buttons;
         }
@@ -320,9 +317,9 @@ Sample device_sample(uint32_t channel) {
     long cursor_y = 0;
     video::cursor_position(cursor_x, cursor_y);
     static MouseMotionState mouse_state;
-    result.buttons |= mouse_motion(mouse_state, any_pressed(keys.of(keymap::Action::MouseMotion)), cursor_x, cursor_y, now);
+    result.buttons |= mouse_motion(mouse_state, focused && any_pressed(keys.of(keymap::Action::MouseMotion)), cursor_x, cursor_y, now);
     // The mouse aims only while the pointer key is held, so it never points by accident.
-    bool mouse_aims = any_pressed(keys.of(keymap::Action::Pointer));
+    bool mouse_aims = focused && any_pressed(keys.of(keymap::Action::Pointer));
     if (mouse_aims && video::cursor_on_image(result.pointer_x, result.pointer_y)) {
         result.pointer_valid = true;
     } else if (pad.pointer_valid) {

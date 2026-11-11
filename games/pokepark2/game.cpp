@@ -3,6 +3,7 @@
 #include "wp/game.h"
 #include "wp/gx.h"
 #include "wp/disc.h"
+#include "wp/frame_pacing.h"
 #include "wp/input.h"
 #include "wp/log.h"
 #include "wp/memory.h"
@@ -100,13 +101,20 @@ void retrace() {
     if (rd8(kInputAlarm + kRunning) == 0 || rd8(kFrameAlarm + kRunning) == 0) {
         return;
     }
-    uint64_t input = (static_cast<uint64_t>(rd32(kInputAlarm + kPeriod)) << 32) | rd32(kInputAlarm + kPeriod + 4);
+    auto read64 = [](uint32_t address) { return (static_cast<uint64_t>(rd32(address)) << 32) | rd32(address + 4); };
+    auto write64 = [](uint32_t address, uint64_t value) {
+        wr32(address, static_cast<uint32_t>(value >> 32));
+        wr32(address + 4, static_cast<uint32_t>(value));
+    };
     bool movie = disc::seconds_since_read("/Movie/") < 0.5;
-    uint64_t wanted = fps() >= 60 && !movie ? input : input * 2;
-    uint64_t pending = (static_cast<uint64_t>(rd32(kFrameAlarm + kPendingPeriod)) << 32) | rd32(kFrameAlarm + kPendingPeriod + 4);
-    if (input != 0 && pending != wanted) {
-        wr32(kFrameAlarm + kPendingPeriod, static_cast<uint32_t>(wanted >> 32));
-        wr32(kFrameAlarm + kPendingPeriod + 4, static_cast<uint32_t>(wanted));
+    uint64_t period = read64(kFrameAlarm + kPeriod);
+    uint64_t pending = read64(kFrameAlarm + kPendingPeriod);
+    pacing::AlarmPeriods wanted = pacing::frame_alarm(read64(kInputAlarm + kPeriod), period, pending, static_cast<int>(fps()), movie);
+    if (wanted.period != period) {
+        write64(kFrameAlarm + kPeriod, wanted.period);
+    }
+    if (wanted.pending != pending) {
+        write64(kFrameAlarm + kPendingPeriod, wanted.pending);
     }
 }
 

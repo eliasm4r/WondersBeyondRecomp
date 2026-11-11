@@ -29,6 +29,8 @@
 #include "wp/memory.h"
 #include "wp/nand.h"
 #include "wp/options_window.h"
+#include "wp/perf_overlay.h"
+#include "wp/play_time.h"
 #include "wp/screenshot.h"
 #include "wp/settings.h"
 #include "wp/ui_text.h"
@@ -227,6 +229,7 @@ void handle_event(SDL_Window* window, const SDL_Event& event) {
     switch (event.type) {
     case SDL_EVENT_QUIT:
     case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+        play_time::save();
         std::_Exit(0);
     case SDL_EVENT_KEY_DOWN: {
         int vk = vk_for(event.key.scancode);
@@ -245,6 +248,12 @@ void handle_event(SDL_Window* window, const SDL_Event& event) {
             if (!repeat) {
                 options::toggle_menu(window);
             }
+            return;
+        }
+        if (!repeat && !options::menu_capturing() && input::bindings().has(keymap::Action::Overlay, vk)) {
+            settings::store("overlay.show", settings::flag("overlay.show", nullptr) ? "0" : "1");
+            perf::update();
+            options::refresh_menu(window);
             return;
         }
         if (options::menu_open()) {
@@ -385,6 +394,7 @@ void window_thread(bool visible) {
             titlebar::set_title(title);
         }
         apply_option(window, options::poll_gamepads(window));
+        perf::update();
         bool hide = hide_cursor() && !options::menu_open();
         if (hide != cursor_hidden) {
             cursor_hidden = hide;

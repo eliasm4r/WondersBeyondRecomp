@@ -27,6 +27,8 @@
 #include "wp/memory.h"
 #include "wp/nand.h"
 #include "wp/options_window.h"
+#include "wp/perf_overlay.h"
+#include "wp/play_time.h"
 #include "wp/screenshot.h"
 #include "wp/settings.h"
 #include "wp/ui_text.h"
@@ -130,6 +132,21 @@ void note_press(int code, int side = 0) {
     }
 }
 
+bool toggle_overlay(HWND window, WPARAM key, LPARAM lparam) {
+    if ((lparam & (1 << 30)) || options::menu_capturing()) {
+        return false;
+    }
+    const keymap::Bindings& keys = input::bindings();
+    int side = side_key(key, lparam);
+    if (!keys.has(keymap::Action::Overlay, static_cast<int>(key)) && !keys.has(keymap::Action::Overlay, side)) {
+        return false;
+    }
+    settings::store("overlay.show", settings::flag("overlay.show", nullptr) ? "0" : "1");
+    perf::update();
+    options::refresh_menu(window);
+    return true;
+}
+
 void note_key(WPARAM key, LPARAM lparam) {
     if (!(lparam & (1 << 30))) {
         note_press(static_cast<int>(key), side_key(key, lparam));
@@ -153,6 +170,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
     switch (message) {
     case WM_CLOSE:
     case WM_DESTROY:
+        play_time::save();
         std::_Exit(0);
     case kTitleMessage: {
         std::string title;
@@ -181,6 +199,9 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             }
             return 0;
         }
+        if (toggle_overlay(window, wparam, lparam)) {
+            return 0;
+        }
         if (options::menu_open()) {
             apply_option(window, options::menu_key(window, static_cast<unsigned>(wparam), repeat));
             return 0;
@@ -192,6 +213,9 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
     case WM_SYSKEYUP:
         // F10 alone would open the window's system menu and freeze the game until the next key.
         if (wparam == VK_F10) {
+            return 0;
+        }
+        if (message == WM_SYSKEYDOWN && toggle_overlay(window, wparam, lparam)) {
             return 0;
         }
         if (message == WM_SYSKEYDOWN && options::menu_open()) {
@@ -208,6 +232,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
     case WM_TIMER:
         if (wparam == kMenuTimer) {
             apply_option(window, options::poll_gamepads(window));
+            perf::update();
             return 0;
         }
         return DefWindowProc(window, message, wparam, lparam);

@@ -27,6 +27,7 @@
 #include "wp/memory.h"
 #include "wp/titlebar.h"
 #include "wp/options.h"
+#include "wp/perf_overlay.h"
 #include "wp/settings.h"
 #include "wp/video.h"
 
@@ -688,6 +689,12 @@ struct Device {
     uint32_t overlay_height = 0;
     uint64_t overlay_version = 0;
     bool overlay_visible = false;
+    GLuint hud_texture = 0;
+    uint32_t hud_width = 0;
+    uint32_t hud_height = 0;
+    uint64_t hud_version = 0;
+    bool hud_visible = false;
+    perf::Corner hud_corner = perf::Corner::TopLeft;
     GLuint bar_texture = 0;
     uint32_t bar_width = 0;
     uint32_t bar_height = 0;
@@ -1391,6 +1398,14 @@ uint32_t take_interpolated_frames() {
     return 0;
 }
 
+uint32_t take_late_frames() {
+    return 0;
+}
+
+GpuFigures gpu_figures() {
+    return {};
+}
+
 void draw(const ScreenVertex* vertices, uint32_t count, const DrawSource*) {
     if (count == 0 || !initialize()) {
         return;
@@ -1798,16 +1813,8 @@ void draw_titlebar(int client_width, int client_height, int bar) {
     gl.DrawArrays(GL_TRIANGLES, 0, 3);
 }
 
-void draw_overlay(int client_width, int client_height) {
-    options::Image image;
-    if (options::take_overlay(g_device.overlay_version, image, g_device.overlay_visible) && !image.pixels.empty()) {
-        upload_image(g_device.overlay_texture, g_device.overlay_width, g_device.overlay_height, image);
-    }
-    if (!g_device.overlay_visible || !g_device.overlay_texture) {
-        return;
-    }
-    options::Rect placed = options::place(client_width, client_height, static_cast<int>(g_device.overlay_width), static_cast<int>(g_device.overlay_height));
-    if (placed.width <= 0 || placed.height <= 0) {
+void draw_image(GLuint texture, const options::Rect& placed, int client_height) {
+    if (!texture || placed.width <= 0 || placed.height <= 0) {
         return;
     }
     gl.Viewport(placed.x, client_height - placed.y - placed.height, placed.width, placed.height);
@@ -1816,10 +1823,29 @@ void draw_overlay(int client_width, int client_height) {
     gl.BlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
     use_fullscreen(g_device.overlay, 1.0f);
     gl.ActiveTexture(GL_TEXTURE0);
-    gl.BindTexture(GL_TEXTURE_2D, g_device.overlay_texture);
+    gl.BindTexture(GL_TEXTURE_2D, texture);
     gl.BindSampler(0, g_device.linear_sampler);
     gl.DrawArrays(GL_TRIANGLES, 0, 3);
     gl.Disable(GL_BLEND);
+}
+
+void draw_overlay(int client_width, int client_height, int bar) {
+    options::Image image;
+    if (perf::take(g_device.hud_version, image, g_device.hud_visible, g_device.hud_corner) && !image.pixels.empty()) {
+        upload_image(g_device.hud_texture, g_device.hud_width, g_device.hud_height, image);
+    }
+    if (options::take_overlay(g_device.overlay_version, image, g_device.overlay_visible) && !image.pixels.empty()) {
+        upload_image(g_device.overlay_texture, g_device.overlay_width, g_device.overlay_height, image);
+    }
+    if (g_device.hud_visible) {
+        options::Rect placed = perf::corner_rect(client_width, client_height - bar, static_cast<int>(g_device.hud_width), static_cast<int>(g_device.hud_height), g_device.hud_corner);
+        placed.y += bar;
+        draw_image(g_device.hud_texture, placed, client_height);
+    }
+    if (g_device.overlay_visible) {
+        draw_image(g_device.overlay_texture, options::place(client_width, client_height, static_cast<int>(g_device.overlay_width), static_cast<int>(g_device.overlay_height)),
+                   client_height);
+    }
 }
 
 bool present_frame(void* window_handle, double aspect) {
@@ -1853,7 +1879,7 @@ bool present_frame(void* window_handle, double aspect) {
     gl.BindTexture(GL_TEXTURE_2D, g_device.frame.texture);
     gl.BindSampler(0, g_device.linear_sampler);
     gl.DrawArrays(GL_TRIANGLES, 0, 3);
-    draw_overlay(client_width, client_height);
+    draw_overlay(client_width, client_height, bar);
     draw_titlebar(client_width, client_height, bar);
     SDL_GL_SwapWindow(window);
     apply_scale();

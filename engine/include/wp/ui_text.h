@@ -30,6 +30,7 @@ struct Text {
 };
 
 void set_language(Language language);
+Language language();
 void set_language(const std::string& code);
 const Text& text();
 const char* label(const char* key);

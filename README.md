@@ -15,12 +15,14 @@ Supported disc: Europe (`S2LP01`). Other regions are planned.
 
 ## Features
 
-- **60 fps** gameplay (`video.fps`), with movies and cutscenes kept at their native 30 fps
-- **120 fps** through frame interpolation (Direct3D 11): images are drawn between the game's frames
+- **30, 45 or 60 fps** gameplay (`video.fps`, 60 by default), with movies and cutscenes kept at their native 30 fps
+- **90 or 120 fps** through frame interpolation (Direct3D 11): images are drawn between the game's frames
 - **Internal resolution** up to 6x, 16:9 or 4:3, optional supersampled smoothing, anisotropic filtering, vsync
-- **Options menu (F1)** drawn in the game's style, with five tabs (Display, Keyboard, Gamepad, Sound, Game), usable with keyboard, mouse or gamepad, without pausing the game
+- **Options menu (F1)** drawn as the game's dialog bubble, with six tabs (Screen, Game, Sound, Controls, Language, Advanced) and a help line for each setting, usable with keyboard, mouse or gamepad, without pausing the game
+- **Performance overlay (F2)**: frame rate, processor, graphics card and memory use, in three levels of detail and in any corner
+- **Play time** counted across sessions and shown in the options menu
 - **Keyboard and mouse**: every action can be rebound; hold **Ctrl** to aim the Wii Remote pointer with the mouse
-- **Gamepads** (XInput and SDL): rebinding, stick deadzone, rumble; hold **L3** to aim with the right stick; a sharp jolt of a gamepad with a motion sensor counts as a Wii Remote shake
+- **Gamepads** (XInput and SDL): rebinding, stick deadzone, rumble; hold **L3** to aim with the right stick; a sharp jolt of a gamepad with a motion sensor counts as a Wii Remote shake; gamepads keep working while the window is in the background
 - **Sound**: volume, mute, Wii Remote speaker
 - **Languages**: game and menu language (English, French, Spanish, Galician for the menu)
 - **Discord Rich Presence** while the game runs (can be turned off)
@@ -29,7 +31,7 @@ Supported disc: Europe (`S2LP01`). Other regions are planned.
 
 ## Playing
 
-After building (below), start the game with `build/out/pokepark2.exe`. Press **F1** for the options menu. Settings are stored in `games/pokepark2/settings.ini` and saves in `games/pokepark2/nand`.
+After building (below), start the game with `build/out/pokepark2.exe`. Press **F1** for the options menu and **F2** for the performance overlay. Settings are stored in `games/pokepark2/settings.ini`, the play time in `games/pokepark2/stats.ini` and saves in `games/pokepark2/nand`.
 
 ## Roadmap
 

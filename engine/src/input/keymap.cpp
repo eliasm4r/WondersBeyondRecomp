@@ -35,6 +35,7 @@ constexpr ActionInfo kActions[kActionCount] = {
     {"screenshot", 0, "F9"},
     {"mouse_motion", 0, "Z"},
     {"pointer", 0, "Ctrl"},
+    {"overlay", 0, "F2"},
 };
 
 struct Key {

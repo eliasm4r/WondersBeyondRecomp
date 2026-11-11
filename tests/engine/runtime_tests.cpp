@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -13,6 +14,7 @@
 #include <thread>
 #include <vector>
 
+#include "wp/canvas.h"
 #include "wp/cpu.h"
 #include "wp/custom_textures.h"
 #include "wp/function_table.h"
@@ -28,6 +30,10 @@
 #include "wp/options_window.h"
 #include "wp/save_backup.h"
 #include "wp/padmap.h"
+#include "wp/frame_pacing.h"
+#include "wp/perf.h"
+#include "wp/perf_overlay.h"
+#include "wp/play_time.h"
 #include "wp/input.h"
 #include "wp/screenshot.h"
 #include "wp/settings.h"
@@ -1104,23 +1110,56 @@ void test_pad_motion() {
 
 void test_options_menu() {
     wp::settings::load("");
-    for (wp::ui::Language language : {wp::ui::Language::English, wp::ui::Language::French, wp::ui::Language::Spanish}) {
+    for (wp::ui::Language language : {wp::ui::Language::English, wp::ui::Language::French, wp::ui::Language::Spanish, wp::ui::Language::Galician}) {
         wp::ui::set_language(language);
         for (size_t tab = 0; tab < wp::options::kTabCount; tab++) {
             CHECK(std::string(wp::options::tab_label(tab)).rfind("tab.", 0) != 0);
-            wp::options::Menu menu;
-            menu.select_tab(tab);
-            for (const wp::options::Row& row : menu.rows()) {
-                CHECK(!row.label.empty() && row.label != row.key);
-                if (row.kind == wp::options::Kind::Choice || row.kind == wp::options::Kind::Toggle || row.kind == wp::options::Kind::Slider) {
-                    CHECK(!wp::options::choices(row.key).empty());
+            wp::options::Menu probe;
+            probe.set_open(true);
+            probe.select_tab(tab);
+            for (int device = 0; device < (tab == 3 ? 2 : 1); device++) {
+                if (device == 1) {
+                    probe.handle(wp::options::Action::Next);
+                }
+                for (const wp::options::Row& row : probe.rows()) {
+                    CHECK(!row.label.empty() && row.label != row.key);
+                    CHECK(!row.help.empty() && row.help.rfind("help.", 0) != 0);
+                    if (row.kind == wp::options::Kind::Choice || row.kind == wp::options::Kind::Toggle || row.kind == wp::options::Kind::Slider) {
+                        CHECK(!wp::options::choices(row.key).empty());
+                    }
                 }
             }
         }
     }
-    CHECK(std::strcmp(wp::ui::label("tab.display", wp::ui::Language::French), "Affichage") == 0);
-    CHECK(std::strcmp(wp::ui::label("tab.display", wp::ui::Language::Galician), "Display") == 0);
+    CHECK(wp::options::kTabCount == 6);
+    CHECK(std::strcmp(wp::ui::label("tab.screen", wp::ui::Language::French), "Écran") == 0);
+    CHECK(std::strcmp(wp::ui::label("tab.advanced", wp::ui::Language::English), "Advanced") == 0);
+    CHECK(std::strcmp(wp::ui::label("tab.controls", wp::ui::Language::Galician), "Controls") != 0);
+    CHECK(std::strcmp(wp::ui::label("help.video.scale", wp::ui::Language::Spanish), wp::ui::label("help.video.scale", wp::ui::Language::English)) != 0);
+    CHECK((wp::options::tab_keys(0) == std::vector<std::string>{"video.scale", "video.fullscreen", "system.widescreen", "video.vsync", "video.smooth", "video.anisotropy"}));
+    CHECK((wp::options::tab_keys(1) == std::vector<std::string>{"video.fps", "saves.backups", "system.discord", "stats.play_time"}));
+    CHECK((wp::options::tab_keys(2) == std::vector<std::string>{"audio.volume", "audio.mute", "audio.wiimote_speaker"}));
+    CHECK((wp::options::tab_keys(4) == std::vector<std::string>{"system.interface_language", "system.language"}));
+    CHECK((wp::options::tab_keys(5) == std::vector<std::string>{"overlay.show", "overlay.level", "overlay.corner", "video.show_fps", "video.custom_textures", "video.dump_textures"}));
+    std::vector<std::string> keyboard = wp::options::tab_keys(3, wp::options::Device::Keyboard);
+    CHECK(keyboard[0] == "controls.device" && keyboard[1] == "input.hide_cursor" && keyboard.back() == "keys.reset");
+    CHECK(std::find(keyboard.begin(), keyboard.end(), "keys.overlay") != keyboard.end());
+    std::vector<std::string> gamepad = wp::options::tab_keys(3, wp::options::Device::Gamepad);
+    CHECK(gamepad[0] == "controls.device" && gamepad[1] == "input.gamepads" && gamepad.back() == "pad.reset");
+    CHECK(wp::options::kind("stats.play_time") == wp::options::Kind::Info);
+    CHECK(wp::options::kind("controls.device") == wp::options::Kind::Choice);
+    CHECK(wp::options::kind("overlay.show") == wp::options::Kind::Toggle);
+    CHECK(wp::options::live("overlay.show") && wp::options::live("overlay.level") && wp::options::live("overlay.corner"));
+    CHECK((wp::options::choices("overlay.level") == std::vector<std::string>{"minimal", "standard", "full"}));
+    CHECK((wp::options::choices("overlay.corner") == std::vector<std::string>{"top_left", "top_right", "bottom_left", "bottom_right"}));
+    CHECK(wp::settings::text("overlay.level", nullptr) == "full" && !wp::settings::flag("overlay.show", nullptr));
+    CHECK(wp::settings::text("overlay.corner", nullptr) == "top_left");
+    CHECK(wp::settings::text("keys.overlay", nullptr) == "F2");
+    wp::ui::set_language(wp::ui::Language::French);
+    CHECK(wp::options::shown_value("overlay.level", "full") == "Complet");
+    CHECK(wp::options::shown_value("overlay.corner", "bottom_right") == "Bas droite");
     wp::ui::set_language(wp::ui::Language::English);
+    CHECK(wp::options::shown_value("overlay.level", "minimal") == "Minimal");
     CHECK(wp::options::shown_value("audio.mute", "1") == "On");
     CHECK(wp::options::shown_value("audio.volume", "75") == "75%");
     CHECK(wp::options::shown_value("video.anisotropy", "1") == "Off");
@@ -1152,15 +1191,24 @@ void test_options_menu() {
     CHECK(menu.handle(wp::options::Action::Up).empty());
     CHECK(menu.selection() == rows.size() - 1);
 
-    // Keyboard tab: rows scroll to keep the selection visible, a key row binds the next key.
     CHECK(menu.handle(wp::options::Action::TabNext).empty());
-    CHECK(menu.tab() == 1 && menu.selection() == 0 && menu.scroll() == 0);
-    size_t keys = menu.rows().size();
+    CHECK(menu.tab() == 1 && menu.selection() == 0);
+    menu.select(3);
+    rows = menu.rows();
+    CHECK(rows[3].kind == wp::options::Kind::Info && !rows[3].value.empty() && rows[3].live);
+    CHECK(menu.handle(wp::options::Action::Accept).empty() && menu.handle(wp::options::Action::Next).empty());
+    CHECK(menu.handle(wp::options::Action::Previous).empty() && !menu.capturing());
+
+    menu.select_tab(3);
+    rows = menu.rows();
+    CHECK(rows[0].key == "controls.device" && menu.device() == wp::options::Device::Keyboard);
+    CHECK(rows[0].value == "Keyboard and mouse" && rows[0].live);
+    size_t keys = rows.size();
     CHECK(keys > wp::options::kVisibleRows);
     CHECK(menu.handle(wp::options::Action::Up).empty());
     CHECK(menu.selection() == keys - 1 && menu.scroll() == keys - wp::options::kVisibleRows);
-    menu.select(0);
-    CHECK(menu.scroll() == 0);
+    menu.select(2);
+    CHECK(menu.rows()[2].key == "keys.a");
     CHECK(menu.handle(wp::options::Action::Accept).empty());
     CHECK(menu.capturing() && menu.capture_kind() == wp::options::Kind::Key);
     CHECK(menu.capture("K") == "keys.a");
@@ -1169,13 +1217,28 @@ void test_options_menu() {
     menu.select(keys - 1);
     CHECK(menu.handle(wp::options::Action::Accept) == "keys.reset");
     CHECK(wp::settings::text("keys.a", nullptr) == "Enter,Space,MouseLeft");
-    menu.select(0);
+    menu.select(2);
     CHECK(menu.handle(wp::options::Action::Accept).empty());
     CHECK(menu.handle(wp::options::Action::Down).empty());
-    CHECK(!menu.capturing() && menu.selection() == 0);
+    CHECK(!menu.capturing() && menu.selection() == 2);
+    menu.select(0);
+    CHECK(menu.handle(wp::options::Action::Next).empty());
+    rows = menu.rows();
+    CHECK(menu.device() == wp::options::Device::Gamepad && rows[1].key == "input.gamepads" && rows[0].value == "Gamepad");
+    CHECK(menu.selection() == 0 && menu.scroll() == 0);
+    menu.select(rows.size() - 2);
+    CHECK(menu.handle(wp::options::Action::Accept).empty() && menu.capture_kind() == wp::options::Kind::Pad);
+    CHECK(menu.capture("south") == rows[rows.size() - 2].key);
+    menu.select(rows.size() - 1);
+    CHECK(menu.handle(wp::options::Action::Accept) == "pad.reset");
+    menu.select(0);
+    CHECK(menu.handle(wp::options::Action::Accept).empty() && menu.device() == wp::options::Device::Keyboard);
+    menu.handle(wp::options::Action::Previous);
+    CHECK(menu.device() == wp::options::Device::Gamepad);
+    menu.set_open(true);
+    CHECK(menu.device() == wp::options::Device::Keyboard);
 
-    // Sound tab: the slider moves in steps and follows the mouse.
-    menu.select_tab(3);
+    menu.select_tab(2);
     CHECK(menu.rows()[0].key == "audio.volume");
     CHECK(menu.handle(wp::options::Action::Previous) == "audio.volume");
     CHECK(wp::settings::number("audio.volume", nullptr) == 95);
@@ -1185,17 +1248,25 @@ void test_options_menu() {
     CHECK(menu.set_fraction(1, 0.5).empty());
     menu.select(1);
     CHECK(menu.rows()[1].kind == wp::options::Kind::Toggle);
-    CHECK(menu.handle(wp::options::Action::Next).empty());
-    CHECK(menu.handle(wp::options::Action::Previous).empty());
-    CHECK(menu.handle(wp::options::Action::Accept) == menu.rows()[1].key);
+    CHECK(menu.handle(wp::options::Action::Next).empty() && !wp::settings::flag("audio.mute", nullptr));
+    CHECK(menu.handle(wp::options::Action::Previous).empty() && !wp::settings::flag("audio.mute", nullptr));
+    CHECK(menu.handle(wp::options::Action::Accept) == "audio.mute" && wp::settings::flag("audio.mute", nullptr));
+    CHECK(menu.handle(wp::options::Action::Next).empty() && wp::settings::flag("audio.mute", nullptr));
+    CHECK(menu.set_toggle(1, false) == "audio.mute" && !wp::settings::flag("audio.mute", nullptr));
+    CHECK(menu.set_toggle(1, false).empty());
+    CHECK(menu.set_toggle(0, true).empty());
+    std::string english = menu.rows()[1].help;
+    wp::ui::set_language(wp::ui::Language::French);
+    CHECK(menu.rows()[1].help != english && menu.rows()[1].label == "Couper le son");
+    wp::ui::set_language(wp::ui::Language::English);
     CHECK(menu.handle(wp::options::Action::TabPrevious).empty());
-    CHECK(menu.tab() == 2);
+    CHECK(menu.tab() == 1);
     CHECK(menu.handle(wp::options::Action::Close).empty());
     CHECK(!menu.open());
     wp::settings::load("");
 }
 
-void test_options_repeat_and_layout() {
+void test_options_repeat() {
     wp::options::Repeat repeat(0x3, 400, 100);
     CHECK(repeat.update(0x1, 0) == 0x1);
     CHECK(repeat.update(0x1, 100) == 0);
@@ -1208,24 +1279,42 @@ void test_options_repeat_and_layout() {
     CHECK(repeat.update(0x0, 800) == 0);
     CHECK(repeat.update(0x4, 810) == 0x4);
     CHECK(repeat.update(0x4, 5000) == 0);
+}
 
+void test_options_layout() {
     wp::options::Layout frame = wp::options::layout(720, 21, 0);
-    CHECK(frame.unit == 18);
-    CHECK(frame.height <= 720);
+    CHECK(frame.unit == 18 && frame.edge == 10 && frame.padding == 54);
+    CHECK(frame.height <= 720 && frame.width <= 1280);
     CHECK(wp::options::layout(100, 3, 0).unit == 14);
     CHECK(wp::options::layout(4000, 3, 0).unit == 40);
+    wp::options::Rect last_tab = wp::options::tab_rect(frame, wp::options::kTabCount - 1);
+    wp::options::Rect rows = wp::options::rows_rect(frame);
+    CHECK(last_tab.y + last_tab.height <= rows.y + rows.height);
+    CHECK(last_tab.x + last_tab.width < rows.x);
+    CHECK(rows.x + rows.width <= frame.width - frame.edge - frame.padding);
+    wp::options::Rect help = wp::options::help_rect(frame);
+    wp::options::Rect hints = wp::options::hints_rect(frame);
+    CHECK(help.y >= rows.y + rows.height && hints.y >= help.y + help.height);
+    CHECK(hints.y + hints.height <= frame.height - frame.edge);
+    CHECK(help.x == frame.padding && help.x + help.width == frame.width - frame.edge - frame.padding);
+
     wp::options::Rect placed = wp::options::place(1280, 720, frame.width, frame.height);
     CHECK(placed.width == frame.width && placed.height == frame.height);
     CHECK(placed.x == (1280 - frame.width) / 2 && placed.y == (720 - frame.height) / 2);
-    wp::options::Rect small = wp::options::place(frame.width / 2, 720, frame.width, frame.height);
-    CHECK(small.width == frame.width / 2 && small.x == 0);
+    wp::options::Rect half = wp::options::place(frame.width / 2, 720, frame.width, frame.height);
+    CHECK(half.width == frame.width / 2 && half.x == 0);
+    wp::options::Layout small = wp::options::layout(480, 21, 0);
+    wp::options::Rect fitted = wp::options::place(640, 480, small.width, small.height);
+    CHECK(fitted.x >= 0 && fitted.y >= 0 && fitted.x + fitted.width <= 640 && fitted.y + fitted.height <= 480);
 
+    CHECK(wp::options::hit_test(frame, placed, placed.x + last_tab.x + 4, placed.y + last_tab.y + 4).tab == 5);
     auto centre = [&](const wp::options::Rect& r, int dx = 0) {
         return wp::options::hit_test(frame, placed, placed.x + r.x + r.width / 2 + dx, placed.y + r.y + r.height / 2);
     };
     wp::options::Hover hit = centre(wp::options::tab_rect(frame, 3));
     CHECK(hit.part == wp::options::Part::Tab && hit.tab == 3 && hit.row == -1);
-    hit = centre(wp::options::row_rect(frame, 2), -frame.width / 4);
+    wp::options::Rect row = wp::options::row_rect(frame, 2);
+    hit = wp::options::hit_test(frame, placed, placed.x + row.x + frame.unit, placed.y + row.y + row.height / 2);
     CHECK(hit.row == 2 && hit.part == wp::options::Part::Label);
     wp::options::Rect control = wp::options::control_rect(frame, 2);
     int control_y = placed.y + control.y + control.height / 2;
@@ -1242,12 +1331,22 @@ void test_options_repeat_and_layout() {
     wp::options::Rect missing = wp::options::row_rect(short_tab, 4);
     hit = wp::options::hit_test(short_tab, placed, placed.x + missing.x + missing.width / 2, placed.y + missing.y + missing.height / 2);
     CHECK(hit.row == -1);
-    hit = centre(wp::options::close_rect(frame));
+    wp::options::Rect close = wp::options::close_rect(frame);
+    CHECK(close.x + close.width == frame.width - frame.edge - frame.padding);
+    hit = centre(close);
     CHECK(hit.row == -1 && hit.part == wp::options::Part::Close);
+    hit = centre(help);
+    CHECK(hit.row == -1 && hit.part == wp::options::Part::None);
     hit = wp::options::hit_test(frame, placed, placed.x - 5, placed.y + 5);
     CHECK(hit.row == -1 && hit.part == wp::options::Part::None);
     CHECK(wp::options::slider_fraction(frame, placed, 0, placed.x) == 0.0);
     CHECK(wp::options::slider_fraction(frame, placed, 0, placed.x + frame.width) == 1.0);
+    wp::options::Rect first = wp::options::control_rect(frame, 0);
+    CHECK(wp::options::control_fraction(frame, placed, 0, placed.x + first.x) == 0.0);
+    CHECK(wp::options::control_fraction(frame, placed, 0, placed.x + first.x + first.width) == 1.0);
+    CHECK(wp::options::control_fraction(frame, placed, 0, placed.x + first.x + first.width / 4) < 0.5);
+    CHECK(wp::options::control_fraction(frame, half, 0, half.x + (first.x + first.width * 3 / 4) / 2) > 0.5);
+
     wp::options::Menu hovering;
     CHECK(hovering.set_hover(hit) == false);
     CHECK(hovering.set_hover(wp::options::Hover{3, wp::options::Part::Next}) == true);
@@ -1266,6 +1365,77 @@ void test_options_repeat_and_layout() {
     wp::options::hide_overlay();
     CHECK(wp::options::take_overlay(version, image, visible));
     CHECK(!visible && image.pixels.empty());
+}
+
+void test_canvas() {
+    CHECK(!wp::canvas::embedded_font("nunito_extrabold").empty());
+    CHECK(!wp::canvas::embedded_font("nunito_black").empty());
+    CHECK(wp::canvas::embedded_font("missing").empty());
+    CHECK(wp::canvas::font_ok(wp::canvas::FontId::Body) && wp::canvas::font_ok(wp::canvas::FontId::Heavy));
+    CHECK(wp::canvas::font_ok(wp::canvas::FontId::Mono) && wp::canvas::font_ok(wp::canvas::FontId::System));
+    wp::canvas::Face tight = wp::canvas::make_face(wp::canvas::FontId::Body, 20);
+    wp::canvas::Face wide = wp::canvas::make_face(wp::canvas::FontId::Body, 20, 0.1f);
+    CHECK(wp::canvas::text_width(wide, "Options") > wp::canvas::text_width(tight, "Options") + 10.0f);
+    wp::canvas::Canvas canvas{40, 40, std::vector<uint32_t>(1600, 0)};
+    canvas.fill_polygon({{{0, 0}}, {{20, 0}}, {{20, 20}}, {{0, 20}}}, 0xFFF27D0C);
+    CHECK(canvas.pixels[5 * 40 + 5] == 0xFFF27D0C);
+    CHECK(canvas.pixels[30 * 40 + 30] == 0);
+    canvas.fill_polygon({{{0, 30}}, {{40, 30.5f}}, {{40, 40}}, {{0, 40}}}, 0xFF000000);
+    unsigned edge = canvas.pixels[30 * 40 + 20] >> 24;
+    CHECK(edge > 0 && edge < 255);
+    canvas.blend(30, 5, 0x80FFFFFF, 255);
+    CHECK((canvas.pixels[5 * 40 + 30] >> 24) == 0x80);
+}
+
+void test_play_time() {
+    std::string path = (std::filesystem::temp_directory_path() / "wp_play_time_test.ini").string();
+    std::filesystem::remove(path);
+    CHECK(wp::play_time::read_file(path) == 0);
+    CHECK(wp::play_time::write_file(path, 45296));
+    CHECK(wp::play_time::read_file(path) == 45296);
+    {
+        std::ofstream bad(path);
+        bad << "play_time_seconds=abc" << std::endl;
+    }
+    CHECK(wp::play_time::read_file(path) == 0);
+    CHECK(wp::play_time::format(45296, wp::ui::Language::English) == "12h 34m");
+    CHECK(wp::play_time::format(300, wp::ui::Language::English) == "0h 05m");
+    CHECK(wp::play_time::format(45296, wp::ui::Language::French) == "12 h 34 min");
+    CHECK(wp::play_time::format(59, wp::ui::Language::Spanish) == "0 h 00 min");
+    CHECK(wp::play_time::seconds() == 0);
+    wp::play_time::write_file(path, 120);
+    wp::play_time::start(path);
+    CHECK(wp::play_time::seconds() >= 120 && wp::play_time::seconds() < 125);
+    wp::play_time::save();
+    CHECK(wp::play_time::read_file(path) >= 120);
+    std::filesystem::remove(path);
+}
+
+void test_system_stats() {
+    wp::perf::system_cpu_percent();
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    double cpu = wp::perf::system_cpu_percent();
+    double gpu = wp::perf::gpu_engine_percent();
+    double used = 0;
+    double total = 0;
+    wp::perf::memory(used, total);
+#ifdef _WIN32
+    CHECK(cpu >= 0.0 && cpu <= 100.0);
+    CHECK(used > 0.0 && total > used);
+    CHECK(!wp::perf::cpu_name().empty() && wp::perf::cpu_name().back() != ' ');
+#endif
+    CHECK(cpu == -1.0 || (cpu >= 0.0 && cpu <= 100.0));
+    CHECK(gpu == -1.0 || (gpu >= 0.0 && gpu <= 100.0));
+    double own = wp::perf::gpu_process_percent();
+    CHECK(own == -1.0 || (own >= 0.0 && own <= 100.0));
+    wp::perf::Sample sample;
+    CHECK(sample.fps == -1.0 && sample.vram_used_gb == -1.0 && sample.render_width == 0);
+    sample.fps = 120;
+    uint64_t before = wp::perf::revision();
+    wp::perf::publish(sample);
+    CHECK(wp::perf::revision() == before + 1 && wp::perf::latest().fps == 120);
+    wp::perf::SystemFigures figures = wp::perf::system_figures();
+    CHECK(figures.cpu_percent == -1.0 || (figures.cpu_percent >= 0.0 && figures.cpu_percent <= 100.0));
 }
 
 void save_menu_png(const wp::options::Image& image, const std::string& path) {
@@ -1288,19 +1458,214 @@ void save_menu_png(const wp::options::Image& image, const std::string& path) {
     wp::video::save_png(path.c_str(), composed, image.width, image.height);
 }
 
+bool near(double a, double b) {
+    return std::fabs(a - b) < 1e-6;
+}
+
+void test_frame_pacing() {
+    using wp::pacing::plan_frame;
+    double next = 0;
+    wp::pacing::FramePlan plan = plan_frame(next, 1.0 / 60, 120, 3);
+    CHECK(plan.images == 1 && near(plan.fractions[0], 0.5) && plan.show_real && near(plan.slot, 1.0 / 120));
+    plan = plan_frame(next, 1.0 / 30, 120, 3);
+    CHECK(plan.images == 3 && near(plan.fractions[0], 0.25) && near(plan.fractions[1], 0.5) && near(plan.fractions[2], 0.75) && plan.show_real);
+    plan = plan_frame(next, 1.0 / 50, 120, 3);
+    CHECK(plan.images == 1 && near(plan.fractions[0], 0.5) && plan.show_real && near(plan.slot, 0.01));
+
+    next = 0;
+    plan = plan_frame(next, 1.0 / 60, 90, 3);
+    CHECK(plan.images == 1 && near(plan.fractions[0], 2.0 / 3) && !plan.show_real && near(plan.slot, 1.0 / 90));
+    plan = plan_frame(next, 1.0 / 60, 90, 3);
+    CHECK(plan.images == 1 && near(plan.fractions[0], 1.0 / 3) && plan.show_real && near(plan.slot, 1.0 / 90));
+    plan = plan_frame(next, 1.0 / 60, 90, 3);
+    CHECK(plan.images == 1 && near(plan.fractions[0], 2.0 / 3) && !plan.show_real);
+    next = 0;
+    plan = plan_frame(next, 1.0 / 30, 90, 3);
+    CHECK(plan.images == 2 && near(plan.fractions[0], 1.0 / 3) && near(plan.fractions[1], 2.0 / 3) && plan.show_real && near(plan.slot, 1.0 / 90));
+
+    next = 0;
+    uint32_t outputs = 0;
+    uint32_t real = 0;
+    for (int frame = 0; frame < 600; frame++) {
+        plan = plan_frame(next, 1.0 / 59.94, 90, 3);
+        outputs += plan.images + (plan.show_real ? 1 : 0);
+        real += plan.show_real ? 1 : 0;
+    }
+    CHECK(outputs == 900 && real == 300);
+
+    next = 1.0 / 3;
+    plan = plan_frame(next, 1.0 / 60, 120, 3);
+    CHECK(plan.images == 1 && near(plan.fractions[0], 0.5) && plan.show_real && next == 0);
+
+    next = 0;
+    plan = plan_frame(next, 0.1, 120, 3);
+    CHECK(plan.images == 3 && plan.show_real && next == 0);
+    CHECK(near(plan.fractions[0], 0.25) && near(plan.fractions[1], 0.5) && near(plan.fractions[2], 0.75) && near(plan.slot, 0.025));
+    plan = plan_frame(next, 0.04, 120, 3);
+    CHECK(plan.images == 3 && near(plan.fractions[0], 0.25) && near(plan.fractions[2], 0.75) && plan.show_real && near(plan.slot, 0.01));
+    plan = plan_frame(next, 0.1, 90, 3);
+    CHECK(plan.images == 3 && near(plan.fractions[0], 0.25) && plan.show_real && next == 0);
+    next = 0.4;
+    plan = plan_frame(next, 1.0 / 60, 90, 0);
+    CHECK(plan.images == 0 && plan.show_real && next == 0);
+
+    CHECK(wp::pacing::interpolation_wanted(120, 0) && wp::pacing::interpolation_wanted(120, 144) && !wp::pacing::interpolation_wanted(120, 90));
+    CHECK(wp::pacing::interpolation_wanted(90, 0) && wp::pacing::interpolation_wanted(90, 89) && wp::pacing::interpolation_wanted(90, 144));
+    CHECK(!wp::pacing::interpolation_wanted(90, 75) && !wp::pacing::interpolation_wanted(60, 144) && !wp::pacing::interpolation_wanted(45, 144) && !wp::pacing::interpolation_wanted(30, 0));
+    CHECK(wp::pacing::output_rate(90) == 90 && wp::pacing::output_rate(120) == 120);
+
+    constexpr uint64_t input = 1012500;
+    constexpr uint64_t marker = input * 2 + 1;
+    using wp::pacing::frame_alarm;
+    wp::pacing::AlarmPeriods alarm = frame_alarm(input, input * 2, input * 2, 60, false);
+    CHECK(alarm.period == input * 2 && alarm.pending == input);
+    alarm = frame_alarm(input, input, input, 60, false);
+    CHECK(alarm.period == input && alarm.pending == input);
+    alarm = frame_alarm(input, input, input, 30, false);
+    CHECK(alarm.period == input && alarm.pending == input * 2);
+    alarm = frame_alarm(input, input, input, 90, false);
+    CHECK(alarm.pending == input);
+    alarm = frame_alarm(input, input, input, 120, false);
+    CHECK(alarm.pending == input);
+    alarm = frame_alarm(input, input, input, 60, true);
+    CHECK(alarm.pending == input * 2);
+    alarm = frame_alarm(input, input, input, 45, false);
+    CHECK(alarm.period == input && alarm.pending == input * 4 / 3);
+    alarm = frame_alarm(input, input * 4 / 3, input * 4 / 3, 45, false);
+    CHECK(alarm.period == marker && alarm.pending == marker && marker / input == 2);
+    alarm = frame_alarm(input, marker, marker, 45, false);
+    CHECK(alarm.period == marker && alarm.pending == marker);
+    alarm = frame_alarm(input, marker, input * 2, 45, false);
+    CHECK(alarm.period == marker && alarm.pending == input * 4 / 3);
+    alarm = frame_alarm(input, marker, marker, 60, false);
+    CHECK(alarm.period == marker && alarm.pending == input);
+    alarm = frame_alarm(input, marker, marker, 30, false);
+    CHECK(alarm.pending == input * 2);
+    alarm = frame_alarm(input, marker, marker, 45, true);
+    CHECK(alarm.pending == input * 2);
+    alarm = frame_alarm(0, input, input * 2, 45, false);
+    CHECK(alarm.period == input && alarm.pending == input * 2);
+
+    CHECK((wp::options::choices("video.fps") == std::vector<std::string>{"30", "45", "60", "90", "120"}));
+    CHECK(std::string(wp::ui::label("help.video.fps")).find("45") != std::string::npos);
+    CHECK(std::string(wp::ui::label("help.video.fps", wp::ui::Language::French)).find("90") != std::string::npos);
+    const std::pair<wp::ui::Language, const char*> experimental[] = {
+        {wp::ui::Language::English, "experimental"}, {wp::ui::Language::French, "expérimentaux"},
+        {wp::ui::Language::Spanish, "experimentales"}, {wp::ui::Language::Galician, "experimentais"}};
+    for (const auto& [language, word] : experimental) {
+        std::string help = wp::ui::label("help.video.fps", language);
+        CHECK(help.find(word) != std::string::npos && help.find("60") != std::string::npos && help.find("120") != std::string::npos);
+        for (int height : {720, 1080}) {
+            wp::options::Layout frame = wp::options::layout(height, 6, 0);
+            wp::options::Rect line = wp::options::help_rect(frame);
+            wp::canvas::Face face = wp::canvas::make_face(wp::canvas::FontId::Body, frame.unit * 17 / 20, 0.02f);
+            CHECK(wp::canvas::text_width(face, help) < (line.width - frame.unit - frame.unit / 3) * 1.8f);
+        }
+    }
+}
+
+void test_perf_overlay() {
+    wp::perf::Sample sample;
+    sample.fps = 120;
+    sample.frame_ms = 8.33;
+    sample.game_fps = 60;
+    sample.late_per_second = 2;
+    sample.cpu_percent = 23;
+    sample.game_thread_percent = 71;
+    sample.gpu_thread_percent = 88;
+    sample.gpu_percent = 64;
+    sample.gpu_ms = 5.1;
+    sample.vram_used_gb = 2.1;
+    sample.vram_total_gb = 8.0;
+    sample.ram_used_gb = 1.8;
+    sample.ram_total_gb = 32;
+    sample.cpu_name = "CPU X";
+    sample.gpu_name = "GPU Y";
+    sample.api = "D3D11";
+    sample.render_width = 3840;
+    sample.render_height = 3168;
+    sample.scale = 6;
+    sample.refresh_hz = 144;
+    sample.vsync = true;
+    auto minimal = wp::perf::lines(sample, wp::perf::Level::Minimal);
+    CHECK(minimal.size() == 1 && minimal[0][0].text == "FPS" && minimal[0][1].text == "120" && minimal[0][2].text == "8.3 ms");
+    auto standard = wp::perf::lines(sample, wp::perf::Level::Standard);
+    CHECK(standard.size() == 4 && standard[1][0].text == "CPU" && standard[1][1].text == "23 %");
+    CHECK(standard[2][0].text == "GPU" && standard[2][1].text == "64 %" && standard[2][2].text == "2.1 GB" && standard[3][1].text == "1.8 GB");
+    auto full = wp::perf::lines(sample, wp::perf::Level::Full);
+    CHECK(full.size() == 9 && full[1][1].text == "60 fps" && full[1][2].text == "2 late/s" && full[2][2].text == "CPU X");
+    CHECK(full[3][1].text == "71 %" && full[3][2].text == "GPU thr. 88 %" && full[4][2].text == "5.1 ms");
+    CHECK(full[5][0].text == "VRAM" && full[5][2].text == "/ 8.0 GB" && full[6][2].text == "/ 32 GB");
+    CHECK(full[7][0].text == "D3D11" && full[7][1].text == "3840\xC3\x97" "3168" && full[7][2].text == "6x \xC2\xB7 VSync on");
+    CHECK(full[8].size() == 1 && full[8][0].text == "GPU Y \xC2\xB7 144 Hz");
+    CHECK(full[0][0].color == 0xFFFFFF && full[2][0].color == 0x4FC3F7 && full[4][0].color == 0x81C784 && full[6][0].color == 0xF48FB1);
+    CHECK(full[7][0].color == 0xFFB74D && full[0][2].color == 0x9AA0A6);
+    auto empty = wp::perf::lines(wp::perf::Sample{}, wp::perf::Level::Full);
+    const std::string dash = "\xE2\x80\x93";
+    CHECK(empty.size() == 9 && empty[0][1].text == dash && empty[0][2].text == dash && empty[1][2].text == dash);
+    CHECK(empty[4][1].text == dash && empty[5][1].text == dash && empty[7][0].text == dash && empty[8][0].text == dash);
+    CHECK(wp::perf::level_from("standard") == wp::perf::Level::Standard && wp::perf::level_from("bad") == wp::perf::Level::Full);
+    CHECK(wp::perf::corner_from("bottom_right") == wp::perf::Corner::BottomRight && wp::perf::corner_from("") == wp::perf::Corner::TopLeft);
+
+    wp::options::Image image = wp::perf::render(full, 1080);
+    CHECK(image.width > 0 && image.height > 0 && image.width < 1920 / 2 && image.height < 1080 / 2);
+    CHECK(image.pixels.size() == static_cast<size_t>(image.width) * image.height);
+    CHECK((image.pixels[static_cast<size_t>(image.height / 2) * image.width + 2] >> 24) >= 150);
+    size_t blue = 0;
+    for (uint32_t pixel : image.pixels) {
+        blue += (pixel & 0xFFFFFF) == 0x4FC3F7;
+    }
+    CHECK(blue > 10);
+    wp::options::Image tiny = wp::perf::render(minimal, 100);
+    CHECK(tiny.height > 0 && tiny.height < 100);
+    wp::options::Image dashes = wp::perf::render(empty, 720);
+    CHECK(dashes.width > 0);
+    if (const char* prefix = std::getenv("WP_MENU_PNG")) {
+        save_menu_png(image, std::string(prefix) + "_overlay_full.png");
+        save_menu_png(wp::perf::render(standard, 1080), std::string(prefix) + "_overlay_standard.png");
+        save_menu_png(wp::perf::render(minimal, 1080), std::string(prefix) + "_overlay_minimal.png");
+    }
+
+    wp::options::Rect top_left = wp::perf::corner_rect(1920, 1080, 300, 200, wp::perf::Corner::TopLeft);
+    CHECK(top_left.x == 27 && top_left.y == 27 && top_left.width == 300 && top_left.height == 200);
+    wp::options::Rect bottom_right = wp::perf::corner_rect(1920, 1080, 300, 200, wp::perf::Corner::BottomRight);
+    CHECK(bottom_right.x == 1920 - 27 - 300 && bottom_right.y == 1080 - 27 - 200);
+    wp::options::Rect top_right = wp::perf::corner_rect(1920, 1080, 300, 200, wp::perf::Corner::TopRight);
+    CHECK(top_right.x == 1920 - 27 - 300 && top_right.y == 27);
+    wp::options::Rect squeezed = wp::perf::corner_rect(200, 100, 300, 200, wp::perf::Corner::BottomLeft);
+    CHECK(squeezed.x >= 0 && squeezed.y >= 0 && squeezed.x + squeezed.width <= 200 && squeezed.y + squeezed.height <= 100 && squeezed.width > 0);
+
+    CHECK(!wp::keymap::reserved(wp::keymap::key_code("F2")));
+    CHECK(wp::input::bindings().has(wp::keymap::Action::Overlay, wp::keymap::key_code("F2")));
+    uint64_t version = 0;
+    bool visible = false;
+    wp::perf::Corner corner = wp::perf::Corner::TopLeft;
+    wp::options::Image taken;
+    wp::perf::show(image, wp::perf::Corner::BottomRight);
+    CHECK(wp::perf::take(version, taken, visible, corner) && visible && corner == wp::perf::Corner::BottomRight && taken.width == image.width);
+    CHECK(!wp::perf::take(version, taken, visible, corner));
+    wp::perf::hide();
+    CHECK(wp::perf::take(version, taken, visible, corner) && !visible);
+    CHECK(!wp::options::menu_capturing());
+}
+
 void test_options_render() {
     wp::settings::load("");
     const char* prefix = std::getenv("WP_MENU_PNG");
-    for (size_t tab = 0; tab < wp::options::kTabCount; tab++) {
+    for (size_t page = 0; page <= wp::options::kTabCount; page++) {
+        size_t tab = page == wp::options::kTabCount ? 3 : page;
         wp::options::Menu menu;
         menu.set_open(true);
         menu.select_tab(tab);
-        menu.select(1);
-        if (tab == 1) {
+        if (page == wp::options::kTabCount) {
+            menu.handle(wp::options::Action::Next);
+        }
+        menu.select(tab == 3 ? 2 : 1);
+        if (tab == 3 && page != wp::options::kTabCount) {
             menu.handle(wp::options::Action::Accept);
         }
         for (int height : {480, 720, 1080}) {
-            for (wp::ui::Language language : {wp::ui::Language::French, wp::ui::Language::English}) {
+            for (wp::ui::Language language : {wp::ui::Language::French, wp::ui::Language::English, wp::ui::Language::Spanish, wp::ui::Language::Galician}) {
                 wp::ui::set_language(language);
                 wp::options::Image image = wp::options::render(menu, height);
                 wp::options::Layout frame = wp::options::layout(height, menu.rows().size(), menu.scroll());
@@ -1310,20 +1675,42 @@ void test_options_render() {
                     continue;
                 }
                 CHECK((image.pixels[0] >> 24) == 0);
-                CHECK((image.pixels[image.pixels.size() / 2] >> 24) > 200);
-                size_t sun = 0;
-                size_t parchment = 0;
+                CHECK((image.pixels[image.width - 1] >> 24) == 0);
+                CHECK((image.pixels[image.pixels.size() - image.width] >> 24) == 0);
+                CHECK((image.pixels[static_cast<size_t>(image.height / 2) * image.width + image.width / 2] >> 24) == 255);
+                size_t orange = 0;
+                size_t panel = 0;
+                size_t caps = 0;
+                size_t marker = 0;
                 for (uint32_t pixel : image.pixels) {
-                    sun += (pixel & 0xFFFFFF) == 0xFFD23F;
-                    parchment += (pixel & 0xFFFFFF) == 0xFFF4D6;
+                    bool opaque = (pixel >> 24) == 255;
+                    orange += opaque && (pixel & 0xFFFFFF) == 0xF27D0C;
+                    panel += opaque && (pixel & 0xFFFFFF) == 0xF8F8F6;
+                    caps += opaque && (pixel & 0xFFFFFF) == 0x3B3531;
+                    marker += opaque && (pixel & 0xFFFFFF) == 0xE2343B;
                 }
-                CHECK(sun > 50);
-                CHECK(parchment > 1000);
-                if (prefix && height == 1080) {
-                    save_menu_png(image, std::string(prefix) + "_tab" + std::to_string(tab) + (language == wp::ui::Language::French ? "_fr.png" : "_en.png"));
+                CHECK(orange > 1000);
+                CHECK(panel > image.pixels.size() / 4);
+                CHECK(caps > 200);
+                CHECK(marker > 10);
+                if (height == 720 && page == 0) {
+                    wp::canvas::Face face = wp::canvas::make_face(wp::canvas::FontId::Body, frame.unit, 0.05f);
+                    for (size_t t = 0; t < wp::options::kTabCount; t++) {
+                        CHECK(wp::canvas::text_width(face, wp::options::tab_label(t)) <= wp::options::tab_rect(frame, t).width - frame.unit);
+                    }
+                }
+                if (prefix && height == 1080 && (language == wp::ui::Language::French || language == wp::ui::Language::English)) {
+                    save_menu_png(image, std::string(prefix) + "_tab" + std::to_string(page) + (language == wp::ui::Language::French ? "_fr.png" : "_en.png"));
                 }
             }
         }
+    }
+    if (prefix) {
+        wp::options::Menu small;
+        small.set_open(true);
+        small.select_tab(0);
+        wp::ui::set_language(wp::ui::Language::French);
+        save_menu_png(wp::options::render(small, 480), std::string(prefix) + "_small_fr.png");
     }
     wp::ui::set_language(wp::ui::Language::English);
 }
@@ -1454,8 +1841,14 @@ int main() {
     test_live_settings();
     test_options_menu();
     test_pad_motion();
-    test_options_repeat_and_layout();
+    test_options_repeat();
+    test_options_layout();
+    test_canvas();
+    test_play_time();
+    test_frame_pacing();
+    test_system_stats();
     test_options_render();
+    test_perf_overlay();
     test_software_fma();
     test_hollywood_registers();
     test_linked_fifo_registers();

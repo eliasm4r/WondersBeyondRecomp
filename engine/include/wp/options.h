@@ -14,7 +14,9 @@ enum class Action { Up, Down, Previous, Next, Accept, Close, TabPrevious, TabNex
 
 enum class Part { None, Label, Previous, Value, Next, Close, Tab };
 
-enum class Kind { Choice, Toggle, Slider, Key, Pad, Button };
+enum class Kind { Choice, Toggle, Slider, Key, Pad, Button, Info };
+
+enum class Device { Keyboard, Gamepad };
 
 struct Hover {
     int row = -1;
@@ -33,13 +35,14 @@ struct Row {
     bool live = false;
     bool on = false;
     double fraction = 0.0;
+    std::string help;
 };
 
-constexpr size_t kTabCount = 5;
+constexpr size_t kTabCount = 6;
 constexpr size_t kVisibleRows = 9;
 
 const char* tab_label(size_t tab);
-std::vector<std::string> tab_keys(size_t tab);
+std::vector<std::string> tab_keys(size_t tab, Device device = Device::Keyboard);
 Kind kind(const std::string& key);
 bool live(const std::string& key);
 std::vector<std::string> choices(const std::string& key);
@@ -51,6 +54,7 @@ public:
     bool open() const { return open_; }
     void set_open(bool open);
     size_t tab() const { return tab_; }
+    Device device() const { return device_; }
     void select_tab(size_t tab);
     size_t selection() const { return selection_; }
     void select(size_t index);
@@ -60,6 +64,7 @@ public:
     std::string handle(Action action);
     // Moves the slider of this row to a position between 0 and 1.
     std::string set_fraction(size_t row, double fraction);
+    std::string set_toggle(size_t row, bool on);
     // A key or gamepad row waiting for the input to bind.
     bool capturing() const { return capturing_; }
     Kind capture_kind() const;
@@ -70,10 +75,12 @@ public:
 
 private:
     void keep_visible();
+    std::vector<std::string> keys() const;
 
     bool open_ = false;
     bool capturing_ = false;
     size_t tab_ = 0;
+    Device device_ = Device::Keyboard;
     size_t selection_ = 0;
     size_t scroll_ = 0;
     Hover hover_;
@@ -97,10 +104,13 @@ struct Layout {
     int width = 0;
     int height = 0;
     int padding = 0;
+    int edge = 0;
     int title_height = 0;
+    int tabs_width = 0;
     int tab_height = 0;
     int row_height = 0;
-    int footer_height = 0;
+    int help_height = 0;
+    int hints_height = 0;
     size_t total = 0;
     size_t scroll = 0;
 };
@@ -119,8 +129,11 @@ Rect rows_rect(const Layout& layout);
 Rect row_rect(const Layout& layout, size_t visible_row);
 Rect control_rect(const Layout& layout, size_t visible_row);
 Rect close_rect(const Layout& layout);
+Rect help_rect(const Layout& layout);
+Rect hints_rect(const Layout& layout);
 Hover hit_test(const Layout& layout, const Rect& placed, int x, int y);
 double slider_fraction(const Layout& layout, const Rect& placed, size_t visible_row, int x);
+double control_fraction(const Layout& layout, const Rect& placed, size_t visible_row, int x);
 
 struct Image {
     std::vector<uint32_t> pixels;

@@ -100,7 +100,7 @@ All components adapted from the **Dolphin Emulator** originate from a source sna
 
 ### stb_truetype
 - **Repository Files:** `third_party/stb/stb_truetype.h`, unmodified.
-- **Usage Area:** text of the F10 options menu outside Windows (`engine/src/platform/options_render_stb.cpp`), drawn with a font installed on the system.
+- **Usage Area:** text of the F1 options menu, the title bar and the performance overlay (`engine/src/platform/canvas.cpp`).
 - **Upstream Origin:** https://github.com/nothings/stb, version 1.26, commit `2c980bb59875b0d32144a71867fbdebb2f77cd20` (retrieved 2026-09-29).
 - **Copyright:** Copyright (c) 2017 Sean Barrett.
 - **License:** dual licensed, **MIT License** or public domain (Unlicense), at the user's choice; the MIT terms are used here, which are compatible with GPL-3.0-or-later. The license text is at the end of the file.
@@ -111,6 +111,13 @@ All components adapted from the **Dolphin Emulator** originate from a source sna
 - **Upstream Origin:** https://github.com/nothings/stb, version 2.30, commit `2c980bb59875b0d32144a71867fbdebb2f77cd20` (retrieved 2026-10-02).
 - **Copyright:** Copyright (c) 2017 Sean Barrett.
 - **License:** dual licensed, **MIT License** or public domain (Unlicense), at the user's choice; the MIT terms are used here, which are compatible with GPL-3.0-or-later. The license text is at the end of the file.
+
+### Nunito font
+- **Repository Files:** `third_party/fonts/nunito/Nunito-ExtraBold.ttf`, `third_party/fonts/nunito/Nunito-Black.ttf`, unmodified, and `third_party/fonts/nunito/OFL.txt`.
+- **Usage Area:** text of the F1 options menu, embedded in the executable (`engine/src/platform/embedded_fonts.cpp`).
+- **Upstream Origin:** https://github.com/googlefonts/nunito, static instances `fonts/TTF/Nunito-ExtraBold.ttf` and `fonts/TTF/Nunito-Black.ttf` at commit `4be812cf4761b3ddc3b0ae894ef40ea21dcf6ff3`, the last revision that shipped static instances (retrieved 2026-11-11).
+- **Copyright:** Copyright 2014 The Nunito Project Authors (Vernon Adams, Cyreal, Jacques Le Bailly).
+- **License:** **SIL Open Font License, Version 1.1**; the font may be bundled and embedded with any software, the license text travels with it in `OFL.txt`.
 
 ## Externally Linked Libraries (Permissive Licenses)
 

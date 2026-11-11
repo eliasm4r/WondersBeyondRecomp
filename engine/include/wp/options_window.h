@@ -7,6 +7,7 @@
 namespace wp::options {
 
 bool menu_open();
+bool menu_capturing();
 void toggle_menu(void* window);
 std::string menu_key(void* window, unsigned key, bool repeat);
 std::string menu_wheel(void* window, int delta);

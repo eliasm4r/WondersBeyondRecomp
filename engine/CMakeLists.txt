@@ -5,6 +5,7 @@ add_library(wp_engine STATIC
     src/core/big_stack.cpp
     src/core/dol.cpp
     src/core/boot.cpp
+    src/core/frame_pacing.cpp
     src/core/hle.cpp
     src/core/threads.cpp
     src/core/interrupts.cpp
@@ -36,6 +37,10 @@ add_library(wp_engine STATIC
     src/platform/save_backup.cpp
     src/platform/screenshot.cpp
     src/platform/settings.cpp
+    src/platform/play_time.cpp
+    src/platform/perf.cpp
+    src/platform/perf_overlay.cpp
+    src/platform/system_stats.cpp
     src/platform/ui_text.cpp
     src/platform/options.cpp
     src/platform/options_window.cpp
@@ -44,7 +49,11 @@ add_library(wp_engine STATIC
 if(WIN32)
     target_sources(wp_engine PRIVATE src/gpu/gx_render.cpp src/platform/video.cpp)
 endif()
-target_sources(wp_engine PRIVATE src/platform/options_render_stb.cpp)
+target_sources(wp_engine PRIVATE src/platform/options_render_stb.cpp src/platform/canvas.cpp src/platform/embedded_fonts.cpp)
+set(WP_FONT_DIR "${CMAKE_SOURCE_DIR}/third_party/fonts/nunito")
+set_source_files_properties(src/platform/embedded_fonts.cpp PROPERTIES
+    COMPILE_DEFINITIONS "WP_FONT_DIR=\"${WP_FONT_DIR}\""
+    OBJECT_DEPENDS "${WP_FONT_DIR}/Nunito-ExtraBold.ttf;${WP_FONT_DIR}/Nunito-Black.ttf")
 target_include_directories(wp_engine SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/third_party/stb")
 target_include_directories(wp_engine PUBLIC include)
 target_compile_definitions(wp_engine PRIVATE WP_BUILD="${WP_BUILD}"
@@ -53,7 +62,7 @@ target_compile_definitions(wp_engine PRIVATE WP_BUILD="${WP_BUILD}"
 set_source_files_properties(src/audio/dsp_roms.cpp PROPERTIES OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/third_party/dolphin/Data/Sys/GC/dsp_rom.bin;${CMAKE_SOURCE_DIR}/third_party/dolphin/Data/Sys/GC/dsp_coef.bin")
 target_link_libraries(wp_engine PUBLIC wp_dolphin_dsp)
 if(WIN32)
-    target_link_libraries(wp_engine PUBLIC gdi32 user32 d3d11 d3dcompiler dxgi ole32 windowscodecs dwmapi winmm)
+    target_link_libraries(wp_engine PUBLIC gdi32 user32 d3d11 d3dcompiler dxgi ole32 windowscodecs dwmapi winmm pdh advapi32)
 else()
     find_package(Threads REQUIRED)
     target_link_libraries(wp_engine PUBLIC Threads::Threads)

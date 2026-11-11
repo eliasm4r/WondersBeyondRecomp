@@ -115,6 +115,24 @@ Three more things were needed:
 
 Measured in the first cave, D3D11: 59.9 to 60.0 fps at 3x and 6x.
 
+## 45 and 90 fps
+
+- 45 fps (`video.fps=45`): the frame alarm gets 4/3 of the input period. The main loop skips a render when a frame
+  ran more logic steps than `frame period / input period` (0x8002cfd0, an integer division), which is 1 here while
+  every third frame runs two steps, so the game fell back to 30 fps. Once the timer manager has armed the alarm at
+  4/3 (0x8000efa0), its period at +0x38 and its pending period at +0x40 are both set to twice the input period plus
+  one tick: the check then allows two steps, the alarm keeps firing at 4/3, and nothing re-arms it since both fields
+  agree. The skip check is the only reader of +0x38 that uses the result (0x8000f1e0); any other setting writes
+  another pending period, which re-arms the alarm. The logic still runs 60 steps a second, so things move one, one,
+  then two steps between images.
+- 90 fps (`video.fps=90`, Direct3D 11, a screen of 85 Hz or more): the 120 fps interpolation with images every 2/3
+  of a game frame. For a game at 60 fps the images fall 2/3 of the way to a frame, then 1/3 of the way to the next
+  one followed by that frame: every other game frame is not shown. `pacing::plan_frame` carries the place of the
+  next image from one frame to the next. It starts again on a shown frame whenever the images per frame are a whole
+  number (120 fps, or 90 fps with 30 fps content), and after a frame that got fewer images than planned.
+- Headless at 3x in the first zone: 45.0 fps at 45. At 90 every game frame got its image, and the game's own rate
+  matched 120 fps in runs made one after the other.
+
 ## Boot hang in `__AI_SRC_INIT`
 
 0x802b5290 times the audio sample counter with interrupts masked and retries until the measure is plausible. The
@@ -137,10 +155,43 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
   (`keys.pointer`) and the right stick while L3 is held (`pad.pointer`), both remappable.
 - A sharp jolt of a gamepad with a motion sensor (more than 0.9 g away from rest) holds the Wii Remote shake for
   250 ms.
-- F1 opens the options menu (tabs Display, Keyboard, Gamepad, Sound, Game). F10 no longer does anything.
+- F1 opens the options menu (see "Options menu, play time and performance overlay"). F10 no longer does anything.
 - The title screen and cutscenes are pre-rendered 30 fps movies, so they stay at 30 fps (see "60 fps").
 - Discord shows the game when `system.discord` is on and `discord_application` in the game description holds an
   Application ID; it talks to the local client over its IPC pipe and retries every 15 s.
+
+## Options menu, play time and performance overlay
+
+- The F1 menu is drawn on the CPU into one image (`options_render_stb.cpp`, on the shared canvas of `canvas.cpp`) that
+  the renderer shows over the game. Its size follows the window height: `unit = clamp(height / 40, 14, 40)`, the panel
+  is 60 units wide, and its orange edge, `max(3, unit * 3 / 5)` pixels, is the outline polygon drawn once offset in
+  orange and once in place in the panel colour. Tabs sit in a column on the left, skewed by 12 degrees; rows on the
+  right, then a help line and the key hints.
+- Palette: panel `#F8F8F6`, orange `#F27D0C`, ink `#3B3531`, selected row `#FFEBD2`, red marker `#E2343B`.
+- Font: Nunito ExtraBold and Black (SIL Open Font License, `third_party/fonts/nunito`), embedded in the executable with
+  `.incbin` so the menu looks the same everywhere. The performance overlay uses Consolas, or DejaVu Sans Mono.
+- Tabs: Screen, Game, Sound, Controls, Language, Advanced. The Controls tab's first row switches between keyboard and
+  gamepad bindings and is back on the keyboard each time the menu opens. Each row's help text is `help.<key>` in
+  `ui_text.cpp`.
+- Play time: counted while the game runs, saved as `play_time=<seconds>` in `games/pokepark2/stats.ini` every minute
+  and on exit (written to a temporary file, then renamed), shown in the Game tab.
+- Gamepads keep working while the window is in the background; the keyboard and the mouse count only while it has the
+  focus.
+- Performance overlay (F2, `keys.overlay`, or the Advanced tab): levels minimal, standard and full, in any corner, a
+  margin of 1.4 % of the window width away from the edges. F2 does nothing while the menu waits for a key. Screenshots
+  read the game frame, so neither the overlay nor the menu shows in them.
+  - The GPU thread publishes the figures once a second from its statistics block in `gx.cpp`. CPU, GPU and RAM come
+    from a sampler thread that runs only while the overlay is on: the GPU counters can take tens of milliseconds to
+    read, which would hold a frame back on the GPU thread.
+  - CPU %: the whole system (GetSystemTimes). Game and GPU thr.: the time the game's thread and the GPU thread used
+    over the second.
+  - GPU %: the busiest adapter's 3D engine (PDH `GPU Engine(*engtype_3D)`), the figure Task Manager shows. GPU ms: this
+    process's share of that engine times the shown frame time. A timestamp pair around a frame would also count the
+    idle gaps between the game's command bursts.
+  - VRAM: this process's local video memory (IDXGIAdapter3, Direct3D 11 only). RAM: the process's working set.
+  - Late/s: real frames shown with no image interpolated before them, at 120 fps.
+  - Temperatures are left out: Windows has no common way to read them without a vendor library or a driver.
+  - On Linux and macOS the system figures show a dash.
 
 ## Indirect maps left unbound
 
@@ -339,6 +390,16 @@ What the code added for frame interpolation, the timers and the input changes do
 
 - `bool fit_motion(const float (*from)[4], const float (*to)[4], size_t count, float matri...`: Fits the matrix that takes each clip-space point `from` to its `to`, leaving out the pairs that do not follow the rest (things that move by themselves). False when too few pairs agree on one motion.
 
+### `engine/include/wp/frame_pacing.h`
+- `FramePlan plan_frame(double& next, double period, int rate, uint32_t max_images);`: The interpolated images of the frame just made: their places between the previous frame (0) and this one (1), whether this frame is shown, and the time between images. next carries the place of the next image across frames; 0 starts again on a shown frame.
+- `AlarmPeriods frame_alarm(uint64_t input, uint64_t period, uint64_t pending, int fps, bool movie);`: The frame alarm's period and pending period for a frame-rate limit (docs/NOTES.md, "45 and 90 fps").
+### `engine/include/wp/perf.h`
+- `struct Sample`: The figures the performance overlay shows; -1, 0 or empty when unknown, drawn as a dash.
+- `SystemFigures system_figures();`: The last CPU, GPU and RAM figures. The first call starts the sampler thread, which reads them once a second while `overlay.show` is on.
+- `double gpu_engine_percent();`: The busiest adapter's 3D engine use, also keeping this process's share for gpu_process_percent. The first call only starts the counters and returns -1.
+### `engine/include/wp/perf_overlay.h`
+- `void update();`: Called by the window's 16 ms timer: draws the overlay image again when a new sample, level, corner or window height comes, and hides it when `overlay.show` is off.
+- `options::Rect corner_rect(int client_width, int client_height, int width, int height, ...`: The overlay's place in the window, shrunk when the window is too small for it.
 ### `engine/include/wp/input.h`
 
 - `void follow_keyboard_layout();`: Moves key bindings still at the US letters to this keyboard's layout (Z, Q, S, D on AZERTY); called once at start.
@@ -364,7 +425,7 @@ What the code added for frame interpolation, the timers and the input changes do
 - `uint64_t draw_key(uint8_t command, uint32_t count, const Layout& layout, const uint8_t*...`: Identifies a draw from one frame to the next: the same mesh sends the same command, layout, texture and, when its positions come from an array, the same indices.
 - `bool indexed = layout.position.mode == kIndex8 || layout.position.mode == kIndex16;`: Indexed positions: the array they come from; inline ones: where the display list holds them. Inline positions sent through the FIFO have no lasting place and only the plain key.
 - `std::atomic<uint32_t> g_frame_holds{0};`: Times the game's timers waited for a token (frame_owed) since the last report.
-- `g_frames += static_cast<int>(render::take_interpolated_frames());`: Interpolated frames count as shown frames.
+- `g_frames += static_cast<int>(render::take_interpolated_frames());`: Interpolated frames count as shown frames, less the game frames left unshown at 90 fps.
 - `std::atomic<uint32_t> g_token_sent{0};`: The last token the game sent with an interrupt and the last one the GPU thread reached (frame_owed).
 - `static bool bp_next = false;`: GXSetDrawSync writes the BP opcode as a byte, then the register as a word. A vertex byte taken for one only sets a wrong token, which the next real one replaces.
 - `bool frame_owed()`: The game frees the buffers of a frame when its token interrupt comes, and takes the next frame's buffers when its frame alarm fires. With the GPU thread a little late the alarm came first: the game took fresh buffers every frame (EFB copies to ever new addresses, each written back to RAM), then ran out of heap in the pause menu. The alarms wait for the token the GPU thread still owes, for 100 ms at most.

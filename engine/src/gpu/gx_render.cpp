@@ -8,6 +8,7 @@
 #include <d3d11sdklayers.h>
 #include <d3dcompiler.h>
 #include <dxgi1_2.h>
+#include <dxgi1_4.h>
 
 #include <algorithm>
 #include <array>
@@ -33,7 +34,9 @@
 #include "wp/game.h"
 #include "wp/gx_state.h"
 #include "wp/memory.h"
+#include "wp/frame_pacing.h"
 #include "wp/options.h"
+#include "wp/perf_overlay.h"
 #include "wp/settings.h"
 #include "wp/video.h"
 
@@ -763,6 +766,13 @@ struct Device {
     uint64_t overlay_version = 0;
     bool overlay_visible = false;
     bool overlay_failed = false;
+    ID3D11Texture2D* hud = nullptr;
+    ID3D11ShaderResourceView* hud_view = nullptr;
+    uint32_t hud_width = 0;
+    uint32_t hud_height = 0;
+    uint64_t hud_version = 0;
+    bool hud_visible = false;
+    perf::Corner hud_corner = perf::Corner::TopLeft;
     ID3D11RasterizerState* rasterizer = nullptr;
     std::map<uint32_t, ID3D11BlendState*> blend_states;
     std::map<uint32_t, ID3D11DepthStencilState*> depth_states;
@@ -859,7 +869,7 @@ struct FrameRecord {
     std::vector<RecordedTarget> targets;
 };
 
-[[gnu::used]] const char kBuildSalt[] = "SALT6335";
+[[gnu::used]] const char kBuildSalt[] = "SALT3333";
 
 Device g_device;
 PendingBatch g_pending;
@@ -2837,7 +2847,7 @@ bool can_pair() {
     return g_recording && !g_record_broken && !g_previous.draws.empty() && !g_record.draws.empty();
 }
 
-uint32_t run_interpolated(int x, int y, int width, int height, bool depth, const CopyFilter& filter, uint32_t count) {
+uint32_t run_interpolated(int x, int y, int width, int height, bool depth, const CopyFilter& filter, const pacing::FramePlan& plan) {
     if (!can_pair() || !g_efb_before_valid || !g_device.moved_shader || g_frame_vertices > kVertexCapacity || !interpolated_targets()) {
         return 0;
     }
@@ -2848,10 +2858,9 @@ uint32_t run_interpolated(int x, int y, int width, int height, bool depth, const
     if (g_camera_cut) {
         return 0;
     }
-    count = std::clamp<uint32_t>(count, 1, kMaxBetween);
+    uint32_t count = std::min<uint32_t>(plan.images, kMaxBetween);
     for (uint32_t step = 0; step < count; step++) {
-        if (!replay_between(g_matches, static_cast<float>(step + 1) / static_cast<float>(count + 1), g_device.interpolated_target[step], x, y, width, height, depth,
-                            filter)) {
+        if (!replay_between(g_matches, plan.fractions[step], g_device.interpolated_target[step], x, y, width, height, depth, filter)) {
             return step;
         }
     }
@@ -2859,6 +2868,11 @@ uint32_t run_interpolated(int x, int y, int width, int height, bool depth, const
 }
 
 int g_display_hz = 0;
+std::atomic<uint32_t> g_late_frames{0};
+std::atomic<uint32_t> g_hidden_frames{0};
+double g_phase = 0.0;
+bool g_show_real = true;
+double g_planned_slot = 1.0 / 120.0;
 
 void end_record() {
     if (g_recording && !g_record_broken) {
@@ -2877,7 +2891,7 @@ void end_record() {
     g_pending.begin = 0;
     g_frame_vertices = 0;
     static const settings::LiveNumber fps("video.fps", "WP_FPS");
-    g_recording = fps() >= 120 && (g_display_hz == 0 || g_display_hz >= 100);
+    g_recording = pacing::interpolation_wanted(static_cast<int>(fps()), g_display_hz);
     g_record_broken = false;
     if (g_recording) {
         g_vertex_cursor = kVertexCapacity;
@@ -2961,20 +2975,31 @@ void finish_frame() {
     }
     FrameEnd end = g_frame_end;
     g_frame_end.due = false;
-    uint32_t between = static_cast<uint32_t>(std::max(1.0, std::round(g_period * 120.0) - 1.0));
+    static const settings::LiveNumber fps("video.fps", "WP_FPS");
     constexpr size_t kBehindBytes = 256 << 10;
     bool late = gx::take_frame_held();
     bool saved = end.copied && g_recording && save_efb(g_efb_after);
     auto started = std::chrono::steady_clock::now();
+    pacing::FramePlan plan;
     if (saved) {
+        plan = pacing::plan_frame(g_phase, g_period, pacing::output_rate(static_cast<int>(fps())), kMaxBetween);
         if (g_dump_sequence || (!late && gx::gpu_backlog() < kBehindBytes)) {
-            g_interpolated_ready = run_interpolated(end.x, end.y, end.width, end.height, end.depth, end.filter, between);
+            g_interpolated_ready = run_interpolated(end.x, end.y, end.width, end.height, end.depth, end.filter, plan);
             load_efb(g_efb_after);
         }
         std::swap(g_efb_before, g_efb_after);
     }
+    bool complete = plan.images > 0 && g_interpolated_ready == plan.images;
+    g_show_real = plan.show_real || !complete;
+    g_planned_slot = complete ? plan.slot : g_period / (g_interpolated_ready + 1);
+    if (!complete) {
+        g_phase = 0.0;
+    }
     if (g_dump_sequence && end.copied) {
         dump_sequence(g_interpolated_ready);
+    }
+    if (end.copied && g_recording && g_interpolated_ready == 0) {
+        g_late_frames++;
     }
     if (g_recording) {
         static auto report = started;
@@ -3200,16 +3225,16 @@ bool create_overlay_pipeline() {
     return ok;
 }
 
-void upload_overlay(const options::Image& image) {
+void upload_overlay(const options::Image& image, ID3D11Texture2D*& texture, ID3D11ShaderResourceView*& view, uint32_t& width, uint32_t& height) {
     if (image.pixels.size() != static_cast<size_t>(image.width) * image.height || image.width == 0 || image.height == 0) {
         return;
     }
-    if (g_device.overlay && g_device.overlay_width == image.width && g_device.overlay_height == image.height) {
-        g_device.context->UpdateSubresource(g_device.overlay, 0, nullptr, image.pixels.data(), image.width * 4, 0);
+    if (texture && width == image.width && height == image.height) {
+        g_device.context->UpdateSubresource(texture, 0, nullptr, image.pixels.data(), image.width * 4, 0);
         return;
     }
-    release(g_device.overlay_view);
-    release(g_device.overlay);
+    release(view);
+    release(texture);
     D3D11_TEXTURE2D_DESC description{};
     description.Width = image.width;
     description.Height = image.height;
@@ -3220,25 +3245,16 @@ void upload_overlay(const options::Image& image) {
     description.Usage = D3D11_USAGE_DEFAULT;
     description.BindFlags = D3D11_BIND_SHADER_RESOURCE;
     D3D11_SUBRESOURCE_DATA initial{image.pixels.data(), image.width * 4, 0};
-    if (FAILED(g_device.device->CreateTexture2D(&description, &initial, &g_device.overlay)) ||
-        FAILED(g_device.device->CreateShaderResourceView(g_device.overlay, nullptr, &g_device.overlay_view))) {
-        release(g_device.overlay_view);
-        release(g_device.overlay);
+    if (FAILED(g_device.device->CreateTexture2D(&description, &initial, &texture)) || FAILED(g_device.device->CreateShaderResourceView(texture, nullptr, &view))) {
+        release(view);
+        release(texture);
         return;
     }
-    g_device.overlay_width = image.width;
-    g_device.overlay_height = image.height;
+    width = image.width;
+    height = image.height;
 }
 
-void draw_overlay(const RECT& client) {
-    options::Image image;
-    if (options::take_overlay(g_device.overlay_version, image, g_device.overlay_visible) && !image.pixels.empty()) {
-        upload_overlay(image);
-    }
-    if (!g_device.overlay_visible || !g_device.overlay_view || !create_overlay_pipeline()) {
-        return;
-    }
-    options::Rect placed = options::place(client.right, client.bottom, static_cast<int>(g_device.overlay_width), static_cast<int>(g_device.overlay_height));
+void draw_image(ID3D11ShaderResourceView* view, const options::Rect& placed) {
     if (placed.width <= 0 || placed.height <= 0) {
         return;
     }
@@ -3248,12 +3264,33 @@ void draw_overlay(const RECT& client) {
     context->RSSetViewports(1, &viewport);
     context->OMSetBlendState(g_device.overlay_blend, nullptr, 0xFFFFFFFF);
     context->PSSetShader(g_device.overlay_pixel, nullptr, 0);
-    context->PSSetShaderResources(0, 1, &g_device.overlay_view);
+    context->PSSetShaderResources(0, 1, &view);
     context->PSSetSamplers(0, 1, &g_device.present_sampler);
     context->Draw(3, 0);
     ID3D11ShaderResourceView* none = nullptr;
     context->PSSetShaderResources(0, 1, &none);
     context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+}
+
+void draw_overlay(const RECT& client) {
+    options::Image image;
+    if (perf::take(g_device.hud_version, image, g_device.hud_visible, g_device.hud_corner) && !image.pixels.empty()) {
+        upload_overlay(image, g_device.hud, g_device.hud_view, g_device.hud_width, g_device.hud_height);
+    }
+    if (options::take_overlay(g_device.overlay_version, image, g_device.overlay_visible) && !image.pixels.empty()) {
+        upload_overlay(image, g_device.overlay, g_device.overlay_view, g_device.overlay_width, g_device.overlay_height);
+    }
+    bool hud = g_device.hud_visible && g_device.hud_view;
+    bool menu = g_device.overlay_visible && g_device.overlay_view;
+    if ((!hud && !menu) || !create_overlay_pipeline()) {
+        return;
+    }
+    if (hud) {
+        draw_image(g_device.hud_view, perf::corner_rect(client.right, client.bottom, static_cast<int>(g_device.hud_width), static_cast<int>(g_device.hud_height), g_device.hud_corner));
+    }
+    if (menu) {
+        draw_image(g_device.overlay_view, options::place(client.right, client.bottom, static_cast<int>(g_device.overlay_width), static_cast<int>(g_device.overlay_height)));
+    }
 }
 
 bool present_view(HWND window, double aspect, ID3D11ShaderResourceView* view) {
@@ -3436,7 +3473,7 @@ bool present_frame(void* window_handle, double aspect) {
             g_show_queue.clear();
             last = g_last_shown;
         }
-        g_slot = std::clamp(g_period / (g_interpolated_ready + 1), 0.002, 0.025);
+        g_slot = std::clamp(g_planned_slot, 0.002, 0.025);
         auto step = std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(g_slot));
         auto slot = std::max(now, last + step);
         for (uint32_t i = 0; i < g_interpolated_ready; i++) {
@@ -3445,7 +3482,11 @@ bool present_frame(void* window_handle, double aspect) {
             }
         }
         g_interpolated_ready = 0;
-        queue_image(g_device.frame, slot, false);
+        if (g_show_real) {
+            queue_image(g_device.frame, slot, false);
+        } else {
+            g_hidden_frames++;
+        }
         service_deferred();
     }
     apply_scale();
@@ -3459,7 +3500,56 @@ bool service_presents() {
 }
 
 uint32_t take_interpolated_frames() {
-    return g_interpolated_frames.exchange(0);
+    uint32_t shown = g_interpolated_frames.exchange(0);
+    uint32_t hidden = g_hidden_frames.exchange(0);
+    return shown > hidden ? shown - hidden : 0;
+}
+
+uint32_t take_late_frames() {
+    return g_late_frames.exchange(0);
+}
+
+GpuFigures gpu_figures() {
+    constexpr double kGigabyte = 1024.0 * 1024.0 * 1024.0;
+    static bool looked = false;
+    static IDXGIAdapter3* adapter3 = nullptr;
+    static std::string name;
+    static double total = -1.0;
+    GpuFigures figures;
+    if (!g_device.ready) {
+        return figures;
+    }
+    if (!looked) {
+        looked = true;
+        IDXGIDevice* dxgi_device = nullptr;
+        IDXGIAdapter* adapter = nullptr;
+        if (SUCCEEDED(g_device.device->QueryInterface(__uuidof(IDXGIDevice), reinterpret_cast<void**>(&dxgi_device))) && SUCCEEDED(dxgi_device->GetAdapter(&adapter))) {
+            DXGI_ADAPTER_DESC description{};
+            if (SUCCEEDED(adapter->GetDesc(&description))) {
+                char text[256] = {};
+                WideCharToMultiByte(CP_UTF8, 0, description.Description, -1, text, sizeof text, nullptr, nullptr);
+                name = text;
+                total = description.DedicatedVideoMemory > 0 ? static_cast<double>(description.DedicatedVideoMemory) / kGigabyte : -1.0;
+            }
+            if (FAILED(adapter->QueryInterface(__uuidof(IDXGIAdapter3), reinterpret_cast<void**>(&adapter3)))) {
+                adapter3 = nullptr;
+            }
+            adapter->Release();
+        }
+        if (dxgi_device) {
+            dxgi_device->Release();
+        }
+    }
+    figures.adapter = name;
+    figures.vram_total_gb = total;
+    DXGI_QUERY_VIDEO_MEMORY_INFO memory{};
+    if (adapter3 && SUCCEEDED(adapter3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &memory))) {
+        figures.vram_used_gb = static_cast<double>(memory.CurrentUsage) / kGigabyte;
+    }
+    figures.width = scaled(kEfbWidth);
+    figures.height = scaled(kEfbHeight);
+    figures.refresh_hz = g_display_hz;
+    return figures;
 }
 
 bool read_texture(ID3D11Texture2D* texture, std::vector<uint32_t>& pixels, uint32_t& width, uint32_t& height) {

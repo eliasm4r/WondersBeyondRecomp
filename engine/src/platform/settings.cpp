@@ -53,6 +53,9 @@ const Option kBaseOptions[] = {
     {"audio.volume", "100"},
     {"audio.wiimote_speaker", "1"},
     {"saves.backups", "5"},
+    {"overlay.show", "0"},
+    {"overlay.level", "full"},
+    {"overlay.corner", "top_left"},
 };
 
 const std::vector<Option>& options() {
