@@ -18,11 +18,12 @@ Supported disc: Europe (`S2LP01`). Other regions are planned.
 - **30, 45 or 60 fps** gameplay (`video.fps`, 60 by default), with movies and cutscenes kept at their native 30 fps
 - **90 or 120 fps** through frame interpolation (Direct3D 11): images are drawn between the game's frames
 - **Internal resolution** up to 6x, 16:9 or 4:3, optional supersampled smoothing, anisotropic filtering, vsync
+- **Color settings**: brightness, contrast, saturation and gamma, applied to the game picture and screenshots
 - **Options menu (F1)** drawn as the game's dialog bubble, with six tabs (Screen, Game, Sound, Controls, Language, Advanced) and a help line for each setting, usable with keyboard, mouse or gamepad, without pausing the game
 - **Performance overlay (F2)**: frame rate, processor, graphics card and memory use, in three levels of detail and in any corner
 - **Play time** counted across sessions and shown in the options menu
-- **Keyboard and mouse**: every action can be rebound; hold **Ctrl** to aim the Wii Remote pointer with the mouse
-- **Gamepads** (XInput and SDL): rebinding, stick deadzone, rumble; hold **L3** to aim with the right stick; a sharp jolt of a gamepad with a motion sensor counts as a Wii Remote shake; gamepads keep working while the window is in the background
+- **Keyboard and mouse**: **Space** jumps and talks, **left click** dashes (hold it for Thunderbolt), **right click** shakes, **E** calls a partner, **C** turns the view, **Tab** opens the PokéPark Pad, **P** takes a photo; every action can be rebound, and keys are shown as written on your keyboard; hold **Ctrl** to aim the Wii Remote pointer with the mouse (left click then acts as A)
+- **Gamepads** (XInput and SDL): the options menu names the buttons of the connected Xbox, PlayStation or Switch controller; rebinding, stick deadzone, rumble; hold **L3** to aim with the right stick; a sharp jolt of a gamepad with a motion sensor counts as a Wii Remote shake; gamepads keep working while the window is in the background
 - **Sound**: volume, mute, Wii Remote speaker
 - **Languages**: game and menu language (English, French, Spanish, Galician for the menu)
 - **Discord Rich Presence** while the game runs (can be turned off)

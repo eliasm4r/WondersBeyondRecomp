@@ -172,7 +172,7 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
   `.incbin` so the menu looks the same everywhere. The performance overlay uses Consolas, or DejaVu Sans Mono.
 - Tabs: Screen, Game, Sound, Controls, Language, Advanced. The Controls tab's first row switches between keyboard and
   gamepad bindings and is back on the keyboard each time the menu opens. Each row's help text is `help.<key>` in
-  `ui_text.cpp`.
+  `ui_text.cpp` (see "Controls" for the key and button rows).
 - Play time: counted while the game runs, saved as `play_time=<seconds>` in `games/pokepark2/stats.ini` every minute
   and on exit (written to a temporary file, then renamed), shown in the Game tab.
 - Gamepads keep working while the window is in the background; the keyboard and the mouse count only while it has the
@@ -192,6 +192,74 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
   - Late/s: real frames shown with no image interpolated before them, at 120 fps.
   - Temperatures are left out: Windows has no common way to read them without a vendor library or a driver.
   - On Linux and macOS the system figures show a dash.
+
+## Controls
+
+- What each Wii Remote button does, held sideways (always the case in PokéPark 2), from the tutorial texts in
+  `Message/EU_English/Fd0801.msbt`, `Fd0101`, `Fd0102` and `Fd0302`. Their button icons are MSBT tags of group 2:
+  2.0 the + Control Pad (move), 2.1 call or switch a partner, 2.2 turn the view to where Pikachu faces, 2.4 open the
+  PokéPark Pad, 2.5 take a Photo, 2.6 the 1 button (tap: Dash; hold then let go: Thunderbolt), 2.7 the 2 button (jump,
+  talk, pick up, confirm). Shaking the Wii Remote uses Iron Tail, and Shake Sprint during Chase. Checked in game
+  with the keyboard: + opens the Pad and − takes a Photo.
+- Default keys (US positions, moved to the local layout by `local_defaults`): 2 = Space, Enter; 1 = left click,
+  Backspace; shake = right click; A = E; B = C; + = Tab; − = P; HOME = H; tilts = J, L, I, K; swing = wheel, T, G;
+  pointer = Ctrl. The number row is left free: on AZERTY its keys write `&` and `é` and cannot be reached while
+  playing.
+- `upgrade_bindings` runs once at start. It first moves US letters to the local layout (`unlocalized`), then, while
+  `input.bindings_version` is below 2, gives the new default to every action whose stored keys are exactly its old
+  default (US or local letters), unless one of the new keys is held by an action that keeps its keys: one the player
+  changed, or one held back this way, repeated until nothing changes (with E on another action, A keeps Enter, Space
+  and left click, so 1 and 2 keep their old keys too). Then it stores version 2, so a player who later puts an old
+  default back keeps it. `pad.*=auto` becomes the real default.
+- The mouse aims only while the pointer key is held, so it never points by accident. While it is held, a mouse button
+  bound to 1 sends A: on a Wii, A clicks what the Wii Remote points at, and 1 would go back.
+- Gamepad bindings (`padmap`): each action holds combos, a combo being a bit mask of `Physical` buttons that must all
+  be held. Text form: combos separated by `,`, buttons of a combo by `+`, in `Physical` order; `none` is no button;
+  `auto`, an empty value or only unknown names give the default. Defaults depend on the grip:
+
+  | action | sideways | upright |
+  |---|---|---|
+  | a | north, right_shoulder | south, right_shoulder |
+  | b | right_trigger | east, right_trigger |
+  | one | east, west | west |
+  | two | south | north |
+  | plus / minus / home | start / back / guide | same |
+  | shake | left_trigger | same |
+  | swing up / down | left_shoulder+dpad_up / left_shoulder+dpad_down | same |
+  | tilts | left_shoulder+right_stick_left / right / up / down | same |
+  | pointer | left_stick | same |
+
+  A combo that is a strict subset of another combo held at the same time does nothing, so LB + D-pad up swings
+  without also pressing what the D-pad alone is bound to. The defaults are explicit button lists, so a rebinding
+  now works in the sideways grip too (the old code dropped every custom A/B/1/2/+/−/HOME button when sideways).
+  Giving a button to an action in the menu removes it, as a single-button combo, from the other actions.
+- The gamepad pointer exists only while the pointer combo is held, and starts from the centre of the screen.
+- Button names (`control_names`): the gamepad worker records the family of each pad from `SDL_GetGamepadType`
+  (Xbox One/Series, Xbox 360, PS3, PS4, PS5, Switch Pro and Joy-Con; anything else counts as Xbox) and publishes the
+  family of the last pad whose buttons went from released to pressed, or of the first one connected. Without a pad,
+  or before the worker runs (tests), names are Xbox ones. Switch face buttons are named by position: the bottom one
+  is B. D-pad and right stick directions, PlayStation shapes and Switch stick presses are translated labels.
+- Key names: mouse buttons, the wheel and keys that write no character are `key.<name>` labels; the numpad is
+  `key.numpad` and the symbol; other keys show the character this keyboard layout writes (`MapVirtualKeyW`,
+  `MAPVK_VK_TO_CHAR`), so `&` on AZERTY. An empty binding shows an em dash. `settings.ini` keeps the English names.
+- Help lines: a key row shows `help.keys.<action>`; a gamepad row shows the same text, except motions
+  (`pad.motion_help`) and the pointer (`help.pad.pointer`). The row being captured shows how to capture instead
+  (`help.keys`, `help.pad.capture`): the help area holds two lines, too few for both.
+- `launcher/` (not built) still uses the old `padmap` interface and the "Automatic" text; it needs porting when the
+  installer work starts.
+
+## Color settings
+
+- Screen tab: brightness, contrast and gamma from 50 to 150 %, saturation from 0 to 200 %, in steps of 5, 100 % being
+  the original picture (`video.brightness`, `video.contrast`, `video.saturation`, `video.gamma`). "Original colors"
+  (`video.colors_reset`) puts the four back to 100. Values outside the ranges in a hand-edited file are clamped.
+- The present shaders (`adjusted` in `kPresentShaderSource` for Direct3D 11, `kPresentFragment` for OpenGL) apply,
+  in this order: contrast around mid grey, brightness as a factor, saturation toward the Rec. 709 luma, a clamp to
+  0..1, then `pow(c, 1 / gamma)`. Direct3D 11 reads the four values from a 16-byte constant buffer on slot b0, which
+  every game draw batch binds again for its own constants. With smoothing on, the step runs after the 4x4 average.
+- The F1 menu and the F2 overlay are drawn after that pass, so they keep their colors.
+- F9 reads the game frame before presentation, so `color::apply` runs the same steps on the CPU before the PNG is
+  written. The headless frame dumps used by the tests stay unadjusted.
 
 ## Indirect maps left unbound
 
@@ -402,12 +470,45 @@ What the code added for frame interpolation, the timers and the input changes do
 - `options::Rect corner_rect(int client_width, int client_height, int width, int height, ...`: The overlay's place in the window, shrunk when the window is too small for it.
 ### `engine/include/wp/input.h`
 
-- `void follow_keyboard_layout();`: Moves key bindings still at the US letters to this keyboard's layout (Z, Q, S, D on AZERTY); called once at start.
+- `uint32_t keyboard_buttons(const keymap::Bindings& keys, const std::function<bool(int code)>& down, bool aiming);`: The Wii Remote buttons the held keys give; with aiming, a mouse button bound to 1 gives A.
+- `void upgrade_bindings();`: Called once at start: US letters to this layout, old default keys to the new ones (once, `input.bindings_version`), `pad.*=auto` to real buttons (see "Controls").
+
+### `engine/include/wp/color.h`
+
+- `inline constexpr Range kRanges[] = {kBrightness, kContrast, kSaturation, kGamma};`: The color settings and their slider ranges, in percent; the menu builds its sliders from them.
+- `Adjust current();`: The four settings as factors (100 % is 1), clamped to their ranges.
+- `uint32_t apply(uint32_t rgb, const Adjust& adjust);`: The present shaders' color step on one 0x00RRGGBB pixel, for screenshots; the pixel comes back unchanged when every factor is 1.
+
+### `engine/include/wp/control_names.h`
+
+- `std::string pad_button(int physical, padmap::Family family);`: The name printed on that button of that family of controller, in the menu language for translated ones.
+- `std::string pad_binding(const padmap::Binding& binding, padmap::Family family);`: Combos joined by ", ", buttons of a combo by " + ", an em dash when empty.
+- `std::string key(int code, const std::function<uint32_t(int code)>& character);`: A key as the player sees it; character gives the character the layout writes for a key, 0 if none (tests pass their own layout).
+- `std::string key(int code);`: Same, with this computer's layout.
+- `std::string keys(const std::vector<int>& codes);`: Keys joined by ", ", an em dash when empty.
+
+### `engine/include/wp/gamepad.h`
+
+- `int held_physical();`: The first physical input (padmap::Physical) held on any gamepad, or -1: what the menu binds to an action.
+- `padmap::Family shown_family();`: The family whose button names the menu shows, published by the gamepad worker; Xbox when the worker does not run.
+
+### `engine/include/wp/padmap.h`
+
+- `using Combo = uint32_t;`: One bit per `Physical`; a combo is pressed when all its buttons are held.
+- `Binding default_binding(size_t action, bool sideways);`: The default buttons of an action for the game's grip.
+- `Binding parse_binding(const std::string& text, size_t action, bool sideways);`: `none` is empty; `auto`, empty text or only unknown names give the default.
+- `std::string format_binding(const Binding& binding);`: The text form stored in settings.ini; `none` when empty.
+- `std::string without(const std::string& text, int physical, size_t action, bool sideways);`: The binding without the single-button combo of physical, as text.
+- `uint32_t buttons(const Pressed& pressed, const Mapping& mapping);`: A held combo that is a strict subset of another held combo is left out.
 
 ### `engine/include/wp/keymap.h`
 
 - `std::string localize(const std::string& list, const std::function<int(int letter)>& let...`: The letters of a default binding are positions on a US keyboard, given back as the letters at those positions on another layout: W, A, S, D become Z, Q, S, D on AZERTY. letter maps a US letter to the local one.
+- `int local_letter(int us);`: The letter at the US position of us on this computer's layout.
 - `std::string local_defaults(size_t index);`: An action's default binding on this computer's keyboard layout.
+- `const char* previous_defaults(size_t index);`: The US defaults used before 2026-11-11, or nullptr for an action whose default did not change.
+- `std::vector<size_t> outdated(const std::function<std::string(const std::string& key)>& value, const std::function<int(int letter)>& letter);`: The actions still on their old default whose new keys no action keeping its keys holds; no key ends up on two actions that did not share it before.
+- `bool mouse(int code);`: Mouse buttons and the wheel.
 - `std::vector<size_t> unlocalized(const std::function<std::string(const std::string& key)...`: The actions whose letters differ on this layout, when every one of them still holds the US defaults (a file written before the layout was followed); empty once any of them was changed.
 
 ### `engine/src/app/main.cpp`
@@ -529,11 +630,12 @@ What the code added for frame interpolation, the timers and the input changes do
 ### `engine/src/input/keymap.cpp`
 
 - `static constexpr UINT kScanCodes[26] = {0x1E, 0x30, 0x2E, 0x20, 0x12, 0x21, 0x22, 0x23,...`: Scan codes of the letters on a US keyboard, A to Z.
-- `return kActions[index].defaults;`: shortcut: SDL builds keep the US letters; map them through SDL_GetKeyFromScancode when Linux needs it.
+- `return us;`: shortcut: SDL builds keep the US letters; map them through SDL_GetKeyFromScancode when Linux needs it.
 
 ### `engine/src/platform/options.cpp`
 
 - `if (type != Kind::Choice && type != Kind::Slider && !(type == Kind::Toggle && action ==...`: Left and right change values and sliders; an on/off box changes only when it is accepted.
+- `std::string label_key = row.kind == Kind::Pad ? "keys." + key.substr(4) : key;`: A gamepad action reuses the label of the keyboard action with the same name.
 
 ### `tests/engine/runtime_tests.cpp`
 
@@ -543,4 +645,6 @@ What the code added for frame interpolation, the timers and the input changes do
 - `from.clear();`: A menu: everything at one depth with w = 1, shifted by a fixed step.
 - `auto azerty = [](int letter) { return letter == 'W' ? 'Z' : letter == 'Z' ? 'W' : lette...`: AZERTY: the letters at the US positions of W, A, Q and Z.
 - `auto us_file = [](const std::string& key)`: A file holding the US defaults moves to this layout's letters, unless one of them was changed.
+- `std::function<std::string(const std::string&)> file_reader(...)`: Reads a settings file kept in a map, as `outdated` reads settings.ini.
+- `custom["keys.a"] = "Space";`: A player who put Space on A keeps the old 2 key: the new default of 2 would share Space with A.
 - `menu.select(1);`: An on/off box ignores left and right, so a stick drifting sideways never flips it.

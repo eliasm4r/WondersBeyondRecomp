@@ -7,14 +7,18 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <random>
+#include <set>
 #include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "wp/canvas.h"
+#include "wp/color.h"
+#include "wp/control_names.h"
 #include "wp/cpu.h"
 #include "wp/custom_textures.h"
 #include "wp/function_table.h"
@@ -454,28 +458,104 @@ void test_file_attributes() {
 
 void test_pad_mapping() {
     using namespace wp::padmap;
-    Mapping automatic_mapping;
-    automatic_mapping.fill(kAutomatic);
-    Pressed xbox;
-    xbox.held[kSouth] = true;
-    CHECK(buttons(xbox, false, automatic_mapping) == wp::input::kButtonA);
-    Pressed nintendo = xbox;
-    nintendo.nintendo_layout = true;
-    CHECK(buttons(nintendo, false, automatic_mapping) == wp::input::kButtonB);
-    CHECK(buttons(xbox, true, automatic_mapping) == wp::input::kButtonTwo);
-    Mapping custom = automatic_mapping;
-    custom[0] = kWest;
+    CHECK(format_binding(default_binding(3, true)) == "south");
+    CHECK(format_binding(default_binding(2, true)) == "east,west");
+    CHECK(format_binding(default_binding(0, true)) == "north,right_shoulder");
+    CHECK(format_binding(default_binding(8, true)) == "left_shoulder+dpad_up");
+    CHECK(format_binding(default_binding(kPointerAction, true)) == "left_stick");
+    CHECK(format_binding(default_binding(0, false)) == "south,right_shoulder");
+    CHECK(format_binding(default_binding(3, false)) == "north");
+    CHECK(format_binding(parse_binding("auto", 2, true)) == "east,west");
+    CHECK(format_binding(parse_binding(" West , EAST ", 2, true)) == "east,west");
+    CHECK(format_binding(parse_binding("", 0, true)) == "north,right_shoulder");
+    CHECK(format_binding(parse_binding("nimporte", 0, true)) == "north,right_shoulder");
+    CHECK(parse_binding("none", 0, true).empty());
+    CHECK(format_binding({}) == "none");
+    CHECK(format_binding(parse_binding("dpad_up+Left_Shoulder", 8, true)) == "left_shoulder+dpad_up");
+    Mapping mapping;
+    for (size_t i = 0; i < kActionCount; i++) {
+        mapping[i] = default_binding(i, true);
+    }
+    Pressed south;
+    south.held[kSouth] = true;
+    CHECK(buttons(south, mapping) == wp::input::kButtonTwo);
+    mapping[3] = parse_binding("west", 3, true);
     Pressed west;
     west.held[kWest] = true;
-    CHECK(buttons(west, false, custom) == wp::input::kButtonA);
-    CHECK(buttons(xbox, false, custom) == 0);
-    Pressed north;
-    north.held[kNorth] = true;
-    CHECK(buttons(north, false, custom) == wp::input::kButtonTwo);
+    CHECK((buttons(west, mapping) & wp::input::kButtonTwo) != 0);
+    CHECK(buttons(south, mapping) == 0);
+    Pressed chord;
+    chord.held[kLeftShoulder] = true;
+    chord.held[kDpadUp] = true;
+    mapping[3] = parse_binding("dpad_up", 3, true);
+    CHECK(buttons(chord, mapping) == wp::input::kMotionSwingUp);
+    Pressed stick;
+    stick.held[kLeftStick] = true;
+    CHECK(held(default_binding(kPointerAction, true), stick));
+    CHECK(!held(default_binding(kPointerAction, true), south));
+    CHECK(!held({}, south));
+    CHECK(without("north,right_shoulder", kNorth, 0, true) == "right_shoulder");
+    CHECK(without("north", kNorth, 0, true) == "none");
+    CHECK(without("left_shoulder+dpad_up", kDpadUp, 8, true) == "left_shoulder+dpad_up");
     CHECK(physical_from_name("left_trigger") == kLeftTrigger);
-    CHECK(physical_from_name("auto") == kAutomatic);
+    CHECK(physical_from_name("auto") < 0);
     CHECK(std::string(physical_name(kRightShoulder)) == "right_shoulder");
     CHECK(setting_key(6) == "pad.home");
+}
+
+void test_control_names() {
+    using wp::padmap::Family;
+    wp::ui::set_language(wp::ui::Language::English);
+    CHECK(wp::control_names::pad_button(wp::padmap::kSouth, Family::Xbox) == "A");
+    CHECK(wp::control_names::pad_button(wp::padmap::kSouth, Family::Switch) == "B");
+    CHECK(wp::control_names::pad_button(wp::padmap::kSouth, Family::PlayStation4) == "Cross");
+    CHECK(wp::control_names::pad_button(wp::padmap::kBack, Family::PlayStation5) == "Create");
+    CHECK(wp::control_names::pad_button(wp::padmap::kBack, Family::Xbox360) == "Back");
+    CHECK(wp::control_names::pad_button(wp::padmap::kStart, Family::PlayStation3) == "Start");
+    CHECK(wp::control_names::pad_button(wp::padmap::kLeftTrigger, Family::Switch) == "ZL");
+    CHECK(wp::control_names::pad_button(wp::padmap::kRightShoulder, Family::PlayStation4) == "R1");
+    CHECK(wp::control_names::pad_binding(wp::padmap::parse_binding("north,right_shoulder", 0, true), Family::PlayStation4) == "Triangle, R1");
+    CHECK(wp::control_names::pad_binding(wp::padmap::parse_binding("left_shoulder+dpad_up", 8, true), Family::Xbox) == "LB + D-pad up");
+    CHECK(wp::control_names::pad_binding({}, Family::Xbox) == "\xE2\x80\x94");
+    wp::ui::set_language(wp::ui::Language::French);
+    CHECK(wp::control_names::pad_button(wp::padmap::kSouth, Family::PlayStation4) == "Croix");
+    CHECK(wp::control_names::pad_button(wp::padmap::kDpadUp, Family::PlayStation4).find("Croix dir") == 0);
+    for (wp::ui::Language language : {wp::ui::Language::English, wp::ui::Language::French, wp::ui::Language::Spanish, wp::ui::Language::Galician}) {
+        wp::ui::set_language(language);
+        for (Family family : {Family::Xbox, Family::Xbox360, Family::PlayStation3, Family::PlayStation4, Family::PlayStation5, Family::Switch}) {
+            for (int physical = 0; physical < wp::padmap::kPhysicalCount; physical++) {
+                std::string name = wp::control_names::pad_button(physical, family);
+                CHECK(!name.empty() && name.rfind("pad.", 0) != 0);
+            }
+        }
+    }
+    auto azerty = [](int code) -> uint32_t { return code == '1' ? '&' : code == '2' ? 0xE9 : code >= 'A' && code <= 'Z' ? static_cast<uint32_t>(code) : 0; };
+    auto nothing = [](int) -> uint32_t { return 0; };
+    wp::ui::set_language(wp::ui::Language::English);
+    CHECK(wp::control_names::key('1', azerty) == "&");
+    CHECK(wp::control_names::key('2', azerty) == "\xC3\xA9");
+    CHECK(wp::control_names::key('E', azerty) == "E");
+    CHECK(wp::control_names::key('E', nothing) == "E");
+    CHECK(wp::control_names::key(0x01, azerty) == "Left click");
+    CHECK(wp::control_names::key(0x20, azerty) == "Space");
+    CHECK(wp::control_names::key(0x78, azerty) == "F9");
+    CHECK(wp::control_names::key(0x26, azerty) == "Up");
+    CHECK(wp::control_names::key(0x60, azerty) == "Num 0");
+    CHECK(wp::control_names::keys({}) == "—");
+    wp::ui::set_language(wp::ui::Language::French);
+    CHECK(wp::control_names::key(0x01, azerty) == "Clic gauche");
+    CHECK(wp::control_names::key(0x08, azerty) == "Retour arrière");
+    CHECK(wp::control_names::key(0x20, azerty) == "Espace");
+    for (wp::ui::Language language : {wp::ui::Language::English, wp::ui::Language::French, wp::ui::Language::Spanish, wp::ui::Language::Galician}) {
+        wp::ui::set_language(language);
+        for (int code = 0; code < 0x200; code++) {
+            if (!wp::keymap::key_name(code).empty()) {
+                std::string name = wp::control_names::key(code, nothing);
+                CHECK(!name.empty() && name.rfind("key.", 0) != 0);
+            }
+        }
+    }
+    wp::ui::set_language(wp::ui::Language::English);
 }
 
 void test_custom_texture_hash() {
@@ -855,10 +935,17 @@ void test_key_names() {
 void test_key_defaults() {
     using namespace wp::keymap;
     Bindings keys = defaults();
-    CHECK(format(keys.of(Action::A)) == "Enter,Space,MouseLeft");
-    CHECK(format(keys.of(Action::B)) == "Backspace,MouseRight");
-    CHECK(format(keys.of(Action::Plus)) == "Plus,NumPlus");
-    CHECK(format(keys.of(Action::Minus)) == "Minus,NumMinus");
+    CHECK(format(keys.of(Action::A)) == "E");
+    CHECK(format(keys.of(Action::B)) == "C");
+    CHECK(format(keys.of(Action::One)) == "MouseLeft,Backspace");
+    CHECK(format(keys.of(Action::Two)) == "Space,Enter");
+    CHECK(format(keys.of(Action::Plus)) == "Tab");
+    CHECK(format(keys.of(Action::Minus)) == "P");
+    CHECK(format(keys.of(Action::TiltLeft)) == "J");
+    CHECK(format(keys.of(Action::TiltRight)) == "L");
+    CHECK(format(keys.of(Action::TiltUp)) == "I");
+    CHECK(format(keys.of(Action::TiltDown)) == "K");
+    CHECK(!keys.bound(0xA0) && !keys.bound(0x04) && !keys.bound('1') && !keys.bound('2'));
     CHECK(format(keys.of(Action::Home)) == "H");
     CHECK(format(keys.of(Action::Right)) == "Right,D");
     CHECK(std::string(action(Action::Up).defaults) == "Up,W");
@@ -897,7 +984,7 @@ void test_key_defaults() {
     };
     CHECK(!legacy_directions(custom_file));
     CHECK(format(load(custom_file, ignored).of(Action::Up)) == "Up,A");
-    CHECK(format(keys.of(Action::Shake)) == "MouseMiddle,LeftShift");
+    CHECK(format(keys.of(Action::Shake)) == "MouseRight");
     CHECK(format(keys.of(Action::SwingUp)) == "WheelUp,T");
     CHECK(format(keys.of(Action::SwingDown)) == "WheelDown,G");
     CHECK(format(keys.of(Action::Screenshot)) == "F9");
@@ -918,9 +1005,9 @@ void test_key_defaults() {
     CHECK(wp::input::mouse_motion(mouse, true, 110, 40, 220) == wp::input::kMotionSwingUp);
     CHECK(wp::input::mouse_motion(mouse, true, 40, 40, 230) == wp::input::kMotionShake);
     CHECK(wp::input::mouse_motion(mouse, false, 40, 40, 240) == 0);
-    CHECK(keys.has(Action::A, 0x0D));
+    CHECK(keys.has(Action::Two, 0x0D));
     CHECK(!keys.has(Action::B, 0x0D));
-    CHECK(keys.bound('Q'));
+    CHECK(keys.bound('E'));
     CHECK(!keys.bound(0x7A));
     CHECK(!keys.bound(0x7B));
     for (size_t i = 0; i < kActionCount; i++) {
@@ -949,6 +1036,83 @@ void test_key_defaults() {
     CHECK(loaded.of(Action::B).empty());
     CHECK(format(loaded.of(Action::Home)) == "H");
     CHECK(invalid.size() == 2 && invalid[0] == "keys.a: Wrong" && invalid[1] == "keys.b: F12");
+}
+
+std::function<std::string(const std::string&)> file_reader(const std::map<std::string, std::string>& file) {
+    return [&file](const std::string& key) {
+        auto it = file.find(key);
+        return it != file.end() ? it->second : std::string();
+    };
+}
+
+void test_bindings_upgrade() {
+    using namespace wp::keymap;
+    auto azerty = [](int letter) { return letter == 'W' ? 'Z' : letter == 'Z' ? 'W' : letter == 'A' ? 'Q' : letter == 'Q' ? 'A' : letter; };
+    std::map<std::string, std::string> old_file = {
+        {"keys.a", "Enter,Space,MouseLeft"}, {"keys.b", "Backspace,MouseRight"}, {"keys.one", "1"},       {"keys.two", "2"},
+        {"keys.plus", "Plus,NumPlus"},      {"keys.minus", "Minus,NumMinus"},    {"keys.home", "H"},      {"keys.up", "Up,Z"},
+        {"keys.down", "Down,S"},            {"keys.left", "Left,Q"},             {"keys.right", "Right,D"}, {"keys.shake", "MouseMiddle,LeftShift"},
+        {"keys.swing_up", "WheelUp,T"},     {"keys.swing_down", "WheelDown,G"},  {"keys.tilt_left", "A"}, {"keys.tilt_right", "E"},
+        {"keys.tilt_up", "R"},              {"keys.tilt_down", "F"},             {"keys.screenshot", "F9"}, {"keys.mouse_motion", "W"},
+        {"keys.pointer", "Ctrl"},           {"keys.overlay", "F2"},
+    };
+    CHECK(outdated(file_reader(old_file), azerty).size() == 11);
+    std::map<std::string, std::string> us_file = old_file;
+    us_file["keys.tilt_left"] = "Q";
+    CHECK(outdated(file_reader(us_file), azerty).size() == 11);
+    std::map<std::string, std::string> custom = old_file;
+    custom["keys.a"] = "Space";
+    std::vector<size_t> pending = outdated(file_reader(custom), azerty);
+    CHECK(pending.size() == 9);
+    CHECK(std::find(pending.begin(), pending.end(), static_cast<size_t>(Action::A)) == pending.end());
+    CHECK(std::find(pending.begin(), pending.end(), static_cast<size_t>(Action::Two)) == pending.end());
+    std::map<std::string, std::string> holds_e = old_file;
+    holds_e["keys.mouse_motion"] = "E";
+    std::vector<size_t> kept_a = outdated(file_reader(holds_e), azerty);
+    CHECK(kept_a.size() == 8);
+    for (Action held_by_a : {Action::A, Action::One, Action::Two}) {
+        CHECK(std::find(kept_a.begin(), kept_a.end(), static_cast<size_t>(held_by_a)) == kept_a.end());
+    }
+    CHECK(std::find(kept_a.begin(), kept_a.end(), static_cast<size_t>(Action::TiltRight)) != kept_a.end());
+    std::map<std::string, std::string> fresh;
+    for (size_t i = 0; i < kActionCount; i++) {
+        fresh[setting_key(i)] = localize(action(i).defaults, azerty);
+    }
+    CHECK(outdated(file_reader(fresh), azerty).empty());
+    CHECK(previous_defaults(static_cast<size_t>(Action::Home)) == nullptr);
+    CHECK(std::string(previous_defaults(static_cast<size_t>(Action::One))) == "1");
+
+    const char* path = "runtime_tests_bindings.ini";
+    {
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        file << "[keys]\na=Enter,Space,MouseLeft\nb=Backspace,MouseRight\none=1\ntwo=2\nplus=Plus,NumPlus\nminus=Minus,NumMinus\n"
+                "shake=MouseMiddle,LeftShift\ntilt_left=Q\ntilt_right=E\ntilt_up=R\ntilt_down=F\n[pad]\na=auto\none= Auto \n";
+    }
+    wp::settings::load(path);
+    wp::input::upgrade_bindings();
+    CHECK(wp::settings::text("keys.one", nullptr) == "MouseLeft,Backspace");
+    CHECK(wp::settings::text("keys.a", nullptr) == "E");
+    CHECK(wp::settings::text("keys.shake", nullptr) == "MouseRight");
+    CHECK(wp::settings::text("pad.a", nullptr) == "south,right_shoulder");
+    CHECK(wp::settings::text("pad.one", nullptr) == "west");
+    CHECK(wp::settings::number("input.bindings_version", nullptr) == 2);
+    wp::settings::store("keys.one", "1");
+    wp::input::upgrade_bindings();
+    CHECK(wp::settings::text("keys.one", nullptr) == "1");
+    std::remove(path);
+    wp::settings::load("");
+}
+
+void test_keyboard_buttons() {
+    wp::keymap::Bindings keys = wp::keymap::defaults();
+    auto only = [](int code) { return [code](int c) { return c == code; }; };
+    CHECK(wp::input::keyboard_buttons(keys, only(0x01), false) == wp::input::kButtonOne);
+    CHECK(wp::input::keyboard_buttons(keys, only(0x01), true) == wp::input::kButtonA);
+    CHECK(wp::input::keyboard_buttons(keys, only(0x08), true) == wp::input::kButtonOne);
+    CHECK(wp::input::keyboard_buttons(keys, only(0x20), false) == wp::input::kButtonTwo);
+    CHECK(wp::input::keyboard_buttons(keys, only(0x02), false) == wp::input::kMotionShake);
+    CHECK(wp::input::keyboard_buttons(keys, only(0xA0), false) == 0);
+    CHECK(wp::keymap::mouse(0x01) && wp::keymap::mouse(wp::keymap::kWheelUp) && !wp::keymap::mouse(0x20));
 }
 
 void test_settings_file_keys() {
@@ -1043,34 +1207,35 @@ void test_live_settings() {
 }
 
 void test_pad_motion() {
-    using wp::padmap::Physical;
-    wp::padmap::Mapping automatic;
-    automatic.fill(wp::padmap::kAutomatic);
-    wp::padmap::Pressed pressed;
-    CHECK(wp::padmap::buttons(pressed, false, automatic) == 0);
-    pressed.held[wp::padmap::kLeftTrigger] = true;
-    CHECK(wp::padmap::buttons(pressed, false, automatic) == wp::input::kMotionShake);
-    CHECK(wp::padmap::buttons(pressed, true, automatic) == wp::input::kMotionShake);
-    pressed = wp::padmap::Pressed{};
-    pressed.held[wp::padmap::kRightStickUp] = true;
-    CHECK(wp::padmap::buttons(pressed, false, automatic) == 0);
-    pressed.held[wp::padmap::kLeftShoulder] = true;
-    CHECK(wp::padmap::buttons(pressed, false, automatic) == wp::input::kMotionTiltUp);
-    pressed.held[wp::padmap::kRightStickUp] = false;
-    pressed.held[wp::padmap::kRightStickLeft] = true;
-    pressed.held[wp::padmap::kDpadDown] = true;
-    CHECK(wp::padmap::buttons(pressed, false, automatic) == (wp::input::kMotionTiltLeft | wp::input::kMotionSwingDown));
-    wp::padmap::Mapping custom = automatic;
-    custom[7] = wp::padmap::kNorth;
-    pressed = wp::padmap::Pressed{};
-    pressed.held[wp::padmap::kNorth] = true;
-    CHECK(wp::padmap::buttons(pressed, false, custom) == wp::input::kMotionShake);
-    pressed = wp::padmap::Pressed{};
-    pressed.held[wp::padmap::kLeftTrigger] = true;
-    CHECK(wp::padmap::buttons(pressed, false, custom) == 0);
-    custom = automatic;
-    custom[0] = wp::padmap::kLeftTrigger;
-    CHECK(wp::padmap::buttons(pressed, false, custom) == wp::input::kButtonA);
+    using namespace wp::padmap;
+    Mapping upright;
+    for (size_t i = 0; i < kActionCount; i++) {
+        upright[i] = default_binding(i, false);
+    }
+    Pressed pressed;
+    CHECK(buttons(pressed, upright) == 0);
+    pressed.held[kLeftTrigger] = true;
+    CHECK(buttons(pressed, upright) == wp::input::kMotionShake);
+    pressed = Pressed{};
+    pressed.held[kRightStickUp] = true;
+    CHECK(buttons(pressed, upright) == 0);
+    pressed.held[kLeftShoulder] = true;
+    CHECK(buttons(pressed, upright) == wp::input::kMotionTiltUp);
+    pressed.held[kRightStickUp] = false;
+    pressed.held[kRightStickLeft] = true;
+    pressed.held[kDpadDown] = true;
+    CHECK(buttons(pressed, upright) == (wp::input::kMotionTiltLeft | wp::input::kMotionSwingDown));
+    Mapping custom = upright;
+    custom[7] = parse_binding("north", 7, false);
+    pressed = Pressed{};
+    pressed.held[kNorth] = true;
+    CHECK(buttons(pressed, custom) == (wp::input::kMotionShake | wp::input::kButtonTwo));
+    pressed = Pressed{};
+    pressed.held[kLeftTrigger] = true;
+    CHECK(buttons(pressed, custom) == 0);
+    custom = upright;
+    custom[0] = parse_binding("left_trigger", 0, false);
+    CHECK(buttons(pressed, custom) == (wp::input::kButtonA | wp::input::kMotionShake));
     CHECK(wp::padmap::device_key("Xbox 360 Controller", 1) == "Xbox 360 Controller#2");
     std::string players = wp::padmap::assign("", "Pad A#1", 3);
     CHECK(players == "Pad A#1=3" && wp::padmap::assigned(players, "Pad A#1") == 3 && wp::padmap::assigned(players, "Pad A#2") == 0);
@@ -1108,6 +1273,40 @@ void test_pad_motion() {
     CHECK(wp::settings::text("input.ignored_gamepads", nullptr).empty());
 }
 
+void test_color() {
+    using wp::color::Adjust;
+    using wp::color::apply;
+    Adjust original;
+    CHECK(wp::color::neutral(original));
+    CHECK(apply(0x102030, original) == 0x102030);
+    CHECK(apply(0xFF0000, Adjust{1.0f, 1.0f, 0.0f, 1.0f}) == 0x363636);
+    CHECK(apply(0x804020, Adjust{1.0f, 1.0f, 2.0f, 1.0f}) == 0xB53500);
+    CHECK(apply(0x404040, Adjust{1.5f, 1.0f, 1.0f, 1.0f}) == 0x606060);
+    CHECK(apply(0xC0C0C0, Adjust{1.5f, 1.0f, 1.0f, 1.0f}) == 0xFFFFFF);
+    CHECK(apply(0x404040, Adjust{1.0f, 1.5f, 1.0f, 1.0f}) == 0x202020);
+    CHECK(apply(0xC0C0C0, Adjust{1.0f, 1.5f, 1.0f, 1.0f}) == 0xE0E0E0);
+    CHECK(apply(0x404040, Adjust{1.0f, 1.0f, 1.0f, 1.5f}) == 0x656565);
+    CHECK(apply(0x808080, Adjust{1.0f, 1.0f, 1.0f, 0.5f}) == 0x404040);
+    CHECK(apply(0x000000, Adjust{1.0f, 1.0f, 1.0f, 1.5f}) == 0x000000);
+    CHECK(apply(0xFFFFFF, Adjust{1.0f, 1.0f, 1.0f, 1.5f}) == 0xFFFFFF);
+    CHECK(!wp::color::neutral(Adjust{1.0f, 1.0f, 1.0f, 1.5f}));
+    std::vector<uint32_t> pixels = {0xFF0000, 0x00FF00};
+    wp::color::apply(pixels, Adjust{1.0f, 1.0f, 0.0f, 1.0f});
+    CHECK(pixels[0] == 0x363636 && pixels[1] == 0xB6B6B6);
+
+    wp::settings::load("");
+    CHECK(wp::color::neutral(wp::color::current()));
+    wp::settings::store("video.brightness", "150");
+    wp::settings::store("video.contrast", "10");
+    wp::settings::store("video.saturation", "500");
+    wp::settings::store("video.gamma", "75");
+    Adjust stored = wp::color::current();
+    CHECK(stored.brightness == 1.5f && stored.contrast == 0.5f && stored.saturation == 2.0f && stored.gamma == 0.75f);
+    wp::settings::store("video.saturation", "0");
+    CHECK(wp::color::current().saturation == 0.0f);
+    wp::settings::load("");
+}
+
 void test_options_menu() {
     wp::settings::load("");
     for (wp::ui::Language language : {wp::ui::Language::English, wp::ui::Language::French, wp::ui::Language::Spanish, wp::ui::Language::Galician}) {
@@ -1131,12 +1330,35 @@ void test_options_menu() {
             }
         }
     }
+    for (wp::ui::Language language : {wp::ui::Language::English, wp::ui::Language::French, wp::ui::Language::Spanish, wp::ui::Language::Galician}) {
+        wp::ui::set_language(language);
+        wp::options::Menu controls;
+        controls.set_open(true);
+        controls.select_tab(3);
+        for (int device = 0; device < 2; device++) {
+            if (device == 1) {
+                controls.handle(wp::options::Action::Next);
+            }
+            std::set<std::string> helps;
+            for (const wp::options::Row& row : controls.rows()) {
+                if (row.kind == wp::options::Kind::Key || row.kind == wp::options::Kind::Pad) {
+                    helps.insert(row.help);
+                    CHECK(row.help.find("L1/LB") == std::string::npos);
+                }
+            }
+            CHECK(helps.size() >= (device == 0 ? 12u : 9u));
+        }
+    }
+    wp::ui::set_language(wp::ui::Language::English);
     CHECK(wp::options::kTabCount == 6);
     CHECK(std::strcmp(wp::ui::label("tab.screen", wp::ui::Language::French), "Écran") == 0);
     CHECK(std::strcmp(wp::ui::label("tab.advanced", wp::ui::Language::English), "Advanced") == 0);
     CHECK(std::strcmp(wp::ui::label("tab.controls", wp::ui::Language::Galician), "Controls") != 0);
     CHECK(std::strcmp(wp::ui::label("help.video.scale", wp::ui::Language::Spanish), wp::ui::label("help.video.scale", wp::ui::Language::English)) != 0);
-    CHECK((wp::options::tab_keys(0) == std::vector<std::string>{"video.scale", "video.fullscreen", "system.widescreen", "video.vsync", "video.smooth", "video.anisotropy"}));
+    CHECK((wp::options::tab_keys(0) == std::vector<std::string>{"video.scale", "video.fullscreen", "system.widescreen", "video.vsync", "video.smooth", "video.anisotropy",
+                                                                 "video.brightness", "video.contrast", "video.saturation", "video.gamma", "video.colors_reset"}));
+    CHECK(std::strcmp(wp::ui::label("video.colors_reset", wp::ui::Language::French), "Couleurs d'origine") == 0);
+    CHECK(std::strcmp(wp::ui::label("video.brightness", wp::ui::Language::French), "Luminosité") == 0);
     CHECK((wp::options::tab_keys(1) == std::vector<std::string>{"video.fps", "saves.backups", "system.discord", "stats.play_time"}));
     CHECK((wp::options::tab_keys(2) == std::vector<std::string>{"audio.volume", "audio.mute", "audio.wiimote_speaker"}));
     CHECK((wp::options::tab_keys(4) == std::vector<std::string>{"system.interface_language", "system.language"}));
@@ -1165,8 +1387,16 @@ void test_options_menu() {
     CHECK(wp::options::shown_value("video.anisotropy", "1") == "Off");
     CHECK(wp::options::shown_value("video.anisotropy", "8") == "8x");
     CHECK(wp::options::shown_value("keys.up", "Up,W") == "Up, W");
-    CHECK(wp::options::shown_value("pad.a", "auto") == "Automatic");
-    CHECK(wp::options::shown_value("pad.a", "south") == "A / Cross");
+    CHECK(wp::options::shown_value("pad.a", "auto") == "A, RB");
+    CHECK(wp::options::shown_value("pad.a", "south") == "A");
+    for (wp::ui::Language language : {wp::ui::Language::English, wp::ui::Language::French, wp::ui::Language::Spanish, wp::ui::Language::Galician}) {
+        wp::ui::set_language(language);
+        for (size_t i = 0; i < wp::padmap::kActionCount; i++) {
+            std::string shown = wp::options::shown_value(wp::padmap::setting_key(i), "auto");
+            CHECK(shown.find("Automati") == std::string::npos && shown.find("utom") == std::string::npos);
+        }
+    }
+    wp::ui::set_language(wp::ui::Language::English);
     CHECK(wp::options::kind("audio.volume") == wp::options::Kind::Slider);
     CHECK(wp::options::kind("keys.a") == wp::options::Kind::Key);
     CHECK(wp::options::kind("pad.a") == wp::options::Kind::Pad);
@@ -1209,14 +1439,17 @@ void test_options_menu() {
     CHECK(menu.selection() == keys - 1 && menu.scroll() == keys - wp::options::kVisibleRows);
     menu.select(2);
     CHECK(menu.rows()[2].key == "keys.a");
+    CHECK(menu.rows()[2].help == "Calls a partner Pokémon or switches to it.");
     CHECK(menu.handle(wp::options::Action::Accept).empty());
     CHECK(menu.capturing() && menu.capture_kind() == wp::options::Kind::Key);
+    CHECK(menu.rows()[2].help == "Press the new key or mouse button; Esc cancels.");
+    CHECK(menu.rows()[3].help != menu.rows()[2].help);
     CHECK(menu.capture("K") == "keys.a");
     CHECK(!menu.capturing());
     CHECK(wp::settings::text("keys.a", nullptr) == "K");
     menu.select(keys - 1);
     CHECK(menu.handle(wp::options::Action::Accept) == "keys.reset");
-    CHECK(wp::settings::text("keys.a", nullptr) == "Enter,Space,MouseLeft");
+    CHECK(wp::settings::text("keys.a", nullptr) == "E");
     menu.select(2);
     CHECK(menu.handle(wp::options::Action::Accept).empty());
     CHECK(menu.handle(wp::options::Action::Down).empty());
@@ -1228,15 +1461,44 @@ void test_options_menu() {
     CHECK(menu.selection() == 0 && menu.scroll() == 0);
     menu.select(rows.size() - 2);
     CHECK(menu.handle(wp::options::Action::Accept).empty() && menu.capture_kind() == wp::options::Kind::Pad);
+    CHECK(menu.rows()[menu.selection()].help == "Press the new button on the gamepad.");
     CHECK(menu.capture("south") == rows[rows.size() - 2].key);
+    CHECK(wp::settings::text("pad.pointer", nullptr) == "south");
+    CHECK(wp::settings::text("pad.a", nullptr) == "right_shoulder");
+    for (size_t i = 0; i < rows.size(); i++) {
+        if (rows[i].key == "pad.shake") {
+            menu.select(i);
+        }
+    }
+    CHECK(menu.handle(wp::options::Action::Accept).empty());
+    CHECK(menu.capture("south") == "pad.shake");
+    CHECK(wp::settings::text("pad.shake", nullptr) == "south");
+    CHECK(wp::settings::text("pad.pointer", nullptr) == "none");
     menu.select(rows.size() - 1);
     CHECK(menu.handle(wp::options::Action::Accept) == "pad.reset");
+    CHECK(wp::settings::text("pad.a", nullptr) == "south,right_shoulder");
+    CHECK(wp::settings::text("pad.pointer", nullptr) == "left_stick");
     menu.select(0);
     CHECK(menu.handle(wp::options::Action::Accept).empty() && menu.device() == wp::options::Device::Keyboard);
     menu.handle(wp::options::Action::Previous);
     CHECK(menu.device() == wp::options::Device::Gamepad);
     menu.set_open(true);
     CHECK(menu.device() == wp::options::Device::Keyboard);
+
+    menu.select_tab(0);
+    std::vector<wp::options::Row> screen = menu.rows();
+    CHECK(screen.size() == 11 && screen[6].key == "video.brightness" && screen[10].key == "video.colors_reset");
+    for (size_t i = 6; i < 10; i++) {
+        CHECK(screen[i].kind == wp::options::Kind::Slider && screen[i].value == "100%" && screen[i].live && screen[i].fraction == 0.5);
+    }
+    CHECK(screen[10].kind == wp::options::Kind::Button && screen[10].live);
+    menu.select(6);
+    CHECK(menu.handle(wp::options::Action::Next) == "video.brightness");
+    CHECK(wp::settings::number("video.brightness", nullptr) == 105);
+    wp::settings::store("video.saturation", "0");
+    menu.select(10);
+    CHECK(menu.handle(wp::options::Action::Accept) == "video.colors_reset");
+    CHECK(wp::settings::number("video.brightness", nullptr) == 100 && wp::settings::number("video.saturation", nullptr) == 100);
 
     menu.select_tab(2);
     CHECK(menu.rows()[0].key == "audio.volume");
@@ -1827,6 +2089,7 @@ int main() {
     test_read_directory_forms();
     test_file_attributes();
     test_pad_mapping();
+    test_control_names();
     test_custom_texture_hash();
     test_custom_texture_names();
     test_custom_texture_index();
@@ -1836,9 +2099,12 @@ int main() {
     test_fit_motion();
     test_key_names();
     test_key_defaults();
+    test_bindings_upgrade();
+    test_keyboard_buttons();
     test_settings_file_keys();
     test_screenshot_names();
     test_live_settings();
+    test_color();
     test_options_menu();
     test_pad_motion();
     test_options_repeat();

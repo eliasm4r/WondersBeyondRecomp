@@ -30,6 +30,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "wp/color.h"
 #include "wp/custom_textures.h"
 #include "wp/game.h"
 #include "wp/gx_state.h"
@@ -53,6 +54,17 @@ const char* kPresentShaderSource = R"HLSL(
 Texture2D frame : register(t0);
 SamplerState frame_sampler : register(s0);
 
+cbuffer PresentConstants : register(b0) {
+    float4 adjust;
+};
+
+float3 adjusted(float3 c) {
+    c = ((c - 0.5) * adjust.y + 0.5) * adjust.x;
+    float luma = dot(c, float3(0.2126, 0.7152, 0.0722));
+    c = saturate(luma + (c - luma) * adjust.z);
+    return pow(c, adjust.w);
+}
+
 struct Output {
     float4 position : SV_Position;
     float2 uv : TEXCOORD0;
@@ -67,7 +79,7 @@ Output vertex_main(uint id : SV_VertexID) {
 }
 
 float4 pixel_main(Output input) : SV_Target {
-    return float4(frame.Sample(frame_sampler, input.uv).rgb, 1);
+    return float4(adjusted(frame.Sample(frame_sampler, input.uv).rgb), 1);
 }
 
 // Averages the whole footprint of a screen pixel, so an internal resolution above the window's becomes anti-aliasing.
@@ -80,7 +92,7 @@ float4 pixel_smooth(Output input) : SV_Target {
             sum += frame.SampleLevel(frame_sampler, input.uv + dx * ((x + 0.5) / 4 - 0.5) + dy * ((y + 0.5) / 4 - 0.5), 0).rgb;
         }
     }
-    return float4(sum / 16, 1);
+    return float4(adjusted(sum / 16), 1);
 }
 )HLSL";
 
@@ -752,6 +764,7 @@ struct Device {
     ID3D11SamplerState* present_sampler = nullptr;
     ID3D11PixelShader* copy_pixel = nullptr;
     ID3D11Buffer* copy_constants = nullptr;
+    ID3D11Buffer* present_constants = nullptr;
     ID3D11PixelShader* clear_pixel = nullptr;
     ID3D11Buffer* clear_constants = nullptr;
     ID3D11BlendState* clear_blend[16] = {};
@@ -3043,6 +3056,11 @@ bool create_present_pipeline() {
               SUCCEEDED(g_device.device->CreatePixelShader(pixel_code->GetBufferPointer(), pixel_code->GetBufferSize(), nullptr, &g_device.present_pixel));
     release(vertex_code);
     release(pixel_code);
+    D3D11_BUFFER_DESC adjust{};
+    adjust.ByteWidth = 16;
+    adjust.Usage = D3D11_USAGE_DEFAULT;
+    adjust.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    ok = ok && SUCCEEDED(g_device.device->CreateBuffer(&adjust, nullptr, &g_device.present_constants));
     ID3DBlob* smooth_code = nullptr;
     if (ok && compile(kPresentShaderSource, "pixel_smooth", "ps_5_0", &smooth_code)) {
         g_device.device->CreatePixelShader(smooth_code->GetBufferPointer(), smooth_code->GetBufferSize(), nullptr, &g_device.present_smooth);
@@ -3321,6 +3339,10 @@ bool present_view(HWND window, double aspect, ID3D11ShaderResourceView* view) {
     context->VSSetShader(g_device.present_vertex, nullptr, 0);
     static const settings::LiveFlag smooth("video.smooth", "WP_SMOOTH");
     context->PSSetShader(smooth() && g_device.present_smooth ? g_device.present_smooth : g_device.present_pixel, nullptr, 0);
+    color::Adjust colors = color::current();
+    float adjust[4] = {colors.brightness, colors.contrast, colors.saturation, 1.0f / colors.gamma};
+    context->UpdateSubresource(g_device.present_constants, 0, nullptr, adjust, 0, 0);
+    context->PSSetConstantBuffers(0, 1, &g_device.present_constants);
     context->PSSetShaderResources(0, 1, &view);
     context->PSSetSamplers(0, 1, &g_device.present_sampler);
     context->Draw(3, 0);

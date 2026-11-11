@@ -42,6 +42,8 @@ add_library(wp_engine STATIC
     src/platform/perf_overlay.cpp
     src/platform/system_stats.cpp
     src/platform/ui_text.cpp
+    src/platform/color.cpp
+    src/platform/control_names.cpp
     src/platform/options.cpp
     src/platform/options_window.cpp
     src/platform/discord.cpp

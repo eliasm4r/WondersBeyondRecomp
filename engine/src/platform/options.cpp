@@ -8,6 +8,10 @@
 #include <mutex>
 #include <utility>
 
+#include "wp/color.h"
+#include "wp/control_names.h"
+#include "wp/game.h"
+#include "wp/gamepad.h"
 #include "wp/keymap.h"
 #include "wp/padmap.h"
 #include "wp/play_time.h"
@@ -24,6 +28,7 @@ constexpr const char* kLiveKeys[] = {
     "input.stick_deadzone", "input.real_wiimote_mouse", "input.wake_on_mouse", "input.hide_cursor", "system.options_menu",
     "audio.mute",           "audio.volume",         "audio.wiimote_speaker", "saves.backups",      "system.interface_language", "system.discord",
     "overlay.show",         "overlay.level",        "overlay.corner",        "controls.device",    "stats.play_time",
+    "video.brightness",     "video.contrast",       "video.saturation",      "video.gamma",        "video.colors_reset",
 };
 
 struct Language {
@@ -47,7 +52,12 @@ struct Slider {
     int step;
 };
 
-constexpr Slider kSliders[] = {{"audio.volume", 0, 100, 5}, {"input.stick_deadzone", 10, 90, 5}};
+constexpr Slider kSliders[] = {{"audio.volume", 0, 100, 5},
+                               {"input.stick_deadzone", 10, 90, 5},
+                               {color::kBrightness.key, color::kBrightness.low, color::kBrightness.high, 5},
+                               {color::kContrast.key, color::kContrast.low, color::kContrast.high, 5},
+                               {color::kSaturation.key, color::kSaturation.low, color::kSaturation.high, 5},
+                               {color::kGamma.key, color::kGamma.low, color::kGamma.high, 5}};
 
 constexpr const char* kTabLabels[kTabCount] = {"tab.screen", "tab.game", "tab.sound", "tab.controls", "tab.language", "tab.advanced"};
 
@@ -57,13 +67,7 @@ constexpr const char* kDeviceNames[] = {"keyboard", "gamepad"};
 
 constexpr const char* kResetKeys = "keys.reset";
 constexpr const char* kResetPad = "pad.reset";
-
-// Both families of controller are named, since the menu cannot tell which one is plugged in.
-constexpr const char* kPhysicalLabels[padmap::kPhysicalCount] = {
-    "A / Cross",   "B / Circle", "X / Square", "Y / Triangle",   "Back / Select",    "Guide",            "Start",
-    "L3",          "R3",         "LB / L1",    "RB / R1",        "D-pad Up",         "D-pad Down",       "D-pad Left",
-    "D-pad Right", "LT / L2",    "RT / R2",    "Right stick Up", "Right stick Down", "Right stick Left", "Right stick Right",
-};
+constexpr const char* kResetColors = "video.colors_reset";
 
 const Slider* slider_of(const std::string& key) {
     for (const Slider& slider : kSliders) {
@@ -76,6 +80,15 @@ const Slider* slider_of(const std::string& key) {
 
 bool starts_with(const std::string& text, const char* prefix) {
     return text.compare(0, std::strlen(prefix), prefix) == 0;
+}
+
+size_t pad_action(const std::string& key) {
+    for (size_t i = 0; i < padmap::kActionCount; i++) {
+        if (key == padmap::setting_key(i)) {
+            return i;
+        }
+    }
+    return padmap::kActionCount;
 }
 
 bool known(const std::string& key) {
@@ -101,7 +114,8 @@ const char* tab_label(size_t tab) {
 std::vector<std::string> tab_keys(size_t tab, Device device) {
     switch (tab) {
     case 0:
-        return {"video.scale", "video.fullscreen", "system.widescreen", "video.vsync", "video.smooth", "video.anisotropy"};
+        return {"video.scale",      "video.fullscreen", "system.widescreen", "video.vsync", "video.smooth", "video.anisotropy",
+                color::kBrightness.key, color::kContrast.key, color::kSaturation.key, color::kGamma.key, kResetColors};
     case 1:
         return {"video.fps", "saves.backups", "system.discord", kPlayTime};
     case 2:
@@ -132,7 +146,7 @@ std::vector<std::string> tab_keys(size_t tab, Device device) {
 }
 
 Kind kind(const std::string& key) {
-    if (key == kResetKeys || key == kResetPad) {
+    if (key == kResetKeys || key == kResetPad || key == kResetColors) {
         return Kind::Button;
     }
     if (key == kPlayTime) {
@@ -259,11 +273,11 @@ std::string shown_value(const std::string& key, const std::string& value) {
         return value == "0" ? text.menu_off : value;
     }
     if (starts_with(key, "keys.")) {
-        return keymap::format(keymap::parse(value).codes, ", ");
+        return control_names::keys(keymap::parse(value).codes);
     }
     if (starts_with(key, "pad.")) {
-        int physical = padmap::physical_from_name(value);
-        return physical == padmap::kAutomatic ? ui::label("menu.auto") : kPhysicalLabels[physical];
+        padmap::Binding binding = padmap::parse_binding(value, pad_action(key), game::description().sideways_grip);
+        return control_names::pad_binding(binding, gamepad::shown_family());
     }
     return enabled_text(value) ? text.menu_on : text.menu_off;
 }
@@ -361,9 +375,15 @@ std::vector<Row> Menu::rows() const {
         row.key = key;
         row.kind = kind(key);
         row.live = live(key);
-        std::string help_key = row.kind == Kind::Key ? "help.keys" : row.kind == Kind::Pad ? "pad.motion_help" : "help." + key;
+        std::string help_key = "help." + key;
+        if (capturing_ && result.size() == selection_ && (row.kind == Kind::Key || row.kind == Kind::Pad)) {
+            help_key = row.kind == Kind::Key ? "help.keys" : "help.pad.capture";
+        } else if (row.kind == Kind::Pad) {
+            std::string name = key.substr(4);
+            bool motion = name == "shake" || starts_with(name, "swing_") || starts_with(name, "tilt_");
+            help_key = motion ? "pad.motion_help" : name == "pointer" ? "help.pad.pointer" : "help.keys." + name;
+        }
         row.help = ui::label(help_key.c_str());
-        // A gamepad action reuses the label of the keyboard action with the same name.
         std::string label_key = row.kind == Kind::Pad ? "keys." + key.substr(4) : key;
         row.label = ui::label(label_key.c_str());
         if (key == kDevice) {
@@ -389,8 +409,24 @@ std::string Menu::capture(const std::string& name) {
         return "";
     }
     capturing_ = false;
-    settings::store(keys[selection_].c_str(), name);
-    return keys[selection_];
+    const std::string& key = keys[selection_];
+    settings::store(key.c_str(), name);
+    int physical = padmap::physical_from_name(name);
+    if (starts_with(key, "pad.") && physical >= 0) {
+        bool sideways = game::description().sideways_grip;
+        for (size_t i = 0; i < padmap::kActionCount; i++) {
+            std::string other = padmap::setting_key(i);
+            if (other == key) {
+                continue;
+            }
+            std::string value = settings::text(other.c_str(), nullptr);
+            std::string kept = padmap::without(value, physical, i, sideways);
+            if (kept != padmap::format_binding(padmap::parse_binding(value, i, sideways))) {
+                settings::store(other.c_str(), kept);
+            }
+        }
+    }
+    return key;
 }
 
 std::string Menu::set_toggle(size_t row, bool on) {
@@ -461,13 +497,17 @@ std::string Menu::handle(Action action) {
             return "";
         }
         if (type == Kind::Button) {
-            if (key == kResetKeys) {
+            if (key == kResetColors) {
+                for (const color::Range& range : color::kRanges) {
+                    settings::store(range.key, "100");
+                }
+            } else if (key == kResetKeys) {
                 for (size_t i = 0; i < keymap::kActionCount; i++) {
                     settings::store(keymap::setting_key(i).c_str(), keymap::local_defaults(i));
                 }
             } else {
                 for (size_t i = 0; i < padmap::kActionCount; i++) {
-                    settings::store(padmap::setting_key(i).c_str(), "auto");
+                    settings::store(padmap::setting_key(i).c_str(), padmap::format_binding(padmap::default_binding(i, game::description().sideways_grip)));
                 }
             }
             return key;

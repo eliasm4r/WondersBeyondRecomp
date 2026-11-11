@@ -33,27 +33,32 @@ enum Physical {
     kPhysicalCount
 };
 
-constexpr int kAutomatic = -1;
+enum class Family { Xbox, Xbox360, PlayStation3, PlayStation4, PlayStation5, Switch };
+
 constexpr size_t kButtonActionCount = 7;
 constexpr size_t kActionCount = 15;
 constexpr size_t kPointerAction = 14;
 
 struct Pressed {
     std::array<bool, kPhysicalCount> held{};
-    bool nintendo_layout = false;
 };
 
-using Mapping = std::array<int, kActionCount>;
+using Combo = uint32_t;
+using Binding = std::vector<Combo>;
+using Mapping = std::array<Binding, kActionCount>;
 
 const char* action_name(size_t action);
 uint32_t action_button(size_t action);
 std::string setting_key(size_t action);
 const char* physical_name(int physical);
 int physical_from_name(const std::string& name);
+Binding default_binding(size_t action, bool sideways);
+Binding parse_binding(const std::string& text, size_t action, bool sideways);
+std::string format_binding(const Binding& binding);
+std::string without(const std::string& text, int physical, size_t action, bool sideways);
 Mapping current_mapping();
-// The input held to aim with the gyroscope or the right stick: the left stick click unless the player chose another.
-int pointer_input(const Mapping& mapping);
-uint32_t buttons(const Pressed& pressed, bool sideways, const Mapping& mapping);
+bool held(const Binding& binding, const Pressed& pressed);
+uint32_t buttons(const Pressed& pressed, const Mapping& mapping);
 
 std::string device_key(const std::string& name, int ordinal);
 bool listed(const std::string& list, const std::string& key);

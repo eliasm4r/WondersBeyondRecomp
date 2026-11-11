@@ -29,6 +29,7 @@
 #include "wp/options_window.h"
 #include "wp/perf_overlay.h"
 #include "wp/play_time.h"
+#include "wp/color.h"
 #include "wp/screenshot.h"
 #include "wp/settings.h"
 #include "wp/ui_text.h"
@@ -486,6 +487,7 @@ void save_screenshot() {
     if (!gx::render::read_frame(pixels, width, height)) {
         return;
     }
+    color::apply(pixels, color::current());
     CreateDirectoryA(screenshot::kFolder, nullptr);
     std::tm time = local_time();
     std::string path;

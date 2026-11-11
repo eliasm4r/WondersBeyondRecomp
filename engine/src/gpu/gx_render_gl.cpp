@@ -20,6 +20,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "wp/color.h"
 #include "wp/custom_textures.h"
 #include "wp/game.h"
 #include "wp/gx_state.h"
@@ -85,10 +86,14 @@ void main() {
 
 const char* kPresentFragment = R"GLSL(#version 410 core
 uniform sampler2D frame;
+uniform vec4 adjust;
 in vec2 uv;
 out vec4 color;
 void main() {
-    color = vec4(texture(frame, uv).rgb, 1.0);
+    vec3 c = ((texture(frame, uv).rgb - 0.5) * adjust.y + 0.5) * adjust.x;
+    float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    c = clamp(luma + (c - luma) * adjust.z, 0.0, 1.0);
+    color = vec4(pow(c, vec3(adjust.w)), 1.0);
 }
 )GLSL";
 
@@ -669,6 +674,7 @@ struct Device {
     Program copy;
     Program clear;
     GLint clear_color = -1;
+    GLint present_adjust = -1;
     GLint clear_depth = -1;
     GLuint tev_layout = 0;
     GLuint empty_layout = 0;
@@ -910,6 +916,7 @@ bool create_pipeline() {
         return false;
     }
     bind_samplers(g_device.present.id, {"frame"});
+    g_device.present_adjust = gl.GetUniformLocation(g_device.present.id, "adjust");
     bind_samplers(g_device.overlay.id, {"overlay"});
     bind_samplers(g_device.copy.id, {"color_source", "depth_source"});
     gl.UniformBlockBinding(g_device.copy.id, gl.GetUniformBlockIndex(g_device.copy.id, "CopyConstants"), 1);
@@ -1875,6 +1882,8 @@ bool present_frame(void* window_handle, double aspect) {
     gl.Viewport(static_cast<GLint>((client_width - width) / 2), static_cast<GLint>((area - height) / 2), static_cast<GLsizei>(width),
                 static_cast<GLsizei>(height));
     use_fullscreen(g_device.present, 1.0f);
+    color::Adjust colors = color::current();
+    gl.Uniform4f(g_device.present_adjust, colors.brightness, colors.contrast, colors.saturation, 1.0f / colors.gamma);
     gl.ActiveTexture(GL_TEXTURE0);
     gl.BindTexture(GL_TEXTURE_2D, g_device.frame.texture);
     gl.BindSampler(0, g_device.linear_sampler);

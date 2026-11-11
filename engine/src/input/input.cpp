@@ -1,6 +1,7 @@
 #include "wp/input.h"
 
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -17,6 +18,7 @@
 #include "wp/keymap.h"
 #include "wp/log.h"
 #include "wp/modules.h"
+#include "wp/padmap.h"
 #include "wp/settings.h"
 #include "wp/video.h"
 #include "wp/runtime.h"
@@ -109,9 +111,48 @@ Sample scripted(const std::vector<ScriptEntry>& script, int milliseconds) {
 
 }
 
-void follow_keyboard_layout() {
-    for (size_t i : keymap::unlocalized([](const std::string& key) { return settings::text(key.c_str(), nullptr); })) {
+uint32_t keyboard_buttons(const keymap::Bindings& keys, const std::function<bool(int code)>& down, bool aiming) {
+    uint32_t result = 0;
+    for (size_t i = 0; i < keymap::kActionCount; i++) {
+        uint32_t buttons = keymap::action(i).buttons;
+        if (buttons == 0) {
+            continue;
+        }
+        for (int code : keys.codes[i]) {
+            if (!down(code)) {
+                continue;
+            }
+            bool clicks_a = aiming && i == static_cast<size_t>(keymap::Action::One) && keymap::mouse(code);
+            result |= clicks_a ? kButtonA : buttons;
+        }
+    }
+    return result;
+}
+
+void upgrade_bindings() {
+    auto value = [](const std::string& key) { return settings::text(key.c_str(), nullptr); };
+    for (size_t i : keymap::unlocalized(value)) {
         settings::store(keymap::setting_key(i).c_str(), keymap::local_defaults(i));
+    }
+    if (settings::number("input.bindings_version", nullptr) < 2) {
+        for (size_t i : keymap::outdated(value, keymap::local_letter)) {
+            settings::store(keymap::setting_key(i).c_str(), keymap::local_defaults(i));
+        }
+        settings::store("input.bindings_version", "2");
+    }
+    bool sideways = game::description().sideways_grip;
+    for (size_t i = 0; i < padmap::kActionCount; i++) {
+        std::string key = padmap::setting_key(i);
+        std::string stored = settings::text(key.c_str(), nullptr);
+        std::string word;
+        for (char c : stored) {
+            if (c != ' ' && c != '\t') {
+                word += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+        }
+        if (word == "auto") {
+            settings::store(key.c_str(), padmap::format_binding(padmap::default_binding(i, sideways)));
+        }
     }
 }
 
@@ -285,10 +326,9 @@ Sample device_sample(uint32_t channel) {
         settings::reload_if_changed();
     }
     const keymap::Bindings& keys = bindings();
-    for (size_t i = 0; i < keymap::kActionCount && focused; i++) {
-        if (keymap::action(i).buttons != 0 && any_pressed(keys.codes[i])) {
-            result.buttons |= keymap::action(i).buttons;
-        }
+    bool mouse_aims = focused && any_pressed(keys.of(keymap::Action::Pointer));
+    if (focused) {
+        result.buttons |= keyboard_buttons(keys, pressed, mouse_aims);
     }
     bool sideways = sideways_grip();
     if (sideways) {
@@ -318,8 +358,6 @@ Sample device_sample(uint32_t channel) {
     video::cursor_position(cursor_x, cursor_y);
     static MouseMotionState mouse_state;
     result.buttons |= mouse_motion(mouse_state, focused && any_pressed(keys.of(keymap::Action::MouseMotion)), cursor_x, cursor_y, now);
-    // The mouse aims only while the pointer key is held, so it never points by accident.
-    bool mouse_aims = focused && any_pressed(keys.of(keymap::Action::Pointer));
     if (mouse_aims && video::cursor_on_image(result.pointer_x, result.pointer_y)) {
         result.pointer_valid = true;
     } else if (pad.pointer_valid) {

@@ -9,6 +9,7 @@
 #include <sstream>
 #include <vector>
 
+#include "wp/game.h"
 #include "wp/keymap.h"
 #include "wp/padmap.h"
 
@@ -29,6 +30,10 @@ const Option kBaseOptions[] = {
     {"video.show_fps", "1"},
     {"video.smooth", "1"},
     {"video.anisotropy", "1"},
+    {"video.brightness", "100"},
+    {"video.contrast", "100"},
+    {"video.saturation", "100"},
+    {"video.gamma", "100"},
     {"video.copy_filter", "1"},
     {"video.dump_textures", "0"},
     {"video.custom_textures", "1"},
@@ -42,6 +47,7 @@ const Option kBaseOptions[] = {
     {"input.ignored_gamepads", ""},
     {"input.gamepad_players", ""},
     {"input.rumble", "1"},
+    {"input.bindings_version", "1"},
     {"input.stick_deadzone", "50"},
     {"system.interface_language", "en"},
     {"system.language", "auto"},
@@ -65,7 +71,7 @@ const std::vector<Option>& options() {
             result.push_back({keymap::setting_key(i), keymap::local_defaults(i)});
         }
         for (size_t i = 0; i < padmap::kActionCount; i++) {
-            result.push_back({padmap::setting_key(i), "auto"});
+            result.push_back({padmap::setting_key(i), padmap::format_binding(padmap::default_binding(i, game::description().sideways_grip))});
         }
         return result;
     }();

@@ -14,24 +14,24 @@ namespace wp::keymap {
 namespace {
 
 constexpr ActionInfo kActions[kActionCount] = {
-    {"a", input::kButtonA, "Enter,Space,MouseLeft"},
-    {"b", input::kButtonB, "Backspace,MouseRight"},
-    {"one", input::kButtonOne, "1"},
-    {"two", input::kButtonTwo, "2"},
-    {"plus", input::kButtonPlus, "Plus,NumPlus"},
-    {"minus", input::kButtonMinus, "Minus,NumMinus"},
+    {"a", input::kButtonA, "E"},
+    {"b", input::kButtonB, "C"},
+    {"one", input::kButtonOne, "MouseLeft,Backspace"},
+    {"two", input::kButtonTwo, "Space,Enter"},
+    {"plus", input::kButtonPlus, "Tab"},
+    {"minus", input::kButtonMinus, "P"},
     {"home", input::kButtonHome, "H"},
     {"up", input::kButtonUp, "Up,W"},
     {"down", input::kButtonDown, "Down,S"},
     {"left", input::kButtonLeft, "Left,A"},
     {"right", input::kButtonRight, "Right,D"},
-    {"shake", input::kMotionShake, "MouseMiddle,LeftShift"},
+    {"shake", input::kMotionShake, "MouseRight"},
     {"swing_up", input::kMotionSwingUp, "WheelUp,T"},
     {"swing_down", input::kMotionSwingDown, "WheelDown,G"},
-    {"tilt_left", input::kMotionTiltLeft, "Q"},
-    {"tilt_right", input::kMotionTiltRight, "E"},
-    {"tilt_up", input::kMotionTiltUp, "R"},
-    {"tilt_down", input::kMotionTiltDown, "F"},
+    {"tilt_left", input::kMotionTiltLeft, "J"},
+    {"tilt_right", input::kMotionTiltRight, "L"},
+    {"tilt_up", input::kMotionTiltUp, "I"},
+    {"tilt_down", input::kMotionTiltDown, "K"},
     {"screenshot", 0, "F9"},
     {"mouse_motion", 0, "Z"},
     {"pointer", 0, "Ctrl"},
@@ -49,6 +49,13 @@ struct Legacy {
 };
 
 constexpr Legacy kLegacyDirections[] = {{Action::Up, "Up,A"}, {Action::Down, "Down,D"}, {Action::Left, "Left,S"}, {Action::Right, "Right,W"}};
+
+constexpr Legacy kPreviousDefaults[] = {
+    {Action::A, "Enter,Space,MouseLeft"},  {Action::B, "Backspace,MouseRight"}, {Action::One, "1"},
+    {Action::Two, "2"},                    {Action::Plus, "Plus,NumPlus"},       {Action::Minus, "Minus,NumMinus"},
+    {Action::Shake, "MouseMiddle,LeftShift"}, {Action::TiltLeft, "Q"},           {Action::TiltRight, "E"},
+    {Action::TiltUp, "R"},                 {Action::TiltDown, "F"},
+};
 
 constexpr Key kKeys[] = {
     {"MouseLeft", 0x01},  {"MouseRight", 0x02},  {"MouseMiddle", 0x04}, {"MouseX1", 0x05},     {"MouseX2", 0x06},
@@ -209,17 +216,68 @@ std::string localize(const std::string& list, const std::function<int(int letter
     return result;
 }
 
-std::string local_defaults(size_t index) {
+int local_letter(int us) {
 #ifdef _WIN32
     static constexpr UINT kScanCodes[26] = {0x1E, 0x30, 0x2E, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17, 0x24, 0x25, 0x26, 0x32,
                                             0x31, 0x18, 0x19, 0x10, 0x13, 0x1F, 0x14, 0x16, 0x2F, 0x11, 0x2D, 0x15, 0x2C};
-    return localize(kActions[index].defaults, [](int us) {
-        UINT local = MapVirtualKeyExA(kScanCodes[us - 'A'], MAPVK_VSC_TO_VK, GetKeyboardLayout(0));
-        return local >= 'A' && local <= 'Z' ? static_cast<int>(local) : us;
-    });
+    if (us < 'A' || us > 'Z') {
+        return us;
+    }
+    UINT local = MapVirtualKeyExA(kScanCodes[us - 'A'], MAPVK_VSC_TO_VK, GetKeyboardLayout(0));
+    return local >= 'A' && local <= 'Z' ? static_cast<int>(local) : us;
 #else
-    return kActions[index].defaults;
+    return us;
 #endif
+}
+
+std::string local_defaults(size_t index) {
+    return localize(kActions[index].defaults, local_letter);
+}
+
+const char* previous_defaults(size_t index) {
+    for (const Legacy& entry : kPreviousDefaults) {
+        if (static_cast<size_t>(entry.action) == index) {
+            return entry.keys;
+        }
+    }
+    return nullptr;
+}
+
+std::vector<size_t> outdated(const std::function<std::string(const std::string& key)>& value, const std::function<int(int letter)>& letter) {
+    std::vector<std::vector<int>> stored(kActionCount);
+    std::vector<bool> moving(kActionCount, false);
+    for (size_t i = 0; i < kActionCount; i++) {
+        stored[i] = parse(value(setting_key(i))).codes;
+        const char* previous = previous_defaults(i);
+        moving[i] = previous && (stored[i] == parse(previous).codes || stored[i] == parse(localize(previous, letter)).codes);
+    }
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (size_t i = 0; i < kActionCount; i++) {
+            if (!moving[i]) {
+                continue;
+            }
+            for (int code : parse(localize(kActions[i].defaults, letter)).codes) {
+                for (size_t other = 0; other < kActionCount; other++) {
+                    if (moving[i] && other != i && !moving[other] && std::find(stored[other].begin(), stored[other].end(), code) != stored[other].end()) {
+                        moving[i] = false;
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+    std::vector<size_t> result;
+    for (size_t i = 0; i < kActionCount; i++) {
+        if (moving[i]) {
+            result.push_back(i);
+        }
+    }
+    return result;
+}
+
+bool mouse(int code) {
+    return code == 0x01 || code == 0x02 || code == 0x04 || code == 0x05 || code == 0x06 || code == kWheelUp || code == kWheelDown;
 }
 
 Bindings defaults() {

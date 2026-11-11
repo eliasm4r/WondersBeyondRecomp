@@ -1,5 +1,9 @@
 #include "wp/padmap.h"
 
+#include <algorithm>
+#include <cctype>
+
+#include "wp/game.h"
 #include "wp/input.h"
 #include "wp/settings.h"
 
@@ -10,14 +14,26 @@ namespace {
 struct Action {
     const char* name;
     uint32_t button;
+    const char* sideways;
+    const char* upright;
 };
 
 constexpr Action kActions[kActionCount] = {
-    {"a", input::kButtonA},         {"b", input::kButtonB},         {"one", input::kButtonOne}, {"two", input::kButtonTwo},
-    {"plus", input::kButtonPlus}, {"minus", input::kButtonMinus}, {"home", input::kButtonHome},
-    {"shake", input::kMotionShake}, {"swing_up", input::kMotionSwingUp}, {"swing_down", input::kMotionSwingDown},
-    {"tilt_left", input::kMotionTiltLeft}, {"tilt_right", input::kMotionTiltRight}, {"tilt_up", input::kMotionTiltUp}, {"tilt_down", input::kMotionTiltDown},
-    {"pointer", 0},
+    {"a", input::kButtonA, "north,right_shoulder", "south,right_shoulder"},
+    {"b", input::kButtonB, "right_trigger", "east,right_trigger"},
+    {"one", input::kButtonOne, "east,west", "west"},
+    {"two", input::kButtonTwo, "south", "north"},
+    {"plus", input::kButtonPlus, "start", "start"},
+    {"minus", input::kButtonMinus, "back", "back"},
+    {"home", input::kButtonHome, "guide", "guide"},
+    {"shake", input::kMotionShake, "left_trigger", "left_trigger"},
+    {"swing_up", input::kMotionSwingUp, "left_shoulder+dpad_up", "left_shoulder+dpad_up"},
+    {"swing_down", input::kMotionSwingDown, "left_shoulder+dpad_down", "left_shoulder+dpad_down"},
+    {"tilt_left", input::kMotionTiltLeft, "left_shoulder+right_stick_left", "left_shoulder+right_stick_left"},
+    {"tilt_right", input::kMotionTiltRight, "left_shoulder+right_stick_right", "left_shoulder+right_stick_right"},
+    {"tilt_up", input::kMotionTiltUp, "left_shoulder+right_stick_up", "left_shoulder+right_stick_up"},
+    {"tilt_down", input::kMotionTiltDown, "left_shoulder+right_stick_down", "left_shoulder+right_stick_down"},
+    {"pointer", 0, "left_stick", "left_stick"},
 };
 
 constexpr const char* kPhysicalNames[kPhysicalCount] = {
@@ -26,78 +42,65 @@ constexpr const char* kPhysicalNames[kPhysicalCount] = {
     "right_stick_up", "right_stick_down", "right_stick_left", "right_stick_right",
 };
 
-uint32_t automatic(const Pressed& pressed, bool sideways) {
-    auto held = [&](Physical physical) { return pressed.held[physical]; };
-    uint32_t b = 0;
-    if (held(kRightShoulder)) {
-        b |= input::kButtonA;
+std::string trimmed_lower(const std::string& text) {
+    size_t first = text.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) {
+        return "";
     }
-    if (held(kRightTrigger)) {
-        b |= input::kButtonB;
-    }
-    if (sideways) {
-        if (held(kSouth)) {
-            b |= input::kButtonTwo;
-        }
-        if (held(kWest) || held(kEast)) {
-            b |= input::kButtonOne;
-        }
-        if (held(kNorth)) {
-            b |= input::kButtonA;
-        }
-    } else {
-        if (held(pressed.nintendo_layout ? kEast : kSouth)) {
-            b |= input::kButtonA;
-        }
-        if (held(pressed.nintendo_layout ? kSouth : kEast)) {
-            b |= input::kButtonB;
-        }
-        if (held(kWest)) {
-            b |= input::kButtonOne;
-        }
-        if (held(kNorth)) {
-            b |= input::kButtonTwo;
-        }
-    }
-    if (held(kBack)) {
-        b |= input::kButtonMinus;
-    }
-    if (held(kStart)) {
-        b |= input::kButtonPlus;
-    }
-    if (held(kGuide)) {
-        b |= input::kButtonHome;
-    }
-    return b;
+    size_t last = text.find_last_not_of(" \t\r\n");
+    std::string result = text.substr(first, last - first + 1);
+    std::transform(result.begin(), result.end(), result.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return result;
 }
 
-uint32_t automatic_motion(const Pressed& pressed) {
-    auto held = [&](Physical physical) { return pressed.held[physical]; };
-    uint32_t b = 0;
-    if (held(kLeftTrigger)) {
-        b |= input::kMotionShake;
+std::vector<std::string> split(const std::string& text, char separator) {
+    std::vector<std::string> parts;
+    size_t start = 0;
+    while (true) {
+        size_t end = text.find(separator, start);
+        parts.push_back(text.substr(start, end == std::string::npos ? std::string::npos : end - start));
+        if (end == std::string::npos) {
+            return parts;
+        }
+        start = end + 1;
     }
-    if (held(kLeftShoulder)) {
-        if (held(kDpadUp)) {
-            b |= input::kMotionSwingUp;
-        }
-        if (held(kDpadDown)) {
-            b |= input::kMotionSwingDown;
-        }
-        if (held(kRightStickLeft)) {
-            b |= input::kMotionTiltLeft;
-        }
-        if (held(kRightStickRight)) {
-            b |= input::kMotionTiltRight;
-        }
-        if (held(kRightStickUp)) {
-            b |= input::kMotionTiltUp;
-        }
-        if (held(kRightStickDown)) {
-            b |= input::kMotionTiltDown;
+}
+
+int lowest(Combo combo) {
+    for (int i = 0; i < kPhysicalCount; i++) {
+        if (combo & (Combo{1} << i)) {
+            return i;
         }
     }
-    return b;
+    return kPhysicalCount;
+}
+
+Binding parse_text(const std::string& text) {
+    Binding binding;
+    for (const std::string& part : split(text, ',')) {
+        Combo combo = 0;
+        for (const std::string& name : split(part, '+')) {
+            int physical = physical_from_name(trimmed_lower(name));
+            if (physical >= 0) {
+                combo |= Combo{1} << physical;
+            }
+        }
+        if (combo != 0 && std::find(binding.begin(), binding.end(), combo) == binding.end()) {
+            binding.push_back(combo);
+        }
+    }
+    std::sort(binding.begin(), binding.end(), [](Combo a, Combo b) { return lowest(a) != lowest(b) ? lowest(a) < lowest(b) : a < b; });
+    return binding;
+}
+
+Combo mask_of(const Pressed& pressed) {
+    Combo mask = 0;
+    for (int i = 0; i < kPhysicalCount; i++) {
+        if (pressed.held[i]) {
+            mask |= Combo{1} << i;
+        }
+    }
+    return mask;
 }
 
 }
@@ -115,7 +118,7 @@ std::string setting_key(size_t action) {
 }
 
 const char* physical_name(int physical) {
-    return physical >= 0 && physical < kPhysicalCount ? kPhysicalNames[physical] : "auto";
+    return physical >= 0 && physical < kPhysicalCount ? kPhysicalNames[physical] : "";
 }
 
 int physical_from_name(const std::string& name) {
@@ -124,66 +127,86 @@ int physical_from_name(const std::string& name) {
             return i;
         }
     }
-    return kAutomatic;
+    return -1;
 }
 
-int pointer_input(const Mapping& mapping) {
-    return mapping[kPointerAction] == kAutomatic ? kLeftStick : mapping[kPointerAction];
+Binding default_binding(size_t action, bool sideways) {
+    if (action >= kActionCount) {
+        return {};
+    }
+    return parse_text(sideways ? kActions[action].sideways : kActions[action].upright);
+}
+
+Binding parse_binding(const std::string& text, size_t action, bool sideways) {
+    if (trimmed_lower(text) == "none") {
+        return {};
+    }
+    Binding binding = parse_text(text);
+    return binding.empty() ? default_binding(action, sideways) : binding;
+}
+
+std::string format_binding(const Binding& binding) {
+    std::string result;
+    for (Combo combo : binding) {
+        std::string part;
+        for (int i = 0; i < kPhysicalCount; i++) {
+            if (combo & (Combo{1} << i)) {
+                part += (part.empty() ? "" : "+") + std::string(kPhysicalNames[i]);
+            }
+        }
+        if (!part.empty()) {
+            result += (result.empty() ? "" : ",") + part;
+        }
+    }
+    return result.empty() ? "none" : result;
+}
+
+std::string without(const std::string& text, int physical, size_t action, bool sideways) {
+    Binding binding = parse_binding(text, action, sideways);
+    Combo single = Combo{1} << physical;
+    binding.erase(std::remove(binding.begin(), binding.end(), single), binding.end());
+    return format_binding(binding);
 }
 
 Mapping current_mapping() {
-    Mapping mapping{};
+    bool sideways = game::description().sideways_grip;
+    Mapping mapping;
     for (size_t i = 0; i < kActionCount; i++) {
-        mapping[i] = physical_from_name(settings::text(setting_key(i).c_str(), nullptr));
+        mapping[i] = parse_binding(settings::text(setting_key(i).c_str(), nullptr), i, sideways);
     }
     return mapping;
 }
 
-uint32_t buttons(const Pressed& pressed, bool sideways, const Mapping& mapping) {
-    bool custom = false;
-    for (size_t i = 0; i < kButtonActionCount; i++) {
-        custom = custom || mapping[i] != kAutomatic;
-    }
-    uint32_t b = 0;
-    Pressed for_buttons = pressed;
-    for (size_t i = kButtonActionCount; i < kActionCount; i++) {
-        if (mapping[i] != kAutomatic) {
-            for_buttons.held[mapping[i]] = false;
+bool held(const Binding& binding, const Pressed& pressed) {
+    Combo mask = mask_of(pressed);
+    for (Combo combo : binding) {
+        if (combo != 0 && (mask & combo) == combo) {
+            return true;
         }
     }
-    if (!custom || sideways) {
-        b = automatic(for_buttons, sideways);
-    } else {
-        Pressed unmapped = for_buttons;
-        for (int physical : mapping) {
-            if (physical != kAutomatic) {
-                unmapped.held[physical] = false;
-            }
-        }
-        uint32_t defaults = automatic(unmapped, false);
-        for (size_t i = 0; i < kButtonActionCount; i++) {
-            if (mapping[i] == kAutomatic) {
-                b |= defaults & kActions[i].button;
-            } else if (pressed.held[mapping[i]]) {
-                b |= kActions[i].button;
+    return false;
+}
+
+uint32_t buttons(const Pressed& pressed, const Mapping& mapping) {
+    Combo mask = mask_of(pressed);
+    std::vector<std::pair<Combo, uint32_t>> satisfied;
+    for (size_t i = 0; i < kActionCount; i++) {
+        for (Combo combo : mapping[i]) {
+            if (combo != 0 && (mask & combo) == combo) {
+                satisfied.push_back({combo, kActions[i].button});
             }
         }
     }
-    Pressed free = pressed;
-    for (int physical : mapping) {
-        if (physical != kAutomatic) {
-            free.held[physical] = false;
+    uint32_t result = 0;
+    for (const auto& entry : satisfied) {
+        bool covered = std::any_of(satisfied.begin(), satisfied.end(), [&](const std::pair<Combo, uint32_t>& other) {
+            return other.first != entry.first && (other.first & entry.first) == entry.first;
+        });
+        if (!covered) {
+            result |= entry.second;
         }
     }
-    uint32_t motion = automatic_motion(free);
-    for (size_t i = kButtonActionCount; i < kActionCount; i++) {
-        if (mapping[i] == kAutomatic) {
-            b |= motion & kActions[i].button;
-        } else if (pressed.held[mapping[i]]) {
-            b |= kActions[i].button;
-        }
-    }
-    return b;
+    return result;
 }
 
 std::string device_key(const std::string& name, int ordinal) {

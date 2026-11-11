@@ -16,6 +16,12 @@ All notable changes to WondersBeyondRecomp. Dates are when the change landed on 
 - 45 and 90 fps limits. At 45 fps the game's logic still runs 60 steps a second; 90 fps uses the frame interpolation
   (Direct3D 11, on a screen of 85 Hz or more) and shows every other game frame.
 - A help line under the options menu's rows describes the selected setting.
+- The Controls tab names the buttons of the connected controller (Xbox, PlayStation or Switch, after the last one
+  used; Xbox names without one) and never shows "Automatic". Each key and button row says what it does in the game.
+- While the pointer key (Ctrl) is held, a mouse button bound to 1 clicks A instead, like pointing with a Wii Remote.
+- Color settings in the Screen tab: brightness, contrast, saturation and gamma, 100% being the original picture, and
+  an "Original colors" button. They change the game picture, cutscenes and F9 screenshots, not the F1 menu or the F2
+  overlay, and apply while the menu is open.
 
 ### Changed
 - The options menu is drawn as the game's dialog bubble (orange edge, Nunito font) with six tabs in a column: Screen,
@@ -23,8 +29,18 @@ All notable changes to WondersBeyondRecomp. Dates are when the change landed on 
 - Gamepads keep working while the window is in the background.
 - The Windows timer runs at 1 ms, so images 8 ms apart are shown on time.
 - In the options menu the stick moves only along its main axis, and on/off boxes change only when accepted.
+- New default keys: Space and Enter jump and confirm (2), left click and Backspace dash and attack (1), right click
+  shakes, E calls a partner (A), C turns the view (B), Tab opens the PokéPark Pad (+), P takes a photo (−), and the
+  tilts move to I, J, K, L. Shift and the 1 and 2 keys are free. Files still holding the old defaults move to the new
+  ones once (`input.bindings_version`); keys a player changed stay.
+- Keys are shown as written on the keyboard (`&` rather than 1 on AZERTY, "Left click", "Space" in the menu
+  language).
+- Gamepad bindings are stored as real buttons (`pad.one=east,west`, `pad.swing_up=left_shoulder+dpad_up`); `auto`
+  is still read and replaced by the default. Giving a button to an action in the menu takes it off the others.
 
 ### Fixed
+- Gamepad buttons given to A, B, 1, 2, +, − or HOME in the menu were ignored while the Wii Remote is held sideways,
+  which is always the case in PokéPark 2.
 - The game's frame alarms wait for the draw token the GPU thread still owes (100 ms at most): with the GPU thread
   a little late the game took fresh buffers every frame and ran out of heap in the pause menu.
 - Flickering shadows, footprints, far scenery and sea at 120 fps, and thin lines of sea showing through the ground

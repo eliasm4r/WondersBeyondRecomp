@@ -70,7 +70,11 @@ struct Bindings {
 };
 
 std::string localize(const std::string& list, const std::function<int(int letter)>& letter);
+int local_letter(int us);
 std::string local_defaults(size_t index);
+const char* previous_defaults(size_t index);
+std::vector<size_t> outdated(const std::function<std::string(const std::string& key)>& value, const std::function<int(int letter)>& letter);
+bool mouse(int code);
 std::vector<size_t> unlocalized(const std::function<std::string(const std::string& key)>& value);
 
 Bindings defaults();

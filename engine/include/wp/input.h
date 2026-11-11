@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 
 #include "wp/keymap.h"
 
@@ -53,7 +54,8 @@ void set_auto_confirm(bool enabled);
 bool wakes_remote(uint32_t channel);
 void note_wheel(int delta);
 const keymap::Bindings& bindings();
-void follow_keyboard_layout();
+uint32_t keyboard_buttons(const keymap::Bindings& keys, const std::function<bool(int code)>& down, bool aiming);
+void upgrade_bindings();
 void set_blocked(bool blocked);
 
 }

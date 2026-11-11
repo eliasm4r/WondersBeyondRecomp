@@ -80,6 +80,8 @@ struct Pad {
     bool aiming = false;
     std::chrono::steady_clock::time_point shake_until{};
     int player = -1;
+    padmap::Family family = padmap::Family::Xbox;
+    bool pressing = false;
 };
 
 std::mutex g_mutex;
@@ -87,6 +89,44 @@ std::array<Snapshot, kSlots> g_snapshots;
 std::array<std::atomic<bool>, kSlots> g_rumble{};
 std::array<std::atomic<int>, kSlots> g_player{};
 std::once_flag g_started;
+std::atomic<int> g_shown_family{static_cast<int>(padmap::Family::Xbox)};
+
+padmap::Family family_of(SDL_GamepadType type) {
+    switch (type) {
+    case SDL_GAMEPAD_TYPE_XBOX360:
+        return padmap::Family::Xbox360;
+    case SDL_GAMEPAD_TYPE_PS3:
+        return padmap::Family::PlayStation3;
+    case SDL_GAMEPAD_TYPE_PS4:
+        return padmap::Family::PlayStation4;
+    case SDL_GAMEPAD_TYPE_PS5:
+        return padmap::Family::PlayStation5;
+    case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO:
+    case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT:
+    case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT:
+    case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR:
+        return padmap::Family::Switch;
+    default:
+        return padmap::Family::Xbox;
+    }
+}
+
+const char* family_name(padmap::Family family) {
+    switch (family) {
+    case padmap::Family::Xbox360:
+        return "Xbox 360";
+    case padmap::Family::PlayStation3:
+        return "PlayStation 3";
+    case padmap::Family::PlayStation4:
+        return "PlayStation 4";
+    case padmap::Family::PlayStation5:
+        return "PlayStation 5";
+    case padmap::Family::Switch:
+        return "Switch";
+    default:
+        return "Xbox";
+    }
+}
 
 bool enabled() {
     static const settings::LiveFlag value("input.gamepads", "WP_GAMEPAD");
@@ -126,9 +166,10 @@ void open_at(std::array<Pad, kSlots>& pads, SDL_JoystickID id, size_t slot) {
     pad.has_accel = SDL_GamepadHasSensor(handle, SDL_SENSOR_ACCEL) && SDL_SetGamepadSensorEnabled(handle, SDL_SENSOR_ACCEL, true);
     pad.pointer_active = pad.has_gyro;
     pad.nintendo_layout = SDL_GetGamepadButtonLabel(handle, SDL_GAMEPAD_BUTTON_SOUTH) == SDL_GAMEPAD_BUTTON_LABEL_B;
+    pad.family = family_of(SDL_GetGamepadType(handle));
     const char* name = SDL_GetGamepadName(handle);
-    log::write("input", "gamepad %s connected as Wii Remote %u, gyroscope %s, accelerometer %s, %s layout", name ? name : "?", static_cast<unsigned>(slot + 1),
-               pad.has_gyro ? "yes" : "no", pad.has_accel ? "yes" : "no", pad.nintendo_layout ? "Nintendo" : "Xbox");
+    log::write("input", "gamepad %s connected as Wii Remote %u, gyroscope %s, accelerometer %s, %s buttons", name ? name : "?", static_cast<unsigned>(slot + 1),
+               pad.has_gyro ? "yes" : "no", pad.has_accel ? "yes" : "no", family_name(pad.family));
 }
 
 void close(std::array<Pad, kSlots>& pads, SDL_JoystickID id) {
@@ -216,7 +257,6 @@ void calibrate(Pad& pad, const float gyro[3], const float accel[3], float dt) {
 
 padmap::Pressed physical_state(const Snapshot& current) {
     padmap::Pressed pressed;
-    pressed.nintendo_layout = current.nintendo_layout;
     for (int i = 0; i < padmap::kLeftTrigger; i++) {
         pressed.held[i] = current.buttons[i];
     }
@@ -245,8 +285,7 @@ Snapshot read(Pad& pad, float dt) {
     float right_y = axis(handle, SDL_GAMEPAD_AXIS_RIGHTY);
     snapshot.right_x = right_x;
     snapshot.right_y = right_y;
-    // The pointer exists only while the pointer button is held; it starts from the centre of the screen.
-    bool aiming = physical_state(snapshot).held[padmap::pointer_input(padmap::current_mapping())];
+    bool aiming = padmap::held(padmap::current_mapping()[padmap::kPointerAction], physical_state(snapshot));
     if (aiming && !pad.aiming) {
         pad.pointer_x = 0.0f;
         pad.pointer_y = 0.0f;
@@ -391,6 +430,7 @@ void worker() {
     std::array<Virtual, kSlots> virtuals;
     attach_virtual(virtuals);
     uint32_t seen_revision = 0;
+    int last_used = -1;
     auto previous = std::chrono::steady_clock::now();
     while (true) {
         drive_virtual(virtuals);
@@ -420,8 +460,21 @@ void worker() {
             if (pads[slot].handle) {
                 snapshots[slot] = read(pads[slot], dt);
                 apply_outputs(pads[slot], slot);
+                padmap::Pressed pressed = physical_state(snapshots[slot]);
+                bool pressing = std::any_of(pressed.held.begin(), pressed.held.end(), [](bool held) { return held; });
+                if (pressing && !pads[slot].pressing) {
+                    last_used = static_cast<int>(slot);
+                }
+                pads[slot].pressing = pressing;
             }
         }
+        int shown = last_used >= 0 && pads[static_cast<size_t>(last_used)].handle ? last_used : -1;
+        for (size_t slot = 0; slot < kSlots && shown < 0; slot++) {
+            if (pads[slot].handle) {
+                shown = static_cast<int>(slot);
+            }
+        }
+        g_shown_family = static_cast<int>(shown >= 0 ? pads[static_cast<size_t>(shown)].family : padmap::Family::Xbox);
         {
             std::lock_guard<std::mutex> lock(g_mutex);
             g_snapshots = snapshots;
@@ -466,6 +519,10 @@ void set_outputs(uint32_t slot, bool rumble, uint8_t leds) {
     }
     g_rumble[slot] = rumble;
     g_player[slot] = player;
+}
+
+padmap::Family shown_family() {
+    return static_cast<padmap::Family>(g_shown_family.load());
 }
 
 int held_physical() {
@@ -538,7 +595,7 @@ State poll(uint32_t slot, bool sideways) {
     uint32_t& b = state.buttons;
     padmap::Pressed pressed = physical_state(current);
     bool motion_mode = held(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
-    b |= padmap::buttons(pressed, sideways, padmap::current_mapping());
+    b |= padmap::buttons(pressed, padmap::current_mapping());
     if (current.shaking) {
         b |= input::kMotionShake;
     }

@@ -123,7 +123,7 @@ void report_terminate() {
 int run(int argc, char** argv) {
     wp::settings::load(wp::game::description().settings_file);
     wp::play_time::start(wp::play_time::stats_path(wp::game::description().settings_file));
-    wp::input::follow_keyboard_layout();
+    wp::input::upgrade_bindings();
     std::string extracted = argc > 1 ? argv[1] : wp::game::description().data_directory;
     int timeout_seconds = argc > 2 ? std::atoi(argv[2]) : 0;
 
