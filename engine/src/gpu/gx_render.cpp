@@ -5,10 +5,12 @@
 #include "gx_render_common.h"
 
 #include <d3d11.h>
+#include <emmintrin.h>
 #include <d3d11sdklayers.h>
 #include <d3dcompiler.h>
 #include <dxgi1_2.h>
 #include <dxgi1_4.h>
+#include <dxgi1_6.h>
 
 #include <algorithm>
 #include <array>
@@ -50,6 +52,7 @@ bool write_back_overlaps(uint32_t address, size_t size);
 namespace {
 
 constexpr uint32_t kVertexCapacity = 1 << 18;
+constexpr uint32_t kVertexBytes = kVertexCapacity * sizeof(ScreenVertex);
 
 const char* kPresentShaderSource = R"HLSL(
 Texture2D frame : register(t0);
@@ -725,6 +728,8 @@ struct Device {
     ID3D11PixelShader* pixel_shader = nullptr;
     ID3D11PixelShader* early_pixel_shader = nullptr;
     ID3D11InputLayout* layout = nullptr;
+    ID3D11InputLayout* trimmed_layouts[8] = {};
+    ID3D11Buffer* zero_buffer = nullptr;
     ID3D11Buffer* vertex_buffer = nullptr;
     ID3D11VertexShader* moved_shader = nullptr;
     ID3D11InputLayout* moved_layout = nullptr;
@@ -906,6 +911,7 @@ constexpr uint64_t kWriteBackFrames = 2;
 uint64_t g_texture_epoch = 0;
 int g_scale = 1;
 uint32_t g_vertex_cursor = kVertexCapacity;
+uint32_t g_trimmed_cursor = kVertexBytes;
 uint32_t g_batches = 0;
 uint32_t g_batch_vertices = 0;
 double g_batch_seconds = 0.0;
@@ -962,6 +968,15 @@ bool create_target() {
     return true;
 }
 
+double lap(std::chrono::steady_clock::time_point& from) {
+    auto now = std::chrono::steady_clock::now();
+    double seconds = std::chrono::duration<double>(now - from).count();
+    from = now;
+    return seconds;
+}
+
+bool g_nvidia = false;
+
 bool create_pipeline() {
     ID3DBlob* vertex_code = nullptr;
     ID3DBlob* pixel_code = nullptr;
@@ -991,6 +1006,25 @@ bool create_pipeline() {
         }
         ok = SUCCEEDED(g_device.device->CreateInputLayout(elements.data(), static_cast<UINT>(elements.size()), vertex_code->GetBufferPointer(),
                                                          vertex_code->GetBufferSize(), &g_device.layout));
+        bool trimmed = ok;
+        for (UINT used = 0; trimmed && used < 8; used++) {
+            std::vector<D3D11_INPUT_ELEMENT_DESC> kept = elements;
+            for (UINT i = used; i < 8; i++) {
+                kept[3 + i].InputSlot = 1;
+                kept[3 + i].AlignedByteOffset = 0;
+            }
+            trimmed = SUCCEEDED(g_device.device->CreateInputLayout(kept.data(), static_cast<UINT>(kept.size()), vertex_code->GetBufferPointer(), vertex_code->GetBufferSize(),
+                                                                   &g_device.trimmed_layouts[used]));
+        }
+        static const float zeros[4] = {};
+        D3D11_BUFFER_DESC blank{};
+        blank.ByteWidth = sizeof zeros;
+        blank.Usage = D3D11_USAGE_IMMUTABLE;
+        blank.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+        D3D11_SUBRESOURCE_DATA nothing{zeros, 0, 0};
+        if (trimmed) {
+            g_device.device->CreateBuffer(&blank, &nothing, &g_device.zero_buffer);
+        }
         ID3DBlob* moved_code = nullptr;
         if (ok && compile(kShaderSource, "vertex_moved", "vs_5_0", &moved_code)) {
             elements.push_back({"MOVED", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0, D3D11_INPUT_PER_VERTEX_DATA, 0});
@@ -1059,6 +1093,38 @@ int requested_scale() {
     return std::clamp(scale(), 1, 6);
 }
 
+IDXGIAdapter* fastest_adapter() {
+    IDXGIFactory6* factory = nullptr;
+    IDXGIAdapter* adapter = nullptr;
+    if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory6), reinterpret_cast<void**>(&factory)))) {
+        return nullptr;
+    }
+    if (FAILED(factory->EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, __uuidof(IDXGIAdapter), reinterpret_cast<void**>(&adapter)))) {
+        adapter = nullptr;
+    }
+    factory->Release();
+    return adapter;
+}
+
+void log_adapter() {
+    IDXGIDevice* dxgi_device = nullptr;
+    IDXGIAdapter* adapter = nullptr;
+    DXGI_ADAPTER_DESC description{};
+    if (SUCCEEDED(g_device.device->QueryInterface(__uuidof(IDXGIDevice), reinterpret_cast<void**>(&dxgi_device))) && SUCCEEDED(dxgi_device->GetAdapter(&adapter)) &&
+        SUCCEEDED(adapter->GetDesc(&description))) {
+        char name[256] = {};
+        WideCharToMultiByte(CP_UTF8, 0, description.Description, -1, name, sizeof name, nullptr, nullptr);
+        LARGE_INTEGER version{};
+        adapter->CheckInterfaceSupport(__uuidof(IDXGIDevice), &version);
+        g_nvidia = description.VendorId == 0x10DE && !std::getenv("WP_MAP_CONSTANTS");
+        log::write("video", "Direct3D 11 on %s, %llu MB, driver %u.%u.%u.%u", name, static_cast<unsigned long long>(description.DedicatedVideoMemory >> 20),
+                   static_cast<unsigned>(HIWORD(version.HighPart)), static_cast<unsigned>(LOWORD(version.HighPart)), static_cast<unsigned>(HIWORD(version.LowPart)),
+                   static_cast<unsigned>(LOWORD(version.LowPart)));
+    }
+    release(adapter);
+    release(dxgi_device);
+}
+
 bool initialize() {
     if (g_device.ready) {
         return true;
@@ -1072,8 +1138,15 @@ bool initialize() {
     D3D_DRIVER_TYPE driver = std::getenv("WP_D3D_WARP") ? D3D_DRIVER_TYPE_WARP : D3D_DRIVER_TYPE_HARDWARE;
     // WP_D3D_DEBUG=1 turns on the Direct3D debug layer (Windows optional feature "Graphics Tools").
     UINT device_flags = std::getenv("WP_D3D_DEBUG") ? D3D11_CREATE_DEVICE_DEBUG : 0;
-    HRESULT result = D3D11CreateDevice(nullptr, driver, nullptr, device_flags, nullptr, 0, D3D11_SDK_VERSION, &g_device.device, &level,
-                                       &g_device.context);
+    IDXGIAdapter* fastest = driver == D3D_DRIVER_TYPE_HARDWARE ? fastest_adapter() : nullptr;
+    HRESULT result = E_FAIL;
+    if (fastest) {
+        result = D3D11CreateDevice(fastest, D3D_DRIVER_TYPE_UNKNOWN, nullptr, device_flags, nullptr, 0, D3D11_SDK_VERSION, &g_device.device, &level, &g_device.context);
+        fastest->Release();
+    }
+    if (FAILED(result)) {
+        result = D3D11CreateDevice(nullptr, driver, nullptr, device_flags, nullptr, 0, D3D11_SDK_VERSION, &g_device.device, &level, &g_device.context);
+    }
     if (FAILED(result)) {
         result = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &g_device.device, &level,
                                    &g_device.context);
@@ -1091,6 +1164,7 @@ bool initialize() {
         g_device.failed = true;
         return false;
     }
+    log_adapter();
     prepare_texture_pack();
     g_device.ready = true;
     return true;
@@ -1550,7 +1624,33 @@ ID3D11PixelShader* variant_for(const Constants& constants, bool early_depth) {
     return found->second.shader.load();
 }
 
+double g_state_seconds = 0.0;
+double g_constant_seconds = 0.0;
+double g_copy_seconds = 0.0;
+uint64_t g_copy_bytes = 0;
+bool g_trimming = false;
+double g_draw_seconds = 0.0;
+uint32_t g_constants_created = 0;
+
 ID3D11Buffer* constant_buffer(const void* data, size_t size) {
+    if (!g_nvidia) {
+        static std::map<size_t, ID3D11Buffer*> rewritten;
+        ID3D11Buffer*& buffer = rewritten[size];
+        if (!buffer) {
+            D3D11_BUFFER_DESC description{};
+            description.ByteWidth = static_cast<UINT>(size);
+            description.Usage = D3D11_USAGE_DYNAMIC;
+            description.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+            description.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+            g_device.device->CreateBuffer(&description, nullptr, &buffer);
+        }
+        D3D11_MAPPED_SUBRESOURCE mapped;
+        if (buffer && SUCCEEDED(g_device.context->Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+            std::memcpy(mapped.pData, data, size);
+            g_device.context->Unmap(buffer, 0);
+        }
+        return buffer;
+    }
     static std::map<std::string, ID3D11Buffer*> cache;
     constexpr size_t kCachedConstants = 4096;
     if (cache.size() >= kCachedConstants) {
@@ -1567,11 +1667,13 @@ ID3D11Buffer* constant_buffer(const void* data, size_t size) {
         description.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
         D3D11_SUBRESOURCE_DATA initial{data, 0, 0};
         g_device.device->CreateBuffer(&description, &initial, &found->second);
+        g_constants_created++;
     }
     return found->second;
 }
 
 void set_batch_state(const BatchState& pending, bool moved) {
+    auto clock = std::chrono::steady_clock::now();
     ID3D11DeviceContext* context = g_device.context;
     context->OMSetRenderTargets(1, &g_device.target_view, g_device.depth_view);
     context->PSSetShaderResources(0, kTextureMaps, pending.views);
@@ -1605,12 +1707,83 @@ void set_batch_state(const BatchState& pending, bool moved) {
     context->VSSetShader(moved ? g_device.moved_shader : g_device.vertex_shader, nullptr, 0);
     ID3D11PixelShader* variant = variant_for(pending.constants, pending.early_depth);
     context->PSSetShader(variant ? variant : (pending.early_depth ? g_device.early_pixel_shader : g_device.pixel_shader), nullptr, 0);
+    g_state_seconds += lap(clock);
     ID3D11Buffer* constants = constant_buffer(&pending.constants, sizeof pending.constants);
     context->PSSetConstantBuffers(0, 1, &constants);
+    g_constant_seconds += lap(clock);
+}
+
+uint32_t coordinates_used(const ScreenVertex* vertices, size_t count) {
+    __m128i seen[6] = {};
+    for (size_t i = 0; i < count; i++) {
+        const auto* uv = reinterpret_cast<const __m128i*>(vertices[i].uv);
+        for (int part = 0; part < 6; part++) {
+            seen[part] = _mm_or_si128(seen[part], _mm_loadu_si128(uv + part));
+        }
+    }
+    uint32_t words[24];
+    std::memcpy(words, seen, sizeof words);
+    uint32_t used = 0;
+    for (uint32_t slot = 0; slot < 8; slot++) {
+        if (words[slot * 3] | words[slot * 3 + 1] | words[slot * 3 + 2]) {
+            used = slot + 1;
+        }
+    }
+    return used;
+}
+
+void draw_trimmed(const ScreenVertex* vertices, size_t total) {
+    ID3D11DeviceContext* context = g_device.context;
+    auto clock = std::chrono::steady_clock::now();
+    uint32_t used = coordinates_used(vertices, total);
+    UINT stride = offsetof(ScreenVertex, uv) + used * sizeof(float[3]);
+    ID3D11Buffer* buffers[2] = {g_device.vertex_buffer, g_device.zero_buffer};
+    UINT strides[2] = {stride, 0};
+    context->IASetInputLayout(used == 8 ? g_device.layout : g_device.trimmed_layouts[used]);
+    static std::vector<uint8_t> packed;
+    const uint8_t* source = reinterpret_cast<const uint8_t*>(vertices);
+    if (used != 8) {
+        packed.resize(total * stride + 16);
+        uint8_t* to = packed.data();
+        for (size_t i = 0; i < total; i++, to += stride) {
+            const uint8_t* from = reinterpret_cast<const uint8_t*>(vertices + i);
+            for (UINT part = 0; part < stride; part += 16) {
+                _mm_storeu_si128(reinterpret_cast<__m128i*>(to + part), _mm_loadu_si128(reinterpret_cast<const __m128i*>(from + part)));
+            }
+        }
+        source = packed.data();
+    }
+    size_t offset = 0;
+    while (offset < total) {
+        uint32_t batch = static_cast<uint32_t>(std::min<size_t>(total - offset, kVertexBytes / stride));
+        D3D11_MAP mode = D3D11_MAP_WRITE_NO_OVERWRITE;
+        if (g_trimmed_cursor + batch * stride > kVertexBytes) {
+            mode = D3D11_MAP_WRITE_DISCARD;
+            g_trimmed_cursor = 0;
+        }
+        D3D11_MAPPED_SUBRESOURCE mapped;
+        if (FAILED(context->Map(g_device.vertex_buffer, 0, mode, 0, &mapped))) {
+            break;
+        }
+        std::memcpy(static_cast<uint8_t*>(mapped.pData) + g_trimmed_cursor, source + offset * stride, static_cast<size_t>(batch) * stride);
+        context->Unmap(g_device.vertex_buffer, 0);
+        g_copy_bytes += static_cast<uint64_t>(batch) * stride;
+        g_copy_seconds += lap(clock);
+        UINT offsets[2] = {g_trimmed_cursor, 0};
+        context->IASetVertexBuffers(0, 2, buffers, strides, offsets);
+        context->Draw(batch, 0);
+        g_draw_seconds += lap(clock);
+        g_trimmed_cursor += batch * stride;
+        offset += batch;
+    }
 }
 
 uint32_t draw_batch(const BatchState& pending, const ScreenVertex* vertices, size_t total) {
     set_batch_state(pending, false);
+    if (!g_recording && g_trimming) {
+        draw_trimmed(vertices, total);
+        return ~0u;
+    }
     ID3D11DeviceContext* context = g_device.context;
     D3D11_MAPPED_SUBRESOURCE mapped;
     uint32_t start = total > kVertexCapacity ? ~0u : (g_vertex_cursor + total > kVertexCapacity ? 0u : g_vertex_cursor);
@@ -1622,12 +1795,16 @@ uint32_t draw_batch(const BatchState& pending, const ScreenVertex* vertices, siz
             mode = D3D11_MAP_WRITE_DISCARD;
             g_vertex_cursor = 0;
         }
+        auto clock = std::chrono::steady_clock::now();
         if (FAILED(context->Map(g_device.vertex_buffer, 0, mode, 0, &mapped))) {
             break;
         }
         std::memcpy(static_cast<ScreenVertex*>(mapped.pData) + g_vertex_cursor, vertices + offset, batch * sizeof(ScreenVertex));
         context->Unmap(g_device.vertex_buffer, 0);
+        g_copy_bytes += static_cast<uint64_t>(batch) * sizeof(ScreenVertex);
+        g_copy_seconds += lap(clock);
         context->Draw(batch, g_vertex_cursor);
+        g_draw_seconds += lap(clock);
         g_vertex_cursor += batch;
         offset += batch;
     }
@@ -1780,9 +1957,22 @@ void take_statistics(uint32_t& batches, uint32_t& vertices, double& seconds) {
     batches = g_batches;
     vertices = g_batch_vertices;
     seconds = g_batch_seconds;
+    log::write("batches", "%.0f ms setting state, %.0f ms on constants (%u new buffers), %.0f ms copying %u MB of vertices, %.0f ms in draw calls", g_state_seconds * 1000.0,
+               g_constant_seconds * 1000.0, g_constants_created, g_copy_seconds * 1000.0, static_cast<unsigned>(g_copy_bytes >> 20), g_draw_seconds * 1000.0);
+    static const double slow = std::getenv("WP_TRIM_BELOW") ? std::atof(std::getenv("WP_TRIM_BELOW")) : 6.0;
+    if (!g_trimming && g_device.zero_buffer && g_copy_bytes >= (128u << 20) && static_cast<double>(g_copy_bytes) < g_copy_seconds * slow * 1e9) {
+        g_trimming = true;
+        log::write("video", "vertices reach the graphics card at %.1f GB/s: only the texture coordinates in use are sent from now on", static_cast<double>(g_copy_bytes) / g_copy_seconds / 1e9);
+    }
     g_batches = 0;
     g_batch_vertices = 0;
     g_batch_seconds = 0.0;
+    g_state_seconds = 0.0;
+    g_constant_seconds = 0.0;
+    g_copy_seconds = 0.0;
+    g_copy_bytes = 0;
+    g_draw_seconds = 0.0;
+    g_constants_created = 0;
 }
 
 void take_copy_statistics(uint32_t& write_backs, double& wait_seconds) {
@@ -3019,6 +3209,7 @@ void end_record() {
     g_record_broken = false;
     if (g_recording) {
         g_vertex_cursor = kVertexCapacity;
+        g_trimmed_cursor = kVertexBytes;
     }
 }
 
@@ -3675,6 +3866,7 @@ bool present_frame(void* window_handle, double aspect) {
         if (hz != g_display_hz) {
             log::write("video", "display refresh rate %d Hz%s", hz, hz > 0 && hz < 100 ? ", too low for interpolated frames" : "");
             g_display_hz = hz;
+            pacing::set_display_hz(hz);
         }
     }
     static uint64_t queued_frame = 0;

@@ -13,6 +13,8 @@ struct FramePlan {
 
 FramePlan plan_frame(double& next, double period, int rate, uint32_t max_images);
 bool interpolation_wanted(int fps, int display_hz);
+void set_display_hz(int hz);
+int display_hz();
 int output_rate(int fps);
 
 struct AlarmPeriods {

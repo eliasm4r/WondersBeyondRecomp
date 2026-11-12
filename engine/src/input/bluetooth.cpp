@@ -680,7 +680,7 @@ void update_wiimote(uint32_t index) {
         real_wiimote::reset(index);
         return;
     }
-    bool wakes = real ? real_wiimote::take_wake(index) : input::connected(index) && input::wakes_remote(index);
+    bool wakes = real ? real_wiimote::take_wake(index) : wiimote.baseband == Baseband::Inactive && input::connected(index) && input::wakes_remote(index);
     if (wiimote.baseband == Baseband::Inactive && wakes) {
         wiimote.baseband = Baseband::RequestConnection;
         wiimote.real = real;
@@ -724,17 +724,20 @@ void update_wiimote(uint32_t index) {
 }
 
 void send_completed_packets() {
-    std::vector<uint8_t> body = {static_cast<uint8_t>(kWiimoteCount)};
     uint32_t total = 0;
+    for (uint32_t i = 0; i < kWiimoteCount; i++) {
+        total += g_wiimotes[i].completed_packets;
+    }
+    if (total == 0) {
+        return;
+    }
+    std::vector<uint8_t> body = {static_cast<uint8_t>(kWiimoteCount)};
     for (uint32_t i = 0; i < kWiimoteCount; i++) {
         put16(body, connection_handle(i));
         put16(body, static_cast<uint16_t>(g_wiimotes[i].completed_packets));
-        total += g_wiimotes[i].completed_packets;
         g_wiimotes[i].completed_packets = 0;
     }
-    if (total != 0) {
-        event(kEventCompletedPackets, body);
-    }
+    event(kEventCompletedPackets, body);
 }
 
 bool g_started = false;

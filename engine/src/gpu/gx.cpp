@@ -1384,6 +1384,7 @@ render::CopyFilter copy_filter(uint32_t control) {
 
 std::atomic<uint32_t> g_frame_holds{0};
 std::atomic<uint32_t> g_long_holds{0};
+std::atomic<int64_t> g_gpu_asleep_ns{0};
 std::atomic<bool> g_frame_late{false};
 
 void execute_copy(uint32_t value) {
@@ -1439,13 +1440,14 @@ void execute_copy(uint32_t value) {
                 log::write("memory", "%zu MB private memory, %zu KB of graphics commands queued, timers held %u times for a token, %u for over 4 ms", private_memory_mb(),
                            g_queued_bytes.load() >> 10, g_frame_holds.exchange(0), g_long_holds.exchange(0));
                 double idle = idle_share();
+                double asleep = static_cast<double>(g_gpu_asleep_ns.exchange(0)) / 1e7 / seconds;
                 if (idle >= 0.0) {
-                    log::write("threads", "CPU thread busy %.0f%% (guest idle %.0f%%), GPU thread busy %.0f%%", (cpu - previous_cpu) * 100.0 / seconds, idle * 100.0, (gpu - previous_gpu) * 100.0 / seconds);
+                    log::write("threads", "CPU thread busy %.0f%% (guest idle %.0f%%), GPU thread busy %.0f%%, without work %.0f%%", (cpu - previous_cpu) * 100.0 / seconds, idle * 100.0,
+                               (gpu - previous_gpu) * 100.0 / seconds, asleep);
                 } else {
-                    log::write("threads", "CPU thread busy %.0f%%, GPU thread busy %.0f%%", (cpu - previous_cpu) * 100.0 / seconds, (gpu - previous_gpu) * 100.0 / seconds);
+                    log::write("threads", "CPU thread busy %.0f%%, GPU thread busy %.0f%%, without work %.0f%%", (cpu - previous_cpu) * 100.0 / seconds, (gpu - previous_gpu) * 100.0 / seconds, asleep);
                 }
-                publish_performance(g_frames / seconds, real_frames / seconds, seconds, g_cpu_clock_known.load() ? (cpu - previous_cpu) * 100.0 / seconds : -1.0,
-                                    (gpu - previous_gpu) * 100.0 / seconds);
+                publish_performance(g_frames / seconds, real_frames / seconds, seconds, idle >= 0.0 ? (1.0 - idle) * 100.0 : -1.0, std::clamp(100.0 - asleep, 0.0, 100.0));
                 previous_cpu = cpu;
                 previous_gpu = gpu;
                 g_indirect_draws = 0;
@@ -1977,11 +1979,13 @@ void gpu_thread() {
             hold.unlock();
             bool waiting = render::service_presents();
             hold.lock();
+            auto asleep = std::chrono::steady_clock::now();
             if (waiting) {
                 g_gpu.work.wait_for(hold, std::chrono::milliseconds(1), [] { return !g_gpu.items.empty(); });
             } else {
                 g_gpu.work.wait(hold, [] { return !g_gpu.items.empty(); });
             }
+            g_gpu_asleep_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - asleep).count();
         }
         GpuItem item = std::move(g_gpu.items.front());
         g_gpu.items.pop_front();

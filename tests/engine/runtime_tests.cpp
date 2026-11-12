@@ -1635,6 +1635,10 @@ void test_options_menu() {
     CHECK(wp::options::shown_value("audio.volume", "75") == "75%");
     CHECK(wp::options::shown_value("video.anisotropy", "1") == "Off");
     CHECK(wp::options::shown_value("video.anisotropy", "8") == "8x");
+    CHECK(wp::options::shown_value("video.fps", "90") == "90");
+    wp::pacing::set_display_hz(75);
+    CHECK(wp::options::shown_value("video.fps", "90") == "90 > 60 (75 Hz)" && wp::options::shown_value("video.fps", "60") == "60");
+    wp::pacing::set_display_hz(0);
     CHECK(wp::options::shown_value("keys.up", "Up,W") == "Up, W");
     CHECK(wp::options::shown_value("pad.a", "auto") == "A, RB");
     CHECK(wp::options::shown_value("pad.a", "south") == "A");
@@ -2083,8 +2087,6 @@ void test_perf_overlay() {
     wp::perf::Sample sample;
     sample.fps = 120;
     sample.frame_ms = 8.33;
-    sample.game_fps = 60;
-    sample.late_per_second = 2;
     sample.cpu_percent = 23;
     sample.game_thread_percent = 71;
     sample.gpu_thread_percent = 88;
@@ -2108,17 +2110,17 @@ void test_perf_overlay() {
     CHECK(standard.size() == 4 && standard[1][0].text == "CPU" && standard[1][1].text == "23 %");
     CHECK(standard[2][0].text == "GPU" && standard[2][1].text == "64 %" && standard[2][2].text == "2.1 GB" && standard[3][1].text == "1.8 GB");
     auto full = wp::perf::lines(sample, wp::perf::Level::Full);
-    CHECK(full.size() == 9 && full[1][1].text == "60 fps" && full[1][2].text == "2 late/s" && full[2][2].text == "CPU X");
-    CHECK(full[3][1].text == "71 %" && full[3][2].text == "GPU thr. 88 %" && full[4][2].text == "5.1 ms");
-    CHECK(full[5][0].text == "VRAM" && full[5][2].text == "/ 8.0 GB" && full[6][2].text == "/ 32 GB");
-    CHECK(full[7][0].text == "D3D11" && full[7][1].text == "3840\xC3\x97" "3168" && full[7][2].text == "6x \xC2\xB7 VSync on");
-    CHECK(full[8].size() == 1 && full[8][0].text == "GPU Y \xC2\xB7 144 Hz");
-    CHECK(full[0][0].color == 0xFFFFFF && full[2][0].color == 0x4FC3F7 && full[4][0].color == 0x81C784 && full[6][0].color == 0xF48FB1);
-    CHECK(full[7][0].color == 0xFFB74D && full[0][2].color == 0x9AA0A6);
+    CHECK(full.size() == 8 && full[1][2].text == "CPU X");
+    CHECK(full[2][1].text == "71 %" && full[2][2].text == "GPU thr. 88 %" && full[3][2].text == "5.1 ms");
+    CHECK(full[4][0].text == "VRAM" && full[4][2].text == "/ 8.0 GB" && full[5][2].text == "/ 32 GB");
+    CHECK(full[6][0].text == "D3D11" && full[6][1].text == "3840\xC3\x97" "3168" && full[6][2].text == "6x \xC2\xB7 VSync on");
+    CHECK(full[7].size() == 1 && full[7][0].text == "GPU Y \xC2\xB7 144 Hz");
+    CHECK(full[0][0].color == 0xFFFFFF && full[1][0].color == 0x4FC3F7 && full[3][0].color == 0x81C784 && full[5][0].color == 0xF48FB1);
+    CHECK(full[6][0].color == 0xFFB74D && full[0][2].color == 0x9AA0A6);
     auto empty = wp::perf::lines(wp::perf::Sample{}, wp::perf::Level::Full);
     const std::string dash = "\xE2\x80\x93";
-    CHECK(empty.size() == 9 && empty[0][1].text == dash && empty[0][2].text == dash && empty[1][2].text == dash);
-    CHECK(empty[4][1].text == dash && empty[5][1].text == dash && empty[7][0].text == dash && empty[8][0].text == dash);
+    CHECK(empty.size() == 8 && empty[0][1].text == dash && empty[0][2].text == dash && empty[1][2].text == dash);
+    CHECK(empty[3][1].text == dash && empty[4][1].text == dash && empty[6][0].text == dash && empty[7][0].text == dash);
     CHECK(wp::perf::level_from("standard") == wp::perf::Level::Standard && wp::perf::level_from("bad") == wp::perf::Level::Full);
     CHECK(wp::perf::corner_from("bottom_right") == wp::perf::Corner::BottomRight && wp::perf::corner_from("") == wp::perf::Corner::TopLeft);
 

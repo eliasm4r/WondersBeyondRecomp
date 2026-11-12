@@ -26,6 +26,7 @@
 #include "wp/log.h"
 #include "wp/nand.h"
 #include "wp/options_window.h"
+#include "wp/perf.h"
 #include "wp/ipc.h"
 #include "wp/settings.h"
 #include "wp/stall_watch.h"
@@ -34,6 +35,13 @@
 #include "wp/watch.h"
 #include "wp/play_time.h"
 #include "wp/runtime.h"
+
+#ifdef _WIN32
+extern "C" {
+__declspec(dllexport) DWORD NvOptimusEnablement = 1;
+__declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+}
+#endif
 
 namespace {
 
@@ -121,6 +129,27 @@ void report_terminate() {
     std::_Exit(134);
 }
 
+void use_default_log() {
+#ifdef _WIN32
+    if (std::getenv("WP_LOG_FILE") || std::getenv("WP_HEADLESS")) {
+        return;
+    }
+    std::error_code error;
+    std::filesystem::create_directories("logs", error);
+    std::filesystem::rename("logs/pokepark2.log", "logs/pokepark2.previous.log", error);
+    _putenv_s("WP_LOG_FILE", "logs/pokepark2.log");
+#endif
+}
+
+void log_machine() {
+#ifdef _WIN32
+    SYSTEM_POWER_STATUS power{};
+    GetSystemPowerStatus(&power);
+    wp::log::write("boot", "%s, %u logical processors, %s", wp::perf::cpu_name().c_str(), std::thread::hardware_concurrency(),
+                   power.ACLineStatus == 1 ? "on mains power" : power.ACLineStatus == 0 ? "on battery" : "power source unknown");
+#endif
+}
+
 }
 
 int run(int argc, char** argv) {
@@ -203,9 +232,11 @@ int run(int argc, char** argv) {
 
 int main(int argc, char** argv) {
     std::set_terminate(report_terminate);
+    use_default_log();
     if (const char* log_path = std::getenv("WP_LOG_FILE")) {
         wp::log::write("boot", "log started");
         std::freopen(log_path, "a", stderr);
+        log_machine();
     }
     // Redirected stderr is fully buffered; a crash would lose the end of its report.
     std::setvbuf(stderr, nullptr, _IONBF, 0);

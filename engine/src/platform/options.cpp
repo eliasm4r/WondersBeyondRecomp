@@ -10,6 +10,7 @@
 
 #include "wp/color.h"
 #include "wp/control_names.h"
+#include "wp/frame_pacing.h"
 #include "wp/game.h"
 #include "wp/gamepad.h"
 #include "wp/keymap.h"
@@ -241,7 +242,9 @@ std::string shown_value(const std::string& key, const std::string& value) {
         return value == "1" ? text.menu_native : value + "x";
     }
     if (key == "video.fps") {
-        return value;
+        int fps = std::atoi(value.c_str());
+        int hz = pacing::display_hz();
+        return fps > 60 && !pacing::interpolation_wanted(fps, hz) ? value + " > 60 (" + std::to_string(hz) + " Hz)" : value;
     }
     if (key == "video.anisotropy") {
         return value == "1" ? text.menu_off : value + "x";

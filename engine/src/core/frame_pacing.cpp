@@ -1,6 +1,7 @@
 #include "wp/frame_pacing.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 
 namespace wp::pacing {
@@ -9,6 +10,7 @@ namespace {
 
 constexpr double kOnFrame = 1e-3;
 constexpr uint32_t kMaxImages = 3;
+std::atomic<int> g_display_hz{0};
 
 }
 
@@ -40,6 +42,14 @@ bool interpolation_wanted(int fps, int display_hz) {
         return display_hz == 0 || display_hz >= 85;
     }
     return false;
+}
+
+void set_display_hz(int hz) {
+    g_display_hz = hz;
+}
+
+int display_hz() {
+    return g_display_hz;
 }
 
 int output_rate(int fps) {

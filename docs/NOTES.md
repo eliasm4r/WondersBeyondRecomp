@@ -186,8 +186,10 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
   - The GPU thread publishes the figures once a second from its statistics block in `gx.cpp`. CPU, GPU and RAM come
     from a sampler thread that runs only while the overlay is on: the GPU counters can take tens of milliseconds to
     read, which would hold a frame back on the GPU thread.
-  - CPU %: the whole system (GetSystemTimes). Game and GPU thr.: the time the game's thread and the GPU thread used
-    over the second.
+  - CPU %: the whole system (GetSystemTimes). Game: the share of the second a game thread was running (100 minus the
+    guest idle share; the host thread's own time is useless, it spins while the game idles and read near 100 at a
+    steady 60 fps). GPU thr.: the share of the second the GPU thread was not asleep on an empty queue, so time blocked
+    in the driver counts. Either one near 100 is the limit. There is no real-frame-rate line any more.
   - GPU %: the busiest adapter's 3D engine (PDH `GPU Engine(*engtype_3D)`), the figure Task Manager shows. GPU ms: this
     process's share of that engine times the shown frame time. A timestamp pair around a frame would also count the
     idle gaps between the game's command bursts.
@@ -661,6 +663,32 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
 - A watchdog in `main.cpp` writes a `hang` line to the log when the game has drawn no frame for 15 seconds outside the
   options menu, followed by every guest thread (state, priority, saved pc and lr, the queue and mutex it waits on, its
   call chain read from the stack back chain) and the IPC state and trace.
+- Without `WP_LOG_FILE` and outside headless runs the game logs to `logs/pokepark2.log` under the working directory
+  (the install folder), after renaming the last one to `pokepark2.previous.log` (`use_default_log` in `main.cpp`). Its
+  first lines give the processor, the logical processor count, mains or battery, and the Direct3D adapter with its
+  driver version. The `threads` line ends with "without work": the share of the second the graphics thread slept on
+  an empty queue. 100 minus busy minus without work is time it was blocked, in the driver or elsewhere.
+- Direct3D 11 takes the first adapter of `EnumAdapterByGpuPreference(HIGH_PERFORMANCE)` and falls back to the default
+  adapter; the exe also exports `NvOptimusEnablement` and `AmdPowerXpressRequestHighPerformance` for the OpenGL path.
+  Before, a laptop with two graphics cards ran the game on the integrated one (friend's Ryzen 5 5600H + RX 6500M,
+  2026-11-12).
+- Headless runs do not measure the input path: the input script returns before the keyboard, mouse and controller
+  are read. In real play `update_wiimote` (`bluetooth.cpp`) called `input::wakes_remote` on every poll, a full sample
+  with about 21 `GetAsyncKeyState` calls and one `GetCursorPos`, each a kernel call of about 0.5 us. Emulated in a
+  headless run it cost 500 ms of kernel time a second on the game thread in menus and took the guest idle share from
+  47 to 28 % in the main zone. The wake check now runs only while the remote is disconnected, and
+  `send_completed_packets` no longer builds its event when nothing completed (5 % of the game thread).
+- The `batches` log line splits the Direct3D time of each second: state, constants, vertex copy with its megabytes,
+  draw calls. On the RX 6500M laptop the copy ran at 2.4-2.7 GB/s whatever the batch count, the buffer size or the
+  map mode, against 15-20 on an RTX 4070; the likely cause is its four-lane link on a PCIe 3.0 machine. When a second
+  with at least 128 MB of vertices runs under 6 GB/s (`WP_TRIM_BELOW` changes the limit, 1000 forces it),
+  `draw_trimmed` (`gx_render.cpp`) takes over for frames that are not recorded: it finds the highest texture
+  coordinate with a non-zero bit in the batch, packs the vertices up to it in ordinary memory, copies that in one
+  piece and draws with a stride of 48 + 12 per coordinate; the coordinates left out come from a 16-byte zero buffer
+  bound with stride 0 (`trimmed_layouts`), so the vertex shader gets the same bits as before. Never write vertex by
+  vertex into the mapped buffer: that ran at 0.7 GB/s on NVIDIA. Recorded frames (in-between images) keep the full
+  vertices. Cards other than NVIDIA also rewrite one dynamic constant buffer per size (`g_nvidia`,
+  `WP_MAP_CONSTANTS=1` forces it), since creating immutable ones cost 40 us each there.
 - The log file is opened in append mode like the redirected stderr. Before, the log wrote at its own position and
   overwrote whatever stderr had added, so the thread report after a `hang` line was lost as soon as another line came.
 - The "endless loading after a cutscene" (user's logs of 2026-11-11 14:24 and 2026-11-12 01:02, both stopping after

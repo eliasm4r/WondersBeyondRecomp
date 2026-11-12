@@ -63,11 +63,21 @@ class Window:
         self.close_button = ttk.Button(buttons, text=t["close"], command=self.close)
         self.close_button.grid(row=0, column=1)
         frame.columnconfigure(0, weight=1)
+        self.folder.trace_add("write", lambda *change: self.refresh())
+        self.refresh()
         self.root.after(100, self.poll)
 
     def inputs(self, state):
         for widget in (self.disc_entry, self.disc_button, self.folder_entry, self.folder_button, self.shortcut_box):
             widget.configure(state=state)
+
+    def refresh(self):
+        t = self.texts
+        self.update = steps.game_extracted(self.folder.get().strip().strip('"'))
+        for widget in (self.disc_entry, self.disc_button):
+            widget.configure(state="disabled" if self.update else "normal")
+        self.main_button.configure(text=t["update" if self.update else "install"])
+        self.status.set(t["already"] if self.update else "")
 
     def choose_disc(self):
         t = self.texts
@@ -123,7 +133,7 @@ class Window:
                 elif kind == "done":
                     self.executable = value
                     self.install = None
-                    self.status.set(t["done_shortcut" if self.shortcut.get() else "done"])
+                    self.status.set(t["done_update" if self.update else "done_shortcut" if self.shortcut.get() else "done"])
                     self.main_button.configure(text=t["play"], command=self.play, state="normal")
                     self.close_button.configure(text=t["close"])
                 else:
@@ -133,6 +143,7 @@ class Window:
                     self.inputs("normal")
                     self.main_button.configure(state="normal")
                     self.close_button.configure(text=t["close"])
+                    self.refresh()
                     if kind == "stopped":
                         self.status.set(t["cancelled"])
                     else:

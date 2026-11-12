@@ -8,16 +8,31 @@ All notable changes to WondersBeyondRecomp. Dates are when the change landed on 
 - A setup to install the game on another PC (`tools/make_setup.py`, `installer/`): a zip to unpack, with one window
   that asks for the disc image and a folder, downloads the build tools, builds the game there and adds a shortcut. It
   refuses any disc other than the European version and works with Smart App Control on. Test stage.
+- The game writes its log to `logs/pokepark2.log` on every start and keeps the one before as
+  `logs/pokepark2.previous.log`. The log names the processor, the power source, the graphics card and its driver, and
+  says each second how long the graphics thread had nothing to do.
 
 ### Changed
 - Higher frame rate in heavy zones: the vertices of consecutive draws are prepared on up to three helper threads
   (processors with more than four cores). In the measured spot at 120 fps the game went from about 50 to its full 60
   frames a second, each with its image in between.
 
+- Performance overlay: "Game" and "GPU thr." now show how much of each second the game and the graphics thread were
+  really at work (the game figure read near 100 % all the time), and the line with the game's own frame rate is gone.
+
 ### Removed
 - The previous installer (`launcher/`) and its AppImage and offline pack tools; the setup replaces it.
 
 ### Fixed
+- Laptops with two graphics cards started the game on the slow one built into the processor; it now asks for the
+  fast one.
+- The game read the keyboard, the mouse and the controllers tens of thousands of times a second while a Wii Remote
+  was connected. It now does so only at the remote's own report rate, which frees a large share of the game thread
+  (on a Ryzen 5 5600H laptop its time inside Windows fell from about 250 to 100 ms per second).
+- Slow frame rate on graphics cards that receive vertices slowly (measured at 2.4 GB/s on a Radeon RX 6500M laptop):
+  the game notices it and then sends only the texture coordinates a batch uses, about 65 bytes a vertex instead of
+  144, and on cards other than NVIDIA it rewrites one constant buffer instead of creating thousands. That laptop went
+  from 25-30 to 30-54 fps in the main zone.
 - Free camera: near walls, rocks and ledges the view jumped sharply up and down; its lowest height now moves
   smoothly.
 - Images in between: when the minimap slides away (character switch, scene cameras) the screen trembled and black

@@ -71,7 +71,6 @@ std::vector<Line> lines(const Sample& sample, Level level) {
         result.push_back({{"RAM", kRam}, {number("%.1f GB", sample.ram_used_gb), kWhite}, {"", kGrey}});
         return result;
     }
-    result.push_back({{"Game", kWhite}, {number("%.0f fps", sample.game_fps), kWhite}, {number("%.0f late/s", sample.late_per_second), kGrey}});
     result.push_back({{"CPU", kCpu}, {number("%.0f %%", sample.cpu_percent), kWhite}, {text_or_dash(sample.cpu_name), kGrey}});
     result.push_back({{"Game", kCpu}, {number("%.0f %%", sample.game_thread_percent), kWhite}, {number("GPU thr. %.0f %%", sample.gpu_thread_percent), kGrey}});
     result.push_back({{"GPU", kGpu}, {number("%.0f %%", sample.gpu_percent), kWhite}, {number("%.1f ms", sample.gpu_ms), kGrey}});
