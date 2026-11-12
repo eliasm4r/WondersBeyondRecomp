@@ -333,6 +333,12 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
   and the eye eases back out afterwards. Scenery drawn without collision can still be entered.
   While the player pushes down the orbit's pitch stops at the ground (`Orbit::rest_on`), so pushing up answers at
   once.
+- The lowest height allowed for the eye is eased (16 per second upward, 8 downward) instead of applied at once. The
+  probe under the eye meets rocks, ledges and wall tops from one frame to the next: with a low camera turning near
+  them, the eye jumped up to 5 units up or down in a single frame (83 jumps over 0.4 unit in a 2.5 minute walk on
+  the beach with the camera spinning 0.45 rad under the game's pitch; 36 after, the largest 1.5, each one a step of
+  the easing). On a slope the eased height trails by speed / 16, under the 1.5 clearance up to about 20 units a second.
+  The test used two temporary switches (a camera log line, a forced spin) that are not kept.
 - Not seen yet in game: scenes that move this same camera themselves would be overridden too.
 
 ## Indirect maps left unbound
@@ -615,7 +621,9 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
   Control blocks a fresh exe (rc=126, "An Application Control policy has blocked this file"; rebuilding with
   different bytes gets past it), kills leftovers, puts the copies back and checks them. `hl.sh` is `run.sh` with
   `pause.txt` (opens the pause at ~105 s), `cam.sh` with the frame clock. `run.txt` moves 32â€“54 s, `empty.txt` stays
-  on the title.
+  on the title. With the frame clock a script time T acts about 250 frames before frame T * 60 / 1000 of
+  `WP_DUMP_SEQUENCE` (A at 40000 shows at frame 2144). Moving in the field needs the sideways flag held
+  (`30000,200000,800000`). In that run the save has no partner: A only makes Pikachu wave.
 - Never restore a save copy taken earlier: on 2026-11-11 a stale copy overwrote a save of the day (recovered from the
   game's own backup).
 - `WP_HEADLESS=window` keeps the window, hidden: the real present path runs (interpolated images, bug recorder,
@@ -817,6 +825,7 @@ What the code added for frame interpolation, the timers and the input changes do
 - `void pair_frame()`: Pairs the recorded frame with the previous one.
 - `static std::vector<uint32_t> partner;`: Exact keys first, so copies of one mesh pair with themselves; then the plain keys for meshes whose arrays move.
 - `constexpr uint8_t kNoDraw = 255;`: Per draw: the g_match column it counts in (kNoDraw for none), and its partner or kByCamera + camera when it moves in the images (kUnmatched when it stays at the new frame's place).
+- `if (pair && camera < kMaxCameras && kind[d] != kOnly && fixed_on_screen(draw, g_previous...`: A paired draw whose positions are the same in both frames is fixed on the screen and stays with its pair. On the 2D projection the "camera" is fitted from the HUD pieces drawn once; when the minimap slides away (character switch, scene camera) that motion is the slide, and at more than 0.05 of the screen per frame the HUD pieces drawn several times no longer passed `near_camera_path`: they followed the slide by half a step on the image in between, the screen trembled and a black bar kept under the picture rose about 10 rows into view (user capture of 2026-11-12, images 079 to 087). Reasoned from the capture and the code; the switch screen could not be opened in a headless run (the scripted A only makes Pikachu wave there).
 - `if (camera < kMaxCameras && !(pair && (kind[d] == kOnly || (kind[d] == kSameCount && ne...`: A mesh drawn many times (grass, trees, water tiles, shadows, footprints) is paired by drawing order, and the order shifts whenever one copy enters or leaves the view: each copy then slid toward its neighbour's old place for one image, which made them blink and tremble. Such a copy follows the camera instead, as a thing that stands still in the world, unless its pair is sure or sits where a slow mover would have been.
 - `column[d] = 2;`: A mesh drawn many times under a projection with no known motion, like the footprints and shadows the game draws from above into the ground's decal texture: its order shifts whenever one is added, and each copy slid toward its neighbour's place, ghost footprints on every image in between. It stays put.
 - `column[d] = partner[d] == kRejected ? 2 : (draw.exact != 0 ? 3 : 4);`: Left at the new frame's place: rejected for moving too far, or with nothing to pair with.

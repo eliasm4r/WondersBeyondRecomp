@@ -2818,6 +2818,11 @@ bool near_camera_path(const RecordedDraw& draw, const RecordedDraw& before, cons
     return p[3] > 0.0f && a[3] > 0.0f && std::fabs(p[0] / p[3] - a[0] / a[3]) <= kNear && std::fabs(p[1] / p[3] - a[1] / a[3]) <= kNear;
 }
 
+bool fixed_on_screen(const RecordedDraw& draw, const RecordedDraw& before) {
+    return draw.positions != 0 && draw.positions == before.positions &&
+           std::memcmp(&g_record.positions[draw.first_position], &g_previous.positions[before.first_position], draw.positions * sizeof(std::array<float, 4>)) == 0;
+}
+
 std::vector<std::pair<uint32_t, uint32_t>> g_matches;
 bool g_camera_cut = false;
 
@@ -2930,7 +2935,10 @@ void pair_frame() {
             g_world_camera[d] = static_cast<uint8_t>(camera);
             g_world_moving[d] = moves_in_world(draw, g_previous.draws[partner[d]], g_cameras[camera]);
         }
-        if (camera < kMaxCameras && !(pair && (kind[d] == kOnly || (kind[d] == kSameCount && near_camera_path(draw, g_previous.draws[partner[d]], g_cameras[camera]))))) {
+        if (pair && camera < kMaxCameras && kind[d] != kOnly && fixed_on_screen(draw, g_previous.draws[partner[d]])) {
+            target[d] = partner[d];
+            column[d] = 1;
+        } else if (camera < kMaxCameras && !(pair && (kind[d] == kOnly || (kind[d] == kSameCount && near_camera_path(draw, g_previous.draws[partner[d]], g_cameras[camera]))))) {
             target[d] = kByCamera + static_cast<uint32_t>(camera);
             column[d] = 5;
         } else if (pair && camera == kMaxCameras && kind[d] != kOnly) {

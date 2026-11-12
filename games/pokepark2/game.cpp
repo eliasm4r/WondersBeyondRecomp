@@ -151,6 +151,8 @@ constexpr float kSlopeReach = 40.0f;
 constexpr float kNearestEye = 2.0f;
 constexpr float kReachRate = 3.0f;
 constexpr float kHeightRate = 10.0f;
+constexpr float kFloorRiseRate = 16.0f;
+constexpr float kFloorFallRate = 8.0f;
 constexpr auto kCameraIdle = std::chrono::milliseconds(500);
 constexpr auto kPlaceLogPeriod = std::chrono::seconds(2);
 
@@ -343,12 +345,9 @@ void field_camera(Cpu& c, HleFunction original) {
             }
         }
     }
-    if (grounded && ground + kEyeClearance > our_eye[1]) {
-        our_eye[1] = ground + kEyeClearance;
-        if (turn.pitch < 0.0f) {
-            orbit.rest_on(our_eye[0] - our_target[0], our_eye[1] - our_target[1], our_eye[2] - our_target[2]);
-        }
-    }
+    float free_height = our_eye[1] - our_target[1];
+    float lowest = grounded ? ground + kEyeClearance : our_eye[1];
+    our_eye[1] = std::max(our_eye[1], lowest);
     static float reach = 1.0f;
     float extent[3];
     float length = 0.0f;
@@ -373,7 +372,16 @@ void field_camera(Cpu& c, HleFunction original) {
         our_eye[i] = our_target[i] + extent[i] * reach;
     }
     if (reach < 1.0f && ground_under(c, our_eye, above, kEyeClearance, ground)) {
-        our_eye[1] = std::max(our_eye[1], ground + kEyeClearance);
+        lowest = ground + kEyeClearance;
+    }
+    static float floor = 0.0f;
+    floor = fresh ? lowest : floor + (lowest - floor) * std::min(1.0f, seconds * (lowest > floor ? kFloorRiseRate : kFloorFallRate));
+    our_eye[1] = our_target[1] + free_height * reach;
+    if (floor > our_eye[1]) {
+        our_eye[1] = floor;
+        if (turn.pitch < 0.0f) {
+            orbit.rest_on(our_eye[0] - our_target[0], our_eye[1] - our_target[1], our_eye[2] - our_target[2]);
+        }
     }
     write_vector(camera + kCameraEye, our_eye);
     write_vector(camera + kCameraShownEye, our_eye);

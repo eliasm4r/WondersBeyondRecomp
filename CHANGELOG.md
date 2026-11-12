@@ -15,6 +15,10 @@ All notable changes to WondersBeyondRecomp. Dates are when the change landed on 
   frames a second, each with its image in between.
 
 ### Fixed
+- Free camera: near walls, rocks and ledges the view jumped sharply up and down; its lowest height now moves
+  smoothly.
+- Images in between: when the minimap slides away (character switch, scene cameras) the screen trembled and black
+  lines showed at the bottom.
 - Photos taken in the game were saved black with pink streaks; they now hold the picture.
 - 90 and 120 fps stayed around 80 and 105 in heavy zones although the game ran at its full speed: images in between
   were dropped whenever the game finished a frame a little late.
