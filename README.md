@@ -62,11 +62,10 @@ Run the tests with `ctest` in `build/out`. Technical notes on the fixes so far a
 ### Installer
 
 ```bash
-cmake -S launcher -B build/launcher -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build/launcher
+python tools/make_setup.py
 ```
 
-`build/launcher/wondersbeyondrecomp-launcher.exe` is a single file for a PC without any of the tools above. It holds the sources of this repository and nothing of the game: it asks for a disc image of the European version, downloads the build tools, translates and compiles the game on that PC, then starts it. It is at the test stage and Windows only for now.
+`build/dist/WondersBeyondRecomp-Setup.zip` is for a PC without any of the tools above. It holds the official Python with its window toolkit, the scripts of `installer/` and the sources of this repository, and nothing of the game. Unzip it and start `Setup.exe`: it asks for a disc image of the European version and a folder, downloads the build tools, translates and compiles the game on that PC and adds a shortcut. It only installs; every setting is in the game (F1). It is at the test stage and Windows only.
 
 The function list in `games/pokepark2/analysis/` was produced with [decomp-toolkit](https://github.com/encounter/decomp-toolkit).
 

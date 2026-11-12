@@ -87,14 +87,8 @@ target_compile_options(launcher PRIVATE -Wall -Wextra)
 target_link_libraries(launcher PRIVATE imgui)
 
 if(WIN32)
-    # windres hands its include paths to the preprocessor unquoted, so it is run from res/ without them.
-    set(WP_LAUNCHER_RC "${CMAKE_CURRENT_BINARY_DIR}/launcher_rc.o")
-    add_custom_command(OUTPUT "${WP_LAUNCHER_RC}"
-        COMMAND "${CMAKE_RC_COMPILER}" -O coff -i launcher.rc -o "${WP_LAUNCHER_RC}"
-        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/res"
-        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/res/launcher.rc" "${CMAKE_CURRENT_SOURCE_DIR}/../games/pokepark2/res/pokepark2.ico"
-        VERBATIM)
-    target_sources(launcher PRIVATE "${WP_LAUNCHER_RC}")
+    include("${WP_ENGINE}/cmake/icon.cmake")
+    wp_icon_resource(launcher "${WP_ENGINE}/../games/pokepark2/res/pokepark2.ico")
     target_link_libraries(launcher PRIVATE dwmapi winhttp ole32 uuid shell32 bthprops dxgi)
     target_link_options(launcher PRIVATE -static $<$<CONFIG:Release>:-s>)
 else()

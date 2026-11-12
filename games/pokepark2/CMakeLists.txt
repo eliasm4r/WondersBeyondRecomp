@@ -28,13 +28,8 @@ target_compile_options(pokepark2_code PRIVATE -Wall -Wextra -Wno-unused-label -W
 
 add_executable(pokepark2)
 if(WIN32)
-    set(WP_RC_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/pokepark2_rc.o")
-    add_custom_command(OUTPUT "${WP_RC_OBJECT}"
-        COMMAND "${CMAKE_RC_COMPILER}" -O coff -i pokepark2.rc -o "${WP_RC_OBJECT}"
-        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/res"
-        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/res/pokepark2.rc" "${CMAKE_CURRENT_SOURCE_DIR}/res/pokepark2.ico"
-        VERBATIM)
-    target_sources(pokepark2 PRIVATE "${WP_RC_OBJECT}")
+    include("${CMAKE_SOURCE_DIR}/engine/cmake/icon.cmake")
+    wp_icon_resource(pokepark2 "${CMAKE_CURRENT_SOURCE_DIR}/res/pokepark2.ico")
 endif()
 target_link_libraries(pokepark2 PRIVATE wp_app "$<LINK_GROUP:RESCAN,pokepark2_code,wp_engine>")
 target_compile_options(pokepark2 PRIVATE -Wall -Wextra)

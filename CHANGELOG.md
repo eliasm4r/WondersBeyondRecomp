@@ -5,8 +5,9 @@ All notable changes to WondersBeyondRecomp. Dates are when the change landed on 
 ## 2026-11-12
 
 ### Added
-- The installer builds again (`launcher/`): one executable that asks for the disc image, downloads the build tools
-  and builds the game on the PC it runs on. It refuses any disc other than the European version. Test stage.
+- A setup to install the game on another PC (`tools/make_setup.py`, `installer/`): a zip to unpack, with one window
+  that asks for the disc image and a folder, downloads the build tools, builds the game there and adds a shortcut. It
+  refuses any disc other than the European version and works with Smart App Control on. Test stage.
 
 ### Changed
 - Higher frame rate in heavy zones: the vertices of consecutive draws are prepared on up to three helper threads

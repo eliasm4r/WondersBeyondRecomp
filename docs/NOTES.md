@@ -254,21 +254,35 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
 
 ## Installer
 
-- `launcher/` is its own CMake project (`cmake -S launcher -B build/launcher`), not part of the game build. The
-  executable embeds `payload.tar.gz`, the files `git ls-files` lists for the engine, the recompiler, `games/pokepark2`,
-  `third_party`, `tests` and `tools/fetch_sdl.py`, so an installed copy needs no access to the repository. Nothing of
-  the disc is tracked, so nothing of it is embedded.
-- It links a few engine sources for the settings pages. `launcher/src/engine_glue.cpp` gives them the game description
-  and a gamepad family, which the game itself gets from `games/pokepark2/game.cpp` and the gamepad worker.
-- Install steps: unpack the sources, download the tools that are missing (nodtool, embedded Python, CMake, Ninja,
-  MinGW, each checked against a SHA-256), verify and extract the disc, check that it is `S2LP01`, `tools/fetch_sdl.py`,
-  `recompiler/recomp.py`, `recompiler/dsp/recomp_dsp.py`, configure, build. The game has no REL modules, so the module
-  steps of the upstream launcher are gone. Any other disc is refused after extraction and its files removed.
-- The default folder is `%LOCALAPPDATA%\WondersBeyondRecomp`. The update check reads the releases of the GitHub
-  repository and finds none while there are no releases.
-- Not checked on a PC yet: Smart App Control refuses the unsigned launcher on the development PC, as it does for
-  `windres.exe` of the downloaded MinGW. The same steps run by hand from the unpacked payload produce the game.
-- The launcher has English, Spanish and Galician texts, no French yet.
+- `tools/make_setup.py` makes `build/dist/WondersBeyondRecomp-Setup.zip`: Python 3.12.10 from its NuGet package and
+  the Tcl/Tk part of the python.org installer (both checked against a SHA-256), the scripts of `installer/`,
+  `sources.zip` and `Setup.exe`. `sources.zip` holds the files
+  `git ls-files` lists for the engine, the recompiler, `games/pokepark2`, `third_party`, `tests` and
+  `tools/fetch_sdl.py`. Nothing of the disc is tracked, so nothing of it is in the zip.
+- Why a zip and scripts: Smart App Control refuses an unsigned installer executable, and nothing of ours is signed.
+  Every program in the zip is signed by the Python Software Foundation; `make_setup.py` stops if one is not, which is
+  why pip, Tix and the nmake helper are left out.
+- `Setup.exe` is `pythonw.exe` under another name, which keeps its signature, with `python312.dll` beside it.
+  `Setup._pth` gives it its module folders and turns `site` on, and `site` imports `installer/sitecustomize.py`, which
+  opens the window when the program is not named `python*`. Its icon in the file explorer is therefore the one of
+  Python; the window and the taskbar show the game icon.
+- Install steps (`installer/steps.py`): unpack the sources, download the tools that are missing (nodtool, CMake, Ninja,
+  MinGW, each checked against a SHA-256), verify and extract the disc, check that it is `S2LP01`,
+  `tools/fetch_sdl.py`, `recompiler/recomp.py`, `recompiler/dsp/recomp_dsp.py`, configure, build, copy the game and its
+  DLLs to the install folder, add the shortcuts. Any other disc is refused after extraction and its files removed. The
+  bundled Python runs the scripts, so none is downloaded.
+- The MinGW package is a self-extracting 7z archive. `tar.exe` of Windows unpacks it, so that unsigned program is
+  never run.
+- The game reads its files relative to the working folder, so the executable is copied to the install folder itself
+  and the shortcuts set that folder: a double click on it works too.
+- The window (`installer/setup.py`, tkinter) only installs: disc, folder, shortcut, progress, in English. The log is `logs/install.log` in the install folder.
+- The default folder is `%LOCALAPPDATA%\WondersBeyondRecomp`, or the system drive when that path has accented
+  letters. Paths with them are refused, MinGW and Ninja being unreliable there.
+- No resource compiler: `windres.exe` of the downloaded MinGW is refused by Smart App Control. `engine/cmake/icon.cmake`
+  reads the `.ico` at configure time and writes a source file whose assembly lays out the `.rsrc` section (icon group
+  1 and its images), which the linker takes as the resources of the executable.
+- `launcher/` is the previous installer, a single executable with settings pages. It still builds and is no longer
+  what is handed out.
 
 ## Color settings
 
