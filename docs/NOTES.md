@@ -497,6 +497,40 @@ Status on 2026-11-10, not committed yet. 60 fps is fine. 120 fps works in the ti
 - One run in four of that series showed 31 frames a second with the in-between commands at 8.8 ms and the GPU
   thread 56 % busy, while a headless browser and a recorder of other programs were using the PC: taken as outside
   load, not proven.
+- That slow mode was not outside load. It came back in about four runs of ten (31 to 45 real frames a second,
+  commands 3 to 9 ms, GPU thread about 50 % busy), a whole run being either fast or slow, and its profile had 43 % of
+  the GPU thread waiting in `ntdll` under `set_batch_state`: the same driver wait as for the copies, on the
+  `Map(WRITE_DISCARD)` of the per-batch constant buffer. `constant_buffer` (gx_render.cpp) now keeps immutable
+  buffers keyed by their bytes for the batches and the copies alike (4096 at most, then all released). The six
+  runs made afterwards were all fast. Cost: about 150 new sets of constants a frame, so about 9,000 `CreateBuffer` a second,
+  about 1.3 ms a frame. Not tried: a few dynamic buffers used in turn. The OpenGL path was not touched.
+- Draws on several threads (gx.cpp). Measured first: 21,000 to 22,000 draws a frame, 97 % of them with no BP, CP or
+  XF write since the draw before, 82 % in runs of 32 draws or more, 59 % in runs of 128 or more, about 45 top-level
+  parses a frame. `draw_primitive` therefore only queues the draw (`g_run`). `flush_run` runs at every state write
+  (`load_bp`, `load_cp`, `write_xf`), at 512 draws and at the end of each top-level parse: it does the per-draw
+  setup once, builds the vertices and triangles of each draw (`build_draw`, which only reads the state) into its own
+  `DrawOutput`, then hands them to `render::draw` in the original order. Runs of 16 draws or more are built by the
+  GPU thread and up to three helpers, which take four draws at a time by a compare-and-swap on one packed word
+  (generation, count, next index). Helpers spin 4000 times between runs before sleeping on a condition variable; a
+  sleeping helper costs a run about 50 µs, more than the run itself. Machines of four cores or fewer, draw logging
+  and captures stay on one thread.
+- Result in the heavy spot (120 fps setting, scale 3, headless): 48 to 53 real frames a second with the GPU thread
+  93 % busy became 60 with an image in between every frame and the thread 70 to 86 % busy; about 50 % busy at the
+  60 setting. `WP_SERIAL_DRAWS=1` starts no helper. `WP_CHECK_DRAWS=1` builds every helper-built draw again on the
+  GPU thread and compares the bytes: 35.6 million draws, none differed.
+- In play the user still saw 100 to 110 at the 120 setting and 80 at 90, with the game itself at 60. The headless
+  runs had hidden it: without a window nothing is presented. `WP_HEADLESS=window` (hidden window, images presented)
+  reproduces it: timers held 50 times a second, 5 to 14 images in between dropped a second. Two causes.
+  The GPU thread slept a full millisecond whenever its queue was empty and an image was waiting to be shown, so
+  every burst of commands started up to 1 ms late; it now waits on the queue for 1 ms at most and wakes when work
+  comes (holds 50 a second became 6). And a frame counted as late once the timers had waited 1 ms for a token, which
+  dropped the next image in between; a trace showed those holds follow a game frame that ended 1 to 2 ms later than
+  usual, the thread catching up by itself within 2 to 4 ms, and the dropped image upset the pacing enough to cause
+  the next hold. The limit is now 4 ms. Same spot, hidden window: 119.9 images a second with 60 of 60 in between at
+  the 120 setting (scale 3, and scale 6 with the bug recorder), 88 to 90 at the 90 setting, 60 at 60.
+- Known limits: the helpers keep up to three cores busy during heavy frames, and a helper the system takes off its
+  core in the middle of four draws holds the GPU thread until it comes back. Not measured in the candy zone or in
+  real play.
 - Tried and dropped: a camera per drawing pass (projection plus copies so far): the main scene is one pass, and the
   decal pass cameras lost their fit.
 - A run crashed once in the game's render-target code (0x80070fc0) after 175 s, with the images taking 8 ms on a

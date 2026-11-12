@@ -2,6 +2,18 @@
 
 All notable changes to WondersBeyondRecomp. Dates are when the change landed on `main`.
 
+## 2026-11-12
+
+### Changed
+- Higher frame rate in heavy zones: the vertices of consecutive draws are prepared on up to three helper threads
+  (processors with more than four cores). In the measured spot at 120 fps the game went from about 50 to its full 60
+  frames a second, each with its image in between.
+
+### Fixed
+- 90 and 120 fps stayed around 80 and 105 in heavy zones although the game ran at its full speed: images in between
+  were dropped whenever the game finished a frame a little late.
+- Direct3D 11: some sessions ran at half speed from start to end because every batch waited on the graphics driver.
+
 ## 2026-11-11
 
 ### Added

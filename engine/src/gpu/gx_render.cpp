@@ -729,7 +729,6 @@ struct Device {
     ID3D11InputLayout* moved_layout = nullptr;
     ID3D11Buffer* moved_buffer = nullptr;
     ID3D11Buffer* motion = nullptr;
-    ID3D11Buffer* constants = nullptr;
     ID3D11Texture2D* target = nullptr;
     ID3D11RenderTargetView* target_view = nullptr;
     ID3D11Texture2D* depth = nullptr;
@@ -882,7 +881,7 @@ struct FrameRecord {
     std::vector<RecordedTarget> targets;
 };
 
-[[gnu::used]] const char kBuildSalt[] = "SALT30078";
+[[gnu::used]] const char kBuildSalt[] = "SALT3034";
 
 Device g_device;
 PendingBatch g_pending;
@@ -1025,11 +1024,6 @@ bool create_pipeline() {
     motion.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
     if (g_device.moved_shader && FAILED(g_device.device->CreateBuffer(&motion, nullptr, &g_device.motion))) {
         release(g_device.moved_shader);
-    }
-    buffer.ByteWidth = sizeof(Constants);
-    buffer.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-    if (FAILED(g_device.device->CreateBuffer(&buffer, nullptr, &g_device.constants))) {
-        return false;
     }
     D3D11_RASTERIZER_DESC raster{};
     raster.FillMode = D3D11_FILL_SOLID;
@@ -1555,13 +1549,29 @@ ID3D11PixelShader* variant_for(const Constants& constants, bool early_depth) {
     return found->second.shader.load();
 }
 
+ID3D11Buffer* constant_buffer(const void* data, size_t size) {
+    static std::map<std::string, ID3D11Buffer*> cache;
+    constexpr size_t kCachedConstants = 4096;
+    if (cache.size() >= kCachedConstants) {
+        for (auto& [bytes, cached] : cache) {
+            release(cached);
+        }
+        cache.clear();
+    }
+    auto [found, added] = cache.try_emplace(std::string(static_cast<const char*>(data), size));
+    if (added) {
+        D3D11_BUFFER_DESC description{};
+        description.ByteWidth = static_cast<UINT>(size);
+        description.Usage = D3D11_USAGE_IMMUTABLE;
+        description.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        D3D11_SUBRESOURCE_DATA initial{data, 0, 0};
+        g_device.device->CreateBuffer(&description, &initial, &found->second);
+    }
+    return found->second;
+}
+
 void set_batch_state(const BatchState& pending, bool moved) {
     ID3D11DeviceContext* context = g_device.context;
-    D3D11_MAPPED_SUBRESOURCE mapped;
-    if (SUCCEEDED(context->Map(g_device.constants, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
-        std::memcpy(mapped.pData, &pending.constants, sizeof pending.constants);
-        context->Unmap(g_device.constants, 0);
-    }
     context->OMSetRenderTargets(1, &g_device.target_view, g_device.depth_view);
     context->PSSetShaderResources(0, kTextureMaps, pending.views);
     context->PSSetSamplers(0, kTextureMaps, pending.samplers);
@@ -1594,7 +1604,8 @@ void set_batch_state(const BatchState& pending, bool moved) {
     context->VSSetShader(moved ? g_device.moved_shader : g_device.vertex_shader, nullptr, 0);
     ID3D11PixelShader* variant = variant_for(pending.constants, pending.early_depth);
     context->PSSetShader(variant ? variant : (pending.early_depth ? g_device.early_pixel_shader : g_device.pixel_shader), nullptr, 0);
-    context->PSSetConstantBuffers(0, 1, &g_device.constants);
+    ID3D11Buffer* constants = constant_buffer(&pending.constants, sizeof pending.constants);
+    context->PSSetConstantBuffers(0, 1, &constants);
 }
 
 uint32_t draw_batch(const BatchState& pending, const ScreenVertex* vertices, size_t total) {
@@ -1836,30 +1847,10 @@ bool run_copy(ID3D11RenderTargetView* target, uint32_t target_width, uint32_t ta
     constants.extent[0] = static_cast<float>(scaled(kEfbWidth));
     constants.extent[1] = static_cast<float>(efb_height);
     ID3D11DeviceContext* context = g_device.context;
-    static std::map<std::array<uint8_t, sizeof(Constants)>, ID3D11Buffer*> cache;
-    constexpr size_t kCachedConstants = 256;
-    if (cache.size() >= kCachedConstants) {
-        for (auto& [bytes, cached] : cache) {
-            release(cached);
-        }
-        cache.clear();
+    ID3D11Buffer* buffer = constant_buffer(&constants, sizeof constants);
+    if (!buffer) {
+        return false;
     }
-    std::array<uint8_t, sizeof(Constants)> key;
-    std::memcpy(key.data(), &constants, sizeof constants);
-    auto found = cache.find(key);
-    if (found == cache.end()) {
-        D3D11_BUFFER_DESC description{};
-        description.ByteWidth = sizeof constants;
-        description.Usage = D3D11_USAGE_IMMUTABLE;
-        description.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-        D3D11_SUBRESOURCE_DATA initial{&constants, 0, 0};
-        ID3D11Buffer* made = nullptr;
-        if (FAILED(g_device.device->CreateBuffer(&description, &initial, &made))) {
-            return false;
-        }
-        found = cache.emplace(key, made).first;
-    }
-    ID3D11Buffer* buffer = found->second;
     context->OMSetRenderTargets(1, &target, nullptr);
     D3D11_VIEWPORT viewport{0, 0, static_cast<float>(target_width), static_cast<float>(target_height), 0.0f, 1.0f};
     context->RSSetViewports(1, &viewport);

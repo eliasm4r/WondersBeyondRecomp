@@ -797,20 +797,27 @@ bool culled(const ScreenVertex& a, const ScreenVertex& b, const ScreenVertex& c)
 
 bool g_recording = false;
 bool g_in_list = false;
-const Prepared* g_prepared = nullptr;
-std::vector<uint16_t> g_source_of;
 
-void emit_triangle(std::vector<ScreenVertex>& out, const Prepared& a, const Prepared& b, const Prepared& c) {
+struct alignas(64) DrawOutput {
+    std::vector<ScreenVertex> triangles;
+    std::vector<uint16_t> source_of;
+    std::vector<std::array<float, 4>> positions;
+    render::DrawSource source;
+    const Prepared* prepared = nullptr;
+    bool recorded = false;
+};
+
+void emit_triangle(DrawOutput& out, const Prepared& a, const Prepared& b, const Prepared& c) {
     if (!a.valid || !b.valid || !c.valid || culled(a.vertex, b.vertex, c.vertex)) {
         return;
     }
-    out.push_back(a.vertex);
-    out.push_back(b.vertex);
-    out.push_back(c.vertex);
+    out.triangles.push_back(a.vertex);
+    out.triangles.push_back(b.vertex);
+    out.triangles.push_back(c.vertex);
     if (g_recording) {
-        g_source_of.push_back(static_cast<uint16_t>(&a - g_prepared));
-        g_source_of.push_back(static_cast<uint16_t>(&b - g_prepared));
-        g_source_of.push_back(static_cast<uint16_t>(&c - g_prepared));
+        out.source_of.push_back(static_cast<uint16_t>(&a - out.prepared));
+        out.source_of.push_back(static_cast<uint16_t>(&b - out.prepared));
+        out.source_of.push_back(static_cast<uint16_t>(&c - out.prepared));
     }
 }
 
@@ -882,7 +889,7 @@ double thread_seconds(ThreadClock clock) {
 std::atomic<bool> g_cpu_clock_known{false};
 ThreadClock g_cpu_clock{};
 
-void count_indirect() {
+void count_indirect(uint32_t draws) {
     uint32_t stages = ((g_bp[0x00] >> 10) & 15) + 1;
     bool indirect = false;
     bool coordinates = false;
@@ -891,16 +898,16 @@ void count_indirect() {
         indirect |= (stage & (3u << 7)) != 0 || (stage & (3u << 9)) != 0;
         coordinates |= (stage & ((63u << 13) | (1u << 20))) != 0;
     }
-    g_indirect_draws += indirect;
-    g_coordinate_draws += coordinates && !indirect;
+    g_indirect_draws += indirect ? draws : 0;
+    g_coordinate_draws += coordinates && !indirect ? draws : 0;
 }
 
-void emit_unculled(std::vector<ScreenVertex>& out, const ScreenVertex& a, const ScreenVertex& b, const ScreenVertex& c) {
-    out.push_back(a);
-    out.push_back(b);
-    out.push_back(c);
+void emit_unculled(DrawOutput& out, const ScreenVertex& a, const ScreenVertex& b, const ScreenVertex& c) {
+    out.triangles.push_back(a);
+    out.triangles.push_back(b);
+    out.triangles.push_back(c);
     if (g_recording) {
-        g_source_of.insert(g_source_of.end(), 3, render::kNoSource);
+        out.source_of.insert(out.source_of.end(), 3, render::kNoSource);
     }
 }
 
@@ -911,7 +918,7 @@ ScreenVertex shifted(const ScreenVertex& vertex, float dx, float dy) {
     return result;
 }
 
-void emit_line(std::vector<ScreenVertex>& out, const Prepared& a, const Prepared& b) {
+void emit_line(DrawOutput& out, const Prepared& a, const Prepared& b) {
     if (!a.valid || !b.valid || a.vertex.w <= 0.0f || b.vertex.w <= 0.0f) {
         return;
     }
@@ -941,7 +948,7 @@ void emit_line(std::vector<ScreenVertex>& out, const Prepared& a, const Prepared
     emit_unculled(out, a0, b1, b0);
 }
 
-void emit_point(std::vector<ScreenVertex>& out, const Prepared& a) {
+void emit_point(DrawOutput& out, const Prepared& a) {
     if (!a.valid || a.vertex.w <= 0.0f) {
         return;
     }
@@ -1022,18 +1029,19 @@ void capture_draw(uint8_t command, uint32_t count, size_t triangles, const Layou
     }
 }
 
-void draw_primitive(uint8_t command, const uint8_t* data, uint32_t count) {
-    if (!g_render_enabled) {
-        return;
-    }
-    count_indirect();
-    begin_vertex_arrays();
-    lighting::begin(g_xf);
-    begin_texture_coordinates();
-    begin_projection();
-    const Layout& layout = make_layout(command & 7);
-    begin_colors();
-    static std::vector<Prepared> vertices;
+struct DrawJob {
+    const uint8_t* data;
+    const Layout* layout;
+    uint32_t count;
+    uint8_t command;
+    bool in_list;
+};
+
+void build_draw(const DrawJob& job, std::vector<Prepared>& vertices, DrawOutput& out) {
+    const Layout& layout = *job.layout;
+    const uint8_t command = job.command;
+    const uint8_t* data = job.data;
+    const uint32_t count = job.count;
     vertices.resize(count);
     const uint8_t* stream = data;
     Vertex raw[3];
@@ -1046,52 +1054,51 @@ void draw_primitive(uint8_t command, const uint8_t* data, uint32_t count) {
         }
         prepare(vertex, vertices[i]);
     }
-    static std::vector<ScreenVertex> triangles;
+    std::vector<ScreenVertex>& triangles = out.triangles;
     triangles.clear();
-    g_recording = render::interpolating();
-    g_prepared = vertices.data();
-    g_source_of.clear();
+    out.prepared = vertices.data();
+    out.source_of.clear();
     uint32_t primitive = (command >> 3) & 7;
     switch (primitive) {
     case 0:
     case 1:
         for (uint32_t i = 0; i + 3 < count; i += 4) {
-            emit_triangle(triangles, vertices[i], vertices[i + 1], vertices[i + 2]);
-            emit_triangle(triangles, vertices[i], vertices[i + 2], vertices[i + 3]);
+            emit_triangle(out, vertices[i], vertices[i + 1], vertices[i + 2]);
+            emit_triangle(out, vertices[i], vertices[i + 2], vertices[i + 3]);
         }
         break;
     case 2:
         for (uint32_t i = 0; i + 2 < count; i += 3) {
-            emit_triangle(triangles, vertices[i], vertices[i + 1], vertices[i + 2]);
+            emit_triangle(out, vertices[i], vertices[i + 1], vertices[i + 2]);
         }
         break;
     case 3:
         for (uint32_t i = 0; i + 2 < count; i++) {
             if (i & 1) {
-                emit_triangle(triangles, vertices[i + 1], vertices[i], vertices[i + 2]);
+                emit_triangle(out, vertices[i + 1], vertices[i], vertices[i + 2]);
             } else {
-                emit_triangle(triangles, vertices[i], vertices[i + 1], vertices[i + 2]);
+                emit_triangle(out, vertices[i], vertices[i + 1], vertices[i + 2]);
             }
         }
         break;
     case 4:
         for (uint32_t i = 1; i + 1 < count; i++) {
-            emit_triangle(triangles, vertices[0], vertices[i], vertices[i + 1]);
+            emit_triangle(out, vertices[0], vertices[i], vertices[i + 1]);
         }
         break;
     case 5:
         for (uint32_t i = 0; i + 1 < count; i += 2) {
-            emit_line(triangles, vertices[i], vertices[i + 1]);
+            emit_line(out, vertices[i], vertices[i + 1]);
         }
         break;
     case 6:
         for (uint32_t i = 0; i + 1 < count; i++) {
-            emit_line(triangles, vertices[i], vertices[i + 1]);
+            emit_line(out, vertices[i], vertices[i + 1]);
         }
         break;
     default:
         for (uint32_t i = 0; i < count; i++) {
-            emit_point(triangles, vertices[i]);
+            emit_point(out, vertices[i]);
         }
         break;
     }
@@ -1111,8 +1118,9 @@ void draw_primitive(uint8_t command, const uint8_t* data, uint32_t count) {
     if (g_capture) {
         capture_draw(command, count, triangles.size() / 3, layout, raw, vertices);
     }
-    if (g_recording && count <= render::kNoSource) {
-        static std::vector<std::array<float, 4>> positions;
+    out.recorded = g_recording && count <= render::kNoSource;
+    if (out.recorded) {
+        std::vector<std::array<float, 4>>& positions = out.positions;
         positions.resize(count);
         for (uint32_t i = 0; i < count; i++) {
             const ScreenVertex& v = vertices[i].vertex;
@@ -1122,7 +1130,7 @@ void draw_primitive(uint8_t command, const uint8_t* data, uint32_t count) {
         source.key = primitive < 5 ? draw_key(command, count, layout, data) : 0;
         if (source.key != 0) {
             bool indexed = layout.position.mode == kIndex8 || layout.position.mode == kIndex16;
-            if (indexed || g_in_list) {
+            if (indexed || job.in_list) {
                 uint64_t origin = indexed ? g_array_base[0] : reinterpret_cast<uintptr_t>(data);
                 source.exact = ((source.key ^ origin) * 0xFF51AFD7ED558CCDull) | 1;
             }
@@ -1132,10 +1140,165 @@ void draw_primitive(uint8_t command, const uint8_t* data, uint32_t count) {
         }
         source.positions = reinterpret_cast<const float(*)[4]>(positions.data());
         source.count = count;
-        source.source_of = g_source_of.data();
-        render::draw(triangles.data(), static_cast<uint32_t>(triangles.size()), &source);
+        source.source_of = out.source_of.data();
+        out.source = source;
+    }
+}
+
+void submit_draw(const DrawOutput& out) {
+    render::draw(out.triangles.data(), static_cast<uint32_t>(out.triangles.size()), out.recorded ? &out.source : nullptr);
+}
+
+constexpr uint32_t kRunLimit = 512;
+constexpr uint32_t kParallelRun = 16;
+constexpr uint32_t kRunChunk = 4;
+constexpr uint32_t kRunHelpers = 3;
+constexpr uint32_t kIdleSpins = 4000;
+
+struct RunPool {
+    std::atomic<uint64_t> state{0};
+    std::atomic<uint32_t> done{0};
+    std::atomic<uint32_t> sleepers{0};
+    std::mutex mutex;
+    std::condition_variable wake;
+    uint32_t generation = 0;
+};
+
+std::vector<DrawJob> g_run;
+std::vector<DrawOutput> g_outputs(kRunLimit + 1);
+std::vector<Prepared> g_scratch[kRunHelpers + 1];
+RunPool g_pool;
+
+void relax() {
+#if defined(__x86_64__) || defined(__i386__)
+    __builtin_ia32_pause();
+#else
+    std::this_thread::yield();
+#endif
+}
+
+bool run_waiting() {
+    uint64_t state = g_pool.state.load();
+    return (state & 0xFFFF) < ((state >> 16) & 0xFFFF);
+}
+
+bool build_some(uint32_t thread) {
+    uint64_t state = g_pool.state.load();
+    uint32_t index = state & 0xFFFF;
+    uint32_t count = (state >> 16) & 0xFFFF;
+    if (index >= count) {
+        return false;
+    }
+    if (!g_pool.state.compare_exchange_strong(state, state + kRunChunk)) {
+        return true;
+    }
+    uint32_t end = std::min(count, index + kRunChunk);
+    for (uint32_t i = index; i < end; i++) {
+        build_draw(g_run[i], g_scratch[thread], g_outputs[i]);
+    }
+    g_pool.done.fetch_add(end - index);
+    return true;
+}
+
+void run_helper(uint32_t thread) {
+    uint32_t idle = 0;
+    for (;;) {
+        if (build_some(thread)) {
+            idle = 0;
+        } else if (++idle < kIdleSpins) {
+            relax();
+        } else {
+            std::unique_lock<std::mutex> lock(g_pool.mutex);
+            g_pool.sleepers++;
+            g_pool.wake.wait(lock, run_waiting);
+            g_pool.sleepers--;
+            idle = 0;
+        }
+    }
+}
+
+uint32_t start_helpers() {
+    uint32_t cores = std::thread::hardware_concurrency();
+    uint32_t helpers = cores > 4 && std::getenv("WP_SERIAL_DRAWS") == nullptr ? std::min(kRunHelpers, cores - 3) : 0;
+    for (uint32_t i = 0; i < helpers; i++) {
+        std::thread(run_helper, i + 1).detach();
+    }
+    return helpers;
+}
+
+void build_run(uint32_t count) {
+    g_pool.done = 0;
+    g_pool.state = (static_cast<uint64_t>(++g_pool.generation) << 32) | (static_cast<uint64_t>(count) << 16);
+    if (g_pool.sleepers.load() != 0) {
+        g_pool.mutex.lock();
+        g_pool.mutex.unlock();
+        g_pool.wake.notify_all();
+    }
+    while (build_some(0)) {
+    }
+    while (g_pool.done.load() != count) {
+        relax();
+    }
+}
+
+void check_draw(uint32_t index) {
+    static uint32_t checked = 0;
+    static uint32_t different = 0;
+    const DrawOutput& built = g_outputs[index];
+    DrawOutput& again = g_outputs[kRunLimit];
+    build_draw(g_run[index], g_scratch[0], again);
+    bool same = built.recorded == again.recorded && built.triangles.size() == again.triangles.size() && built.source_of == again.source_of &&
+                std::memcmp(built.triangles.data(), again.triangles.data(), built.triangles.size() * sizeof(ScreenVertex)) == 0;
+    if (same && built.recorded) {
+        same = built.source.key == again.source.key && built.source.exact == again.source.exact && built.source.camera == again.source.camera &&
+               built.source.count == again.source.count &&
+               std::memcmp(built.positions.data(), again.positions.data(), built.source.count * sizeof(float[4])) == 0;
+    }
+    different += !same;
+    if ((++checked & 0xFFFFF) == 0) {
+        log::write("draws", "%u draws built on helper threads checked, %u differ", checked, different);
+    }
+}
+
+void flush_run() {
+    uint32_t count = static_cast<uint32_t>(g_run.size());
+    if (count == 0) {
+        return;
+    }
+    static const uint32_t helpers = start_helpers();
+    static const bool check = std::getenv("WP_CHECK_DRAWS") != nullptr;
+    render::finish_frame();
+    count_indirect(count);
+    begin_vertex_arrays();
+    lighting::begin(g_xf);
+    begin_texture_coordinates();
+    begin_projection();
+    begin_colors();
+    g_recording = render::interpolating();
+    if (count >= kParallelRun && helpers != 0 && !g_log_draws && !g_capture) {
+        build_run(count);
+        for (uint32_t i = 0; i < count; i++) {
+            if (check) {
+                check_draw(i);
+            }
+            submit_draw(g_outputs[i]);
+        }
     } else {
-        render::draw(triangles.data(), static_cast<uint32_t>(triangles.size()));
+        for (uint32_t i = 0; i < count; i++) {
+            build_draw(g_run[i], g_scratch[0], g_outputs[kRunLimit]);
+            submit_draw(g_outputs[kRunLimit]);
+        }
+    }
+    g_run.clear();
+}
+
+void draw_primitive(uint8_t command, const uint8_t* data, uint32_t count, const Layout& layout) {
+    if (!g_render_enabled) {
+        return;
+    }
+    g_run.push_back({data, &layout, count, command, g_in_list});
+    if (g_run.size() == kRunLimit) {
+        flush_run();
     }
 }
 
@@ -1273,7 +1436,7 @@ void execute_copy(uint32_t value) {
                 static const ThreadClock gpu_clock = current_thread_clock();
                 double gpu = thread_seconds(gpu_clock);
                 log::write("copies", "%u EFB copies written back to RAM, %.1f ms waiting for the GPU", write_backs, write_back_seconds * 1000.0);
-                log::write("memory", "%zu MB private memory, %zu KB of graphics commands queued, timers held %u times for a token, %u for over 1 ms", private_memory_mb(),
+                log::write("memory", "%zu MB private memory, %zu KB of graphics commands queued, timers held %u times for a token, %u for over 4 ms", private_memory_mb(),
                            g_queued_bytes.load() >> 10, g_frame_holds.exchange(0), g_long_holds.exchange(0));
                 double idle = idle_share();
                 if (idle >= 0.0) {
@@ -1325,6 +1488,7 @@ std::atomic<uint32_t> g_token_done{0};
 uint64_t g_register_serial = 0;
 
 void load_bp(uint32_t word) {
+    flush_run();
     g_register_serial++;
     uint32_t reg = word >> 24;
     uint32_t value = word & 0xFFFFFF;
@@ -1364,6 +1528,7 @@ void load_bp(uint32_t word) {
 }
 
 void load_cp(uint8_t reg, uint32_t value) {
+    flush_run();
     g_stats.cp_writes++;
     note_register(1, reg, value);
     if (reg == 0x50) {
@@ -1381,6 +1546,7 @@ void load_cp(uint8_t reg, uint32_t value) {
 
 void write_xf(uint32_t address, uint32_t value) {
     if (address < kXfSize) {
+        flush_run();
         if (address >= 0x1000) {
             note_register(2, address, value);
             g_register_serial++;
@@ -1477,7 +1643,7 @@ size_t parse_one(const uint8_t* data, size_t size, bool list) {
             g_logged_draws++;
             std::fprintf(stderr, "GX draw %02x count=%u size=%u vcd=%08x/%08x\n", command, count, layout.size, g_vcd_low, g_vcd_high);
         }
-        draw_primitive(command, data + 3, count);
+        draw_primitive(command, data + 3, count, layout);
         g_stats.draws++;
         g_stats.vertices += count;
         return total;
@@ -1494,6 +1660,9 @@ size_t parse(const uint8_t* data, size_t size, bool list) {
             break;
         }
         offset += used;
+    }
+    if (!list) {
+        flush_run();
     }
     return offset;
 }
@@ -1652,7 +1821,7 @@ bool frame_owed() {
     if (now - since > std::chrono::milliseconds(100)) {
         return false;
     }
-    if (unreached && now - since > std::chrono::milliseconds(1) && !g_frame_late.exchange(true)) {
+    if (unreached && now - since > std::chrono::milliseconds(4) && !g_frame_late.exchange(true)) {
         g_long_holds++;
     }
     return true;
@@ -1807,11 +1976,10 @@ void gpu_thread() {
         while (g_gpu.items.empty()) {
             hold.unlock();
             bool waiting = render::service_presents();
-            if (waiting) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            }
             hold.lock();
-            if (!waiting) {
+            if (waiting) {
+                g_gpu.work.wait_for(hold, std::chrono::milliseconds(1), [] { return !g_gpu.items.empty(); });
+            } else {
                 g_gpu.work.wait(hold, [] { return !g_gpu.items.empty(); });
             }
         }
