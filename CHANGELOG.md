@@ -10,6 +10,7 @@ All notable changes to WondersBeyondRecomp. Dates are when the change landed on 
   frames a second, each with its image in between.
 
 ### Fixed
+- Photos taken in the game were saved black with pink streaks; they now hold the picture.
 - 90 and 120 fps stayed around 80 and 105 in heavy zones although the game ran at its full speed: images in between
   were dropped whenever the game finished a frame a little late.
 - Direct3D 11: some sessions ran at half speed from start to end because every batch waited on the graphics driver.
@@ -38,7 +39,8 @@ All notable changes to WondersBeyondRecomp. Dates are when the change landed on 
   walks toward the screen's direction. The camera stays where it was put; the game's "turn the view" button (C, Wii
   B) brings it back behind Pikachu. Mouse and stick speeds and an up/down invert are separate settings. While playing,
   the cursor is hidden and held in the window; holding Ctrl frees it to aim the pointer. Left bumper + right stick
-  still tilts the Wii Remote and L3 + right stick still aims.
+  still tilts the Wii Remote and L3 + right stick still aims. The camera stays above the ground and in front
+  of the walls the game knows about.
 
 - Bug recorder (Advanced tab, Direct3D 11): keeps the last three seconds of images shown, and the screenshot key then saves
   them all to `screenshots/<name>_recent`, the interpolated ones marked `between`.

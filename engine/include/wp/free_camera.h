@@ -34,6 +34,7 @@ Turn turn(float mouse_x, float mouse_y, float stick_x, float stick_y, float seco
 class Orbit {
 public:
     void update(const float game_offset[3], const float target[3], Turn input, bool recenter, float seconds, float out[3]);
+    void rest_on(float x, float y, float z);
     void reset();
 
 private:
@@ -41,6 +42,7 @@ private:
     bool recentering_ = false;
     float yaw_ = 0.0f;
     float pitch_ = 0.0f;
+    float game_elevation_ = 0.0f;
     float target_[3] = {};
 };
 

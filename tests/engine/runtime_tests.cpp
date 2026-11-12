@@ -1488,6 +1488,14 @@ void test_free_camera() {
     orbit.update(game, target, fc::Turn{0.0f, -10.0f}, false, 1.0f / 30.0f, out);
     view = fc::from_offset(out[0], out[1], out[2]);
     CHECK(near(view.elevation, fc::kMinElevation));
+    float rested[3];
+    fc::to_offset(fc::View{view.yaw, 0.1f, view.distance}, rested);
+    orbit.rest_on(rested[0], rested[1], rested[2]);
+    orbit.update(game, target, fc::Turn{}, false, 1.0f / 30.0f, out);
+    CHECK(near(fc::from_offset(out[0], out[1], out[2]).elevation, 0.1f));
+    orbit.rest_on(out[0], out[1] - 5.0f, out[2]);
+    orbit.update(game, target, fc::Turn{}, false, 1.0f / 30.0f, out);
+    CHECK(near(fc::from_offset(out[0], out[1], out[2]).elevation, 0.1f));
 
     orbit.update(game, target, fc::Turn{}, true, 1.0f / 30.0f, out);
     for (int frame = 0; frame < 60; frame++) {

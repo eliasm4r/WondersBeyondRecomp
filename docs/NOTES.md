@@ -109,7 +109,10 @@ Three more things were needed:
   game ran a 50 Hz mode and could not present more than 50 frames. A PAL console set to 60 Hz announces EURGB60 (5).
 - Buffers copied again every frame (bloom and similar, about 39 copies per frame in the first cave) stay on the
   GPU. Reading them back to RAM held that scene at 42 fps. A buffer that was not copied in the last two frames is
-  still written, so a one-off copy such as a snapshot reaches RAM.
+  still written, so a one-off copy such as a snapshot reaches RAM. The photo (640x350, RGBA8) is taken into
+  `0x8148DBA0`, a buffer an effect also fills every frame (640x456 halved, another format): a copy only counts as
+  copied again when it has the size and format of the one before at that address. Without that the photo never
+  reached RAM and the game saved stale memory, black with pink streaks, at 60 fps as well as 120.
 - Movies (`Movie/*.mo`) advance one picture per rendered frame. While such a file is being read the frame alarm
   keeps the 30 fps period.
 
@@ -284,6 +287,17 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
   for the handle, `0x800C6710` for "none", `0x800C5D80` for the position, `0x800C64C0` to release it, called from the
   hook on a scratch frame below the stack pointer) and aims 4.1 units above it, only the height being eased. Its eye
   and target are swapped back for the game's own before each update.
+- The eye stays 1.5 units above the ground. The game's camera has a vertical probe, `0x800277B0` (point, reach
+  above in f1, reach below in f2, true when the field collision is met); the point met is then read from the
+  collision manager (`0x80076E90` returns it, `0x8012FE60` returns the point). The hook probes from 3 units above
+  the higher of eye and target down to the clearance below the eye. The collision only covers where one can walk:
+  past its edge (toward the sea on the beach) the height of the followed character's feet stands in for the ground,
+  or the slope from those feet to the last ground found on the way to the eye (three samples) when that is higher.
+  The same collision is then asked along the segment from the target to the eye (`0x8012DD40`: manager, start,
+  start again, extent, 1, 0, 0, 0): what it meets brings the eye 1 unit in front of it, never closer than 2 units,
+  and the eye eases back out afterwards. Scenery drawn without collision can still be entered.
+  While the player pushes down the orbit's pitch stops at the ground (`Orbit::rest_on`), so pushing up answers at
+  once.
 - Not seen yet in game: scenes that move this same camera themselves would be overridden too.
 
 ## Indirect maps left unbound

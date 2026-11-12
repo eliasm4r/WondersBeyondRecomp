@@ -121,7 +121,12 @@ void Orbit::update(const float game_offset[3], const float target[3], Turn input
         }
     }
     pitch_ = std::clamp(pitch_, kMinElevation - game.elevation, kMaxElevation - game.elevation);
+    game_elevation_ = game.elevation;
     to_offset(View{yaw_, game.elevation + pitch_, game.distance}, out);
+}
+
+void Orbit::rest_on(float x, float y, float z) {
+    pitch_ = std::max(pitch_, from_offset(x, y, z).elevation - game_elevation_);
 }
 
 void Orbit::reset() {

@@ -699,6 +699,7 @@ struct CopiedTexture {
     uint64_t guest_hash = 0;
     uint32_t pending_writes = 0;
     uint32_t copied_frame = 0;
+    uint32_t copied_format = 0;
 };
 
 struct PendingWriteBack {
@@ -881,7 +882,7 @@ struct FrameRecord {
     std::vector<RecordedTarget> targets;
 };
 
-[[gnu::used]] const char kBuildSalt[] = "SALT3034";
+[[gnu::used]] const char kBuildSalt[] = "SALT23076";
 
 Device g_device;
 PendingBatch g_pending;
@@ -2120,14 +2121,19 @@ void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width,
     CopiedTexture& entry = g_device.copies[address];
     // A buffer copied again every frame is a render target of an effect, and the game only samples it: it stays on the
     // GPU, as in Dolphin's default. Reading dozens of them back each frame held the cave at 42 fps instead of 60.
-    // A one-off copy, like a snapshot, is still written to RAM.
+    // A one-off copy, like a snapshot, is still written to RAM. The photo is taken into a buffer an effect fills every
+    // frame, in another size and format: a copy only counts as recurring when it has the shape of the one before.
     constexpr uint32_t kRecurringFrames = 2;
-    bool recurring = entry.converted && g_frame - entry.copied_frame <= kRecurringFrames;
-    entry.copied_frame = g_frame;
     uint32_t w = static_cast<uint32_t>(width);
     uint32_t h = static_cast<uint32_t>(height);
-    entry.logical_width = half ? std::max(1u, w / 2) : w;
-    entry.logical_height = half ? std::max(1u, h / 2) : h;
+    uint32_t logical_width = half ? std::max(1u, w / 2) : w;
+    uint32_t logical_height = half ? std::max(1u, h / 2) : h;
+    bool recurring = entry.converted && g_frame - entry.copied_frame <= kRecurringFrames && entry.copied_format == format &&
+                     entry.logical_width == logical_width && entry.logical_height == logical_height;
+    entry.copied_frame = g_frame;
+    entry.copied_format = format;
+    entry.logical_width = logical_width;
+    entry.logical_height = logical_height;
     uint32_t target_width = std::max(1u, entry.logical_width * g_scale);
     uint32_t target_height = std::max(1u, entry.logical_height * g_scale);
     if (!entry.converted || entry.converted_width != target_width || entry.converted_height != target_height) {

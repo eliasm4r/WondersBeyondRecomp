@@ -139,7 +139,17 @@ constexpr uint32_t kFollowMissing = 0x800c6710;
 constexpr uint32_t kFollowPosition = 0x800c5d80;
 constexpr uint32_t kFollowRelease = 0x800c64c0;
 constexpr uint32_t kFollowFrame = 0x40;
+constexpr uint32_t kGroundProbe = 0x800277b0;
+constexpr uint32_t kFieldCollision = 0x80076e90;
+constexpr uint32_t kCollisionSegment = 0x8012dd40;
+constexpr uint32_t kCollisionPoint = 0x8012fe60;
 constexpr float kTargetHeight = 4.1f;
+constexpr float kEyeClearance = 1.5f;
+constexpr float kProbeAbove = 3.0f;
+constexpr float kWallClearance = 1.0f;
+constexpr float kSlopeReach = 40.0f;
+constexpr float kNearestEye = 2.0f;
+constexpr float kReachRate = 3.0f;
 constexpr float kHeightRate = 10.0f;
 constexpr auto kCameraIdle = std::chrono::milliseconds(500);
 constexpr auto kPlaceLogPeriod = std::chrono::seconds(2);
@@ -179,6 +189,71 @@ bool followed_position(Cpu& c, uint32_t camera, float out[3]) {
     c.r[3] = handle;
     c.r[4] = 0xFFFFFFFF;
     call(c, kFollowRelease);
+    c.r[1] = stack;
+    c.r[3] = saved_r3;
+    c.f[1] = saved_f1;
+    return found;
+}
+
+// The game's own camera asks the field collision whether there is ground in a vertical span (`0x800277b0`: point,
+// reach above, reach below); the point it met is then read from the collision manager. The collision only covers
+// where one can walk: past its edge the free camera stays above the height of the followed character's feet, or above
+// the slope from those feet to the last ground found on the way to the eye when that is higher.
+bool ground_under(Cpu& c, const float point[3], float above, float below, float& ground) {
+    uint32_t stack = c.r[1];
+    uint32_t saved_r3 = c.r[3];
+    double saved_f1 = c.f[1];
+    double saved_f2 = c.f[2];
+    uint32_t frame = stack - kFollowFrame;
+    wr32(frame, stack);
+    c.r[1] = frame;
+    uint32_t vector = frame + 0x10;
+    write_vector(vector, point);
+    c.r[3] = vector;
+    c.f[1] = above;
+    c.f[2] = below;
+    call(c, kGroundProbe);
+    bool found = c.r[3] != 0;
+    if (found) {
+        call(c, kFieldCollision);
+        call(c, kCollisionPoint);
+        ground = rdf32(c.r[3] + 4);
+    }
+    c.r[1] = stack;
+    c.r[3] = saved_r3;
+    c.f[1] = saved_f1;
+    c.f[2] = saved_f2;
+    return found;
+}
+
+// The same collision, asked along any segment (`0x8012dd40`: manager, start, start, extent, 1, 0, 0, 0). What stands
+// between the target and the eye brings the eye in front of it; the eye then eases back out.
+bool collision_between(Cpu& c, const float start[3], const float extent[3], float met[3]) {
+    uint32_t stack = c.r[1];
+    uint32_t saved_r3 = c.r[3];
+    double saved_f1 = c.f[1];
+    uint32_t frame = stack - kFollowFrame;
+    wr32(frame, stack);
+    c.r[1] = frame;
+    write_vector(frame + 0x10, start);
+    write_vector(frame + 0x20, extent);
+    call(c, kFieldCollision);
+    c.r[4] = frame + 0x10;
+    c.r[5] = frame + 0x10;
+    c.r[6] = frame + 0x20;
+    c.r[7] = 1;
+    c.r[8] = 0;
+    c.r[9] = 0;
+    c.r[10] = 0;
+    call(c, kCollisionSegment);
+    bool found = c.r[3] != 0;
+    if (found) {
+        call(c, kFieldCollision);
+        call(c, kCollisionPoint);
+        for (uint32_t i = 0; i < 3; i++) {
+            met[i] = rdf32(c.r[3] + 4 * i);
+        }
+    }
     c.r[1] = stack;
     c.r[3] = saved_r3;
     c.f[1] = saved_f1;
@@ -228,7 +303,8 @@ void field_camera(Cpu& c, HleFunction original) {
         our_target[i] = game_target[i];
     }
     float follow[3];
-    if (followed_position(c, camera, follow)) {
+    bool following = followed_position(c, camera, follow);
+    if (following) {
         float wanted = follow[1] + kTargetHeight;
         if (fresh || std::fabs(wanted - height) > 40.0f) {
             height = wanted;
@@ -251,6 +327,53 @@ void field_camera(Cpu& c, HleFunction original) {
     orbit.update(offset, our_target, turn, recenter, seconds, out);
     for (int i = 0; i < 3; i++) {
         our_eye[i] = our_target[i] + out[i];
+    }
+    float ground = 0.0f;
+    float above = std::max(0.0f, our_target[1] - our_eye[1]) + kProbeAbove;
+    bool grounded = ground_under(c, our_eye, above, kEyeClearance, ground);
+    if (!grounded && following) {
+        ground = follow[1];
+        grounded = true;
+        for (float part : {0.75f, 0.5f, 0.25f}) {
+            float nearer[3] = {our_target[0] + out[0] * part, our_eye[1], our_target[2] + out[2] * part};
+            float known = 0.0f;
+            if (ground_under(c, nearer, above, kSlopeReach, known)) {
+                ground = std::max({ground, known, follow[1] + (known - follow[1]) / part});
+                break;
+            }
+        }
+    }
+    if (grounded && ground + kEyeClearance > our_eye[1]) {
+        our_eye[1] = ground + kEyeClearance;
+        if (turn.pitch < 0.0f) {
+            orbit.rest_on(our_eye[0] - our_target[0], our_eye[1] - our_target[1], our_eye[2] - our_target[2]);
+        }
+    }
+    static float reach = 1.0f;
+    float extent[3];
+    float length = 0.0f;
+    for (int i = 0; i < 3; i++) {
+        extent[i] = our_eye[i] - our_target[i];
+        length += extent[i] * extent[i];
+    }
+    length = std::sqrt(length);
+    float allowed = 1.0f;
+    float met[3];
+    if (length > kNearestEye) {
+        float longer = (length + kWallClearance) / length;
+        float probe[3] = {extent[0] * longer, extent[1] * longer, extent[2] * longer};
+        if (collision_between(c, our_target, probe, met)) {
+            float to_met = std::sqrt((met[0] - our_target[0]) * (met[0] - our_target[0]) + (met[1] - our_target[1]) * (met[1] - our_target[1]) +
+                                     (met[2] - our_target[2]) * (met[2] - our_target[2]));
+            allowed = std::clamp((to_met - kWallClearance) / length, kNearestEye / length, 1.0f);
+        }
+    }
+    reach = fresh ? allowed : std::min(allowed, reach + seconds * kReachRate);
+    for (int i = 0; i < 3; i++) {
+        our_eye[i] = our_target[i] + extent[i] * reach;
+    }
+    if (reach < 1.0f && ground_under(c, our_eye, above, kEyeClearance, ground)) {
+        our_eye[1] = std::max(our_eye[1], ground + kEyeClearance);
     }
     write_vector(camera + kCameraEye, our_eye);
     write_vector(camera + kCameraShownEye, our_eye);

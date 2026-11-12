@@ -646,6 +646,7 @@ struct CopiedTexture {
     uint64_t guest_hash = 0;
     uint32_t pending_writes = 0;
     uint32_t copied_frame = 0;
+    uint32_t copied_format = 0;
 };
 
 struct PendingWriteBack {
@@ -1702,12 +1703,16 @@ void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width,
     CopiedTexture& entry = g_device.copies[address];
     // Buffers copied again every frame stay on the GPU; see the Direct3D renderer.
     constexpr uint32_t kRecurringFrames = 2;
-    bool recurring = entry.view != 0 && g_frame - entry.copied_frame <= kRecurringFrames;
-    entry.copied_frame = g_frame;
     uint32_t w = static_cast<uint32_t>(width);
     uint32_t h = static_cast<uint32_t>(height);
-    entry.logical_width = half ? std::max(1u, w / 2) : w;
-    entry.logical_height = half ? std::max(1u, h / 2) : h;
+    uint32_t logical_width = half ? std::max(1u, w / 2) : w;
+    uint32_t logical_height = half ? std::max(1u, h / 2) : h;
+    bool recurring = entry.view != 0 && g_frame - entry.copied_frame <= kRecurringFrames && entry.copied_format == format &&
+                     entry.logical_width == logical_width && entry.logical_height == logical_height;
+    entry.copied_frame = g_frame;
+    entry.copied_format = format;
+    entry.logical_width = logical_width;
+    entry.logical_height = logical_height;
     uint32_t target_width = std::max(1u, entry.logical_width * g_scale);
     uint32_t target_height = std::max(1u, entry.logical_height * g_scale);
     if (!entry.converted.framebuffer || entry.converted.width != target_width || entry.converted.height != target_height) {
