@@ -271,6 +271,8 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
   `tools/fetch_sdl.py`, `recompiler/recomp.py`, `recompiler/dsp/recomp_dsp.py`, configure, build, copy the game and its
   DLLs to the install folder, add the shortcuts. Any other disc is refused after extraction and its files removed. The
   bundled Python runs the scripts, so none is downloaded.
+- A disc image that Redump does not list is accepted: WBFS and other trimmed copies never match, and nodtool marks
+  that line with the same cross as a real checksum error. Only a cross on another line refuses the image.
 - The MinGW package is a self-extracting 7z archive. `tar.exe` of Windows unpacks it, so that unsigned program is
   never run.
 - The game reads its files relative to the working folder, so the executable is copied to the install folder itself

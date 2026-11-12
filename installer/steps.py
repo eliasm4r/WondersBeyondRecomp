@@ -315,7 +315,7 @@ class Install:
 
     def verify_disc(self, move):
         output = self.run([self.program("nodtool"), "--no-color", "verify", self.disc])
-        if "\u274c" in output:
+        if any("\u274c" in line and not line.startswith("Redump:") for line in output.splitlines()):
             raise Failure(self.texts["disc_damaged"])
 
     def extract_disc(self, move):
