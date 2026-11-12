@@ -91,7 +91,7 @@ void back_up_save(const char* moment) {
         g_last_backup = std::chrono::steady_clock::now();
     }
     if (outcome.result == saves::Result::Invalid) {
-        std::fprintf(stderr, "save backup (%s): %s; no backup was made and the existing backups are kept. Restore one from the launcher's Saves page if the game reports damaged data.\n",
+        std::fprintf(stderr, "save backup (%s): %s; no backup was made and the existing backups are kept. Restore one from the backups folder if the game reports damaged data.\n",
                      moment, outcome.message.c_str());
     } else if (outcome.result == saves::Result::Failed) {
         std::fprintf(stderr, "save backup (%s) failed: %s\n", moment, outcome.message.c_str());

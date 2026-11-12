@@ -248,9 +248,6 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
 - Help lines: a key row shows `help.keys.<action>`; a gamepad row shows the same text, except motions
   (`pad.motion_help`) and the pointer (`help.pad.pointer`). The row being captured shows how to capture instead
   (`help.keys`, `help.pad.capture`): the help area holds two lines, too few for both.
-- `launcher/` builds again. Its gamepad list still offers one button per action: "Default" stores an empty value,
-  which is the layout of the game, and a binding with a combination or several buttons also shows as "Default" until
-  one button is picked there. The full editor is the F1 menu.
 
 ## Installer
 
@@ -283,8 +280,8 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
 - No resource compiler: `windres.exe` of the downloaded MinGW is refused by Smart App Control. `engine/cmake/icon.cmake`
   reads the `.ico` at configure time and writes a source file whose assembly lays out the `.rsrc` section (icon group
   1 and its images), which the linker takes as the resources of the executable.
-- `launcher/` is the previous installer, a single executable with settings pages. It still builds and is no longer
-  what is handed out.
+- The previous installer (`launcher/`, a single executable with settings pages, with `tools/make_appimage.py` and
+  `tools/make_offline_pack.py`) was removed on 2026-11-12; it is in the history up to commit 547ea1e.
 
 ## Color settings
 

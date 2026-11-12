@@ -14,6 +14,9 @@ All notable changes to WondersBeyondRecomp. Dates are when the change landed on 
   (processors with more than four cores). In the measured spot at 120 fps the game went from about 50 to its full 60
   frames a second, each with its image in between.
 
+### Removed
+- The previous installer (`launcher/`) and its AppImage and offline pack tools; the setup replaces it.
+
 ### Fixed
 - Free camera: near walls, rocks and ledges the view jumped sharply up and down; its lowest height now moves
   smoothly.

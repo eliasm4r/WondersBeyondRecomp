@@ -68,28 +68,21 @@ All components adapted from the **Dolphin Emulator** originate from a source sna
 - **License Compliance:** `SPDX-License-Identifier: GPL-2.0-or-later`.
 - **Engineering Changes (2026-09-29):** Rewritten as inline functions over `wp::fpr_bits`; FPSCR exception flags and the flush-to-zero option are not modelled; the estimate tables are unchanged.
 
-### 6. Wii Remote Pairing on Windows
-- **Repository Files:** `launcher/src/wiimote_pairing.cpp` | `launcher/src/wiimote_pairing.h`.
-- **Upstream Origin:** `Source/Core/Core/HW/WiimoteReal/IOWin.cpp` (`AuthenticateWiimote`, `RemoveUnusableWiimoteBluetoothDevices`, `DiscoverAndPairWiimotes`, `FindAndAuthenticateWiimotes`), version 2606 snapshot.
-- **Copyright:** Copyright 2008 Dolphin Emulator Project.
-- **License Compliance:** `SPDX-License-Identifier: GPL-2.0-or-later`.
-- **Engineering Changes (2026-09-29):** Rewritten as two plain functions over the Windows Bluetooth API: the host address as the SYNC-button pass key, three inquiry rounds, removal of remembered but unauthenticated remotes and enabling the HID service; logging and the 1+2 method were dropped.
-
-### 7. EXI Bus, IPL Device and SRAM
+### 6. EXI Bus, IPL Device and SRAM
 - **Repository Files:** `engine/src/core/exi.cpp` | `engine/include/wp/exi.h`.
 - **Upstream Origin:** `Source/Core/Core/HW/EXI/EXI_Channel.cpp`, `Source/Core/Core/HW/EXI/EXI_DeviceIPL.cpp` and `Source/Core/Core/HW/Sram.cpp`, current master as of 2026-09-30.
 - **Copyright:** Copyright 2008 Dolphin Emulator Project.
 - **License Compliance:** `SPDX-License-Identifier: GPL-2.0-or-later`.
 - **Engineering Changes (2026-09-30):** Rewritten as a single file for 32-bit register access: three channels with immediate and DMA transfers, only the IPL device (SRAM, real-time clock, UART and the Wii RTC flags); no memory cards, BBA or other devices; SRAM is kept in `sram.bin` beside the NAND folder.
 
-### 8. Serial Interface (SI)
+### 7. Serial Interface (SI)
 - **Repository Files:** `engine/src/input/si.cpp` | `engine/include/wp/si.h`.
 - **Upstream Origin:** `Source/Core/Core/HW/SI/SI.cpp`, current master as of 2026-09-30.
 - **Copyright:** Copyright 2008 Dolphin Emulator Project.
 - **License Compliance:** `SPDX-License-Identifier: GPL-2.0-or-later`.
 - **Engineering Changes (2026-09-30):** Register layout and status bits kept; transfers complete at once with no device on any port; no GameCube controller, GBA or keyboard devices.
 
-### 9. Hollywood GPIO Registers
+### 8. Hollywood GPIO Registers
 - **Repository Files:** `engine/src/core/hollywood.cpp` | `engine/include/wp/hollywood.h`.
 - **Upstream Origin:** `Source/Core/Core/HW/WII_IPC.cpp` and `Source/Core/Core/HW/WII_IPC.h` (the GPIO pin layout, the pins the PowerPC may access, the direction register reset value, the disc-slot input and the three constant registers), current master as of 2026-10-06.
 - **Copyright:** Copyright 2008 Dolphin Emulator Project.
@@ -102,13 +95,6 @@ All components adapted from the **Dolphin Emulator** originate from a source sna
 - **Repository Files:** `third_party/stb/stb_truetype.h`, unmodified.
 - **Usage Area:** text of the F1 options menu, the title bar and the performance overlay (`engine/src/platform/canvas.cpp`).
 - **Upstream Origin:** https://github.com/nothings/stb, version 1.26, commit `2c980bb59875b0d32144a71867fbdebb2f77cd20` (retrieved 2026-09-29).
-- **Copyright:** Copyright (c) 2017 Sean Barrett.
-- **License:** dual licensed, **MIT License** or public domain (Unlicense), at the user's choice; the MIT terms are used here, which are compatible with GPL-3.0-or-later. The license text is at the end of the file.
-
-### stb_image
-- **Repository Files:** `third_party/stb/stb_image.h`, unmodified.
-- **Usage Area:** only its zlib decoder, to inflate the launcher's embedded fonts (`launcher/src/gunzip.cpp`).
-- **Upstream Origin:** https://github.com/nothings/stb, version 2.30, commit `2c980bb59875b0d32144a71867fbdebb2f77cd20` (retrieved 2026-10-02).
 - **Copyright:** Copyright (c) 2017 Sean Barrett.
 - **License:** dual licensed, **MIT License** or public domain (Unlicense), at the user's choice; the MIT terms are used here, which are compatible with GPL-3.0-or-later. The license text is at the end of the file.
 
@@ -128,30 +114,6 @@ These dependencies are dynamically linked during runtime or retrieved through au
 - **Version:** 3.4.16 (Retrieved by `tools/fetch_sdl.py` into build tree).
 - **License:** **zlib License** (Fully compatible with GPL-3.0-or-later).
 - **Copyright:** Copyright (C) 1997-2026 Sam Lantinga.
-
-### Launcher Libraries (`launcher/`)
-The launcher is a single static executable. CMake downloads each library below at configure time and checks its published SHA-256; none of them is stored in this repository. The launcher's Licenses page shows every license text.
-- **SDL 3.4.16:** window, input, file dialogs and rendering, linked statically. **zlib License**. Copyright (C) 1997-2026 Sam Lantinga.
-- **Dear ImGui 1.92.9b:** user interface. **MIT License**. Copyright (c) 2014-2026 Omar Cornut.
-- **Inter 4.1 (Regular and SemiBold):** embedded font. **SIL Open Font License 1.1**. Copyright (c) 2016 The Inter Project Authors.
-- **mingw-w64 winpthreads:** threading runtime of the MinGW-w64 GCC toolchain, linked statically. **MIT-style license** (`launcher/licenses/winpthreads.txt`). Copyright (c) 2011 mingw-w64 project.
-- **GCC runtime libraries (libstdc++, libgcc):** linked statically. **GPL-3.0 with the GCC Runtime Library Exception 3.1** (`launcher/licenses/gcc-runtime-library-exception.txt`).
-
-### Linux AppImage (release asset `wondersbeyondrecomp-launcher-x86_64.AppImage`)
-Built by `tools/make_appimage.py`; nothing of it is stored in this repository. It holds the Linux launcher (the libraries above, with libstdc++ and libgcc linked statically; glibc stays the system's), the project icon and a desktop entry, packed by:
-- **appimagetool 1.9.1** (https://github.com/AppImage/appimagetool, SHA-256 checked): build tool only, not included in the file. **MIT License**.
-- **AppImage type2-runtime 20251108** (https://github.com/AppImage/type2-runtime, SHA-256 checked): the small program at the start of the file that mounts it. **MIT License**. It is built on Alpine Linux 3.21 and statically linked with **libfuse 3.15.0** (**LGPL-2.1**, with the runtime's patch to `mount.c`), **squashfuse 0.5.2** (**BSD 2-Clause**), **zstd** (**BSD 3-Clause**), **zlib** (**zlib License**), **mimalloc** (**MIT**) and **musl libc** (**MIT**).
-- **Corresponding source:** the release file `wondersbeyondrecomp-sources.zip` also carries the unmodified source releases of type2-runtime 20251108 (with its build scripts and the libfuse patch) and libfuse 3.15.0. `--appimage-extract` unpacks the launcher as a plain file, so the runtime can be replaced.
-
-### Offline Tools Pack (release asset `wondersbeyondrecomp-offline-windows.zip`)
-Built by `tools/make_offline_pack.py`; nothing of it is stored in this repository. It redistributes, unmodified, the same official releases the launcher downloads (each checked against the SHA-256 in `launcher/src/toolchain.cpp`) plus the SDL3 development package used by `tools/fetch_sdl.py`:
-- **nodtool 1.4.4:** MIT License or Apache License 2.0.
-- **Python 3.12.10 (embeddable):** Python Software Foundation License.
-- **CMake 4.4.3:** BSD 3-Clause License (its HTML manual is left out).
-- **Ninja 1.13.2:** Apache License 2.0.
-- **SDL 3.4.16 (MinGW development package):** zlib License.
-- **MinGW-w64 distro 20.0 by nuwen.net (Stephan T. Lavavej):** only its compiler part is kept: GCC 15.2.0 and binutils 2.45.1 (**GPL-3.0**, GCC runtime libraries under the **GCC Runtime Library Exception 3.1**), GMP 6.3.0, MPFR 4.2.2 and MPC 1.3.1 built into GCC (**LGPL-3.0**), ISL 0.24 (**MIT**) and the MinGW-w64 11.0.1 runtime (permissive licences). The distro's other programs and libraries are removed.
-- **Corresponding source:** published with every release that carries the pack, as `wondersbeyondrecomp-sources.zip`: the official, unmodified source releases of GCC, binutils, GMP, MPFR, MPC, ISL and MinGW-w64 at those versions, and the distro's build scripts (`scripts-20.0`, which also stay inside the pack). The pack's `OFFLINE-PACK.txt` lists every file with its origin and SHA-256.
 
 ---
 
