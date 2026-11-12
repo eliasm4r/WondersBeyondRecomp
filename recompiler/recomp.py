@@ -45,6 +45,13 @@ def load_replacements(symbols_path, replacements_path):
     return {addresses[name]: name for name in names}
 
 
+def load_hooks(path):
+    if not Path(path).exists():
+        return {}
+    with open(path, newline="") as handle:
+        return {int(row["address"], 16): row["name"] for row in csv.DictReader(handle)}
+
+
 def load_names(paths):
     names = {}
     for path in paths:
@@ -63,6 +70,23 @@ def render_replacement(start, name, stats):
         f'    static const wp::HleFunction handler = wp::find_replacement("{name}");',
         "    handler(c);",
         "}",
+    ]
+
+
+def hooked_name(address):
+    return f"f_hooked_{address:08x}"
+
+
+def render_hook(start, name):
+    return [
+        f"void {hooked_name(start)}(wp::Cpu& c);",
+        "",
+        f"void {function_name(start)}(wp::Cpu& c) {{",
+        f"    WP_ENTER({u32(start)});",
+        f'    static const wp::HookFunction hook = wp::find_hook("{name}");',
+        f"    hook(c, {hooked_name(start)});",
+        "}",
+        "",
     ]
 
 
@@ -131,14 +155,15 @@ def falls_through(instr):
     return instr.mn != "rfi"
 
 
-def render_function(start, instrs, entries, dol, stats, replacements, save_context, set_jump):
+def render_function(start, instrs, entries, dol, stats, replacements, hooks, save_context, set_jump):
     if start in replacements:
         return render_replacement(start, replacements[start], stats)
     end = start + 4 * len(instrs)
     tables, unresolved = cfg.find_jump_tables(instrs, dol)
     labels = cfg.find_labels(instrs, start, end, tables)
     emitter = Emitter(start, end, entries, tables, save_context, set_jump)
-    lines = [f"void {function_name(start)}(wp::Cpu& c) {{", f"    WP_ENTER({u32(start)});", "    [[maybe_unused]] uint32_t ea = 0;", "    [[maybe_unused]] uint32_t q = 0;"]
+    own_name = hooked_name(start) if start in hooks else function_name(start)
+    lines = [f"void {own_name}(wp::Cpu& c) {{", f"    WP_ENTER({u32(start)});", "    [[maybe_unused]] uint32_t ea = 0;", "    [[maybe_unused]] uint32_t q = 0;"]
     body = []
     for instr in instrs:
         if instr.addr in labels:
@@ -156,6 +181,8 @@ def render_function(start, instrs, entries, dol, stats, replacements, save_conte
         body.append(f"    {function_name(end)}(c);")
     elif end in emitter.resume_points:
         body.append(f"    wp::unresolved_jump(c, {u32(end)});")
+    if start in hooks:
+        lines = render_hook(start, hooks[start]) + lines
     if emitter.save_sites:
         lines.append(f"    std::jmp_buf wp_jump[{emitter.save_sites}];")
     lines.extend(emitter.resume_prologue())
@@ -166,7 +193,7 @@ def render_function(start, instrs, entries, dol, stats, replacements, save_conte
     stats["jump_tables"] += len(tables)
     stats["unresolved_jumps"] += unresolved
     stats["unsupported"].update(emitter.unsupported)
-    stats["resumes"].extend((address, start) for address in emitter.resume_points)
+    stats["resumes"].extend((address, own_name) for address in emitter.resume_points)
     return lines
 
 
@@ -185,11 +212,12 @@ def write_sources(output, chunks, entries, names, resumes):
         emit(f"dol_{index:03d}.cpp", "\n".join(body) + "\n")
     header = ["#pragma once", '#include "wp/cpu.h"', ""]
     header += [f"void {function_name(a)}(wp::Cpu& c);" for a in entries]
+    header += [f"void {name}(wp::Cpu& c);" for name in sorted({f for _, f in resumes if f.startswith("f_hooked_")})]
     emit("functions.h", "\n".join(header) + "\n")
     table = ['#include "wp/function_table.h"', '#include "functions.h"', "", "namespace wp {", "", "const FunctionEntry g_function_table[] = {"]
     table += [f"    {{{u32(a)}, {function_name(a)}}}," for a in entries]
     table += ["};", "", f"const size_t g_function_count = {len(entries)};", "", "const FunctionEntry g_resume_table[] = {"]
-    table += [f"    {{{u32(a)}, {function_name(f)}}}," for a, f in sorted(resumes)]
+    table += [f"    {{{u32(a)}, {f}}}," for a, f in sorted(resumes)]
     table += ["};", "", f"const size_t g_resume_count = {len(resumes)};", "", "}"]
     emit("function_table.cpp", "\n".join(table) + "\n")
     listing = ['#include "wp/function_table.h"', "", "namespace wp {", "", "const NameEntry g_name_table[] = {"]
@@ -210,11 +238,13 @@ def main():
     parser.add_argument("--dolphin-symbols", default=str(current.dolphin_symbols))
     parser.add_argument("--module-targets", default=str(current.module_targets))
     parser.add_argument("--replacements", default=str(current.analysis / "hle_functions.csv"))
+    parser.add_argument("--hooks", default=str(current.analysis / "hook_functions.csv"))
     parser.add_argument("--output", default=str(current.dol_code))
     args = parser.parse_args()
 
     dol = dol_module.load(args.dol)
     replacements = load_replacements(args.symbols, args.replacements)
+    hooks = load_hooks(args.hooks)
     names = load_names([args.dolphin_symbols, args.symbols])
     save_context = next((address for address, name in names.items() if name == "OSSaveContext"), None)
     set_jump = next((address for address, name in names.items() if name == "setjmp"), None)
@@ -227,7 +257,7 @@ def main():
     chunks = []
     current = []
     for start in entries:
-        current.extend(render_function(start, bodies[start], entry_set, dol, stats, replacements, save_context, set_jump))
+        current.extend(render_function(start, bodies[start], entry_set, dol, stats, replacements, hooks, save_context, set_jump))
         current.append("")
         if len(current) >= LINES_PER_FILE:
             chunks.append(current)

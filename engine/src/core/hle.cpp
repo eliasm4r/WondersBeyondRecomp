@@ -73,4 +73,12 @@ HleFunction find_replacement(const char* name) {
     std::abort();
 }
 
+HookFunction find_hook(const char* name) {
+    if (HookFunction function = game::hook(name)) {
+        return function;
+    }
+    std::fprintf(stderr, "no runtime handler for hooked function %s\n", name);
+    std::abort();
+}
+
 }

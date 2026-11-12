@@ -509,6 +509,57 @@ void print_guest_registers() {
     describe_loaded_modules(g_cpu->lr);
 }
 
+namespace {
+
+constexpr uint32_t kStackPointerOffset = kGprOffset + 4;
+constexpr uint32_t kThreadStateOffset = 0x2C8;
+constexpr uint32_t kThreadPriorityOffset = 0x2D0;
+constexpr uint32_t kThreadQueueOffset = 0x2DC;
+constexpr uint32_t kThreadMutexOffset = 0x2F0;
+constexpr size_t kChainLength = 12;
+
+bool in_ram(uint32_t address) {
+    return (address & 3) == 0 && ((address >= 0x80000000 && address < 0x81800000) || (address >= 0x90000000 && address < 0x94000000));
+}
+
+}
+
+std::vector<uint32_t> guest_call_chain(uint32_t stack_pointer, size_t limit) {
+    std::vector<uint32_t> chain;
+    if (!in_ram(stack_pointer)) {
+        return chain;
+    }
+    uint32_t frame = rd32(stack_pointer);
+    while (chain.size() < limit && in_ram(frame) && frame > stack_pointer) {
+        chain.push_back(rd32(frame + 4));
+        stack_pointer = frame;
+        frame = rd32(frame);
+    }
+    return chain;
+}
+
+void print_guest_threads() {
+    uint32_t current = rd32(kCurrentThread);
+    uint32_t thread = rd32(kActiveThreadQueue);
+    for (int guard = 0; in_ram(thread) && guard < kMaxActiveThreads; guard++) {
+        std::fprintf(stderr, "guest thread %08x%s state %u priority %d pc=%08x lr=%08x waits on %08x mutex %08x:", thread, thread == current ? " (running)" : "",
+                     rd16(thread + kThreadStateOffset), static_cast<int>(rd32(thread + kThreadPriorityOffset)), rd32(thread + kSrr0Offset),
+                     rd32(thread + kLinkOffset), rd32(thread + kThreadQueueOffset), rd32(thread + kThreadMutexOffset));
+        for (uint32_t address : guest_call_chain(rd32(thread + kStackPointerOffset), kChainLength)) {
+            std::fprintf(stderr, " %08x", address);
+        }
+        std::fputc(10, stderr);
+        thread = rd32(thread + kActiveLinkOffset);
+    }
+    if (g_cpu) {
+        std::fprintf(stderr, "running code: lr=%08x sp=%08x:", g_cpu->lr, g_cpu->r[1]);
+        for (uint32_t address : guest_call_chain(g_cpu->r[1], kChainLength)) {
+            std::fprintf(stderr, " %08x", address);
+        }
+        std::fputc(10, stderr);
+    }
+}
+
 void print_thread_stacks() {
 #ifdef WP_TRACE
     void* current = fiber::current();

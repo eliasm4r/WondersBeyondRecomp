@@ -24,6 +24,10 @@ HleFunction replacement(const char*) {
     return nullptr;
 }
 
+HookFunction hook(const char*) {
+    return nullptr;
+}
+
 void retrace() {}
 
 }

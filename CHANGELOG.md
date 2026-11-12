@@ -22,6 +22,15 @@ All notable changes to WondersBeyondRecomp. Dates are when the change landed on 
 - Color settings in the Screen tab: brightness, contrast, saturation and gamma, 100% being the original picture, and
   an "Original colors" button. They change the game picture, cutscenes and F9 screenshots, not the F1 menu or the F2
   overlay, and apply while the menu is open.
+- Free camera (on by default, Controls tab): the mouse or the right stick turns the camera around Pikachu and Pikachu
+  walks toward the screen's direction. The camera stays where it was put; the game's "turn the view" button (C, Wii
+  B) brings it back behind Pikachu. Mouse and stick speeds and an up/down invert are separate settings. While playing,
+  the cursor is hidden and held in the window; holding Ctrl frees it to aim the pointer. Left bumper + right stick
+  still tilts the Wii Remote and L3 + right stick still aims.
+
+- Bug recorder (Advanced tab, Direct3D 11): keeps the last three seconds of images shown, and the screenshot key then saves
+  them all to `screenshots/<name>_recent`, the interpolated ones marked `between`.
+- When the game draws no frame for 15 seconds, the log gets a report of every game thread and of the IOS requests.
 
 ### Changed
 - The options menu is drawn as the game's dialog bubble (orange edge, Nunito font) with six tabs in a column: Screen,
@@ -37,14 +46,25 @@ All notable changes to WondersBeyondRecomp. Dates are when the change landed on 
   language).
 - Gamepad bindings are stored as real buttons (`pad.one=east,west`, `pad.swing_up=left_shoulder+dpad_up`); `auto`
   is still read and replaced by the default. Giving a button to an action in the menu takes it off the others.
+- Higher frame rate in heavy zones on Direct3D 11: the frame buffer copies the game makes about 50 times a frame no
+  longer wait on the graphics driver (38 to about 50 frames a second in the measured spot at 120 fps).
 
 ### Fixed
 - Gamepad buttons given to A, B, 1, 2, +, − or HOME in the menu were ignored while the Wii Remote is held sideways,
   which is always the case in PokéPark 2.
 - The game's frame alarms wait for the draw token the GPU thread still owes (100 ms at most): with the GPU thread
   a little late the game took fresh buffers every frame and ran out of heap in the pause menu.
+- Crash, noise in the pause menu and black bars after leaving it at 90 and 120 fps: with the GPU thread a frame late
+  the game dropped the frees of its temporary buffers and ran out of memory. Such frees are now kept and the game
+  waits for the GPU thread when a buffer does not fit.
+- Face culling is computed in double precision: thin triangles were sometimes taken for back faces.
+- Play time is no longer counted in headless runs.
 - Flickering shadows, footprints, far scenery and sea at 120 fps, and thin lines of sea showing through the ground
   during camera turns.
+- Endless loading after a long session: every opened file took a new descriptor number, and the 228th overwrote a
+  timer of the game. Numbers are reused as on the console.
+- Pikachu torn apart on loading screens at 120 fps.
+- The log file kept the hang report only until the next line was written.
 
 ## 2026-11-10
 

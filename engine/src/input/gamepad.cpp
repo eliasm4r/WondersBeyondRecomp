@@ -507,6 +507,19 @@ bool connected(uint32_t slot) {
     return snapshot(slot).connected;
 }
 
+bool camera_stick(float& x, float& y) {
+    x = 0.0f;
+    y = 0.0f;
+    Snapshot current = snapshot(0);
+    if (!current.connected || current.buttons[SDL_GAMEPAD_BUTTON_LEFT_SHOULDER] ||
+        padmap::held(padmap::current_mapping()[padmap::kPointerAction], physical_state(current))) {
+        return false;
+    }
+    x = current.right_x;
+    y = current.right_y;
+    return true;
+}
+
 void set_outputs(uint32_t slot, bool rumble, uint8_t leds) {
     if (slot >= kSlots || !enabled()) {
         return;

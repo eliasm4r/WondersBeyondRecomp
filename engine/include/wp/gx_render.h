@@ -70,6 +70,15 @@ struct GpuFigures {
 
 GpuFigures gpu_figures();
 bool read_frame(std::vector<uint32_t>& pixels, uint32_t& width, uint32_t& height);
+
+struct RecentImage {
+    std::vector<uint32_t> pixels;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    bool between = false;
+};
+
+bool read_recent(std::vector<RecentImage>& images);
 void dump_copies(const char* prefix);
 void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width, int height, bool half, uint32_t format, bool intensity, bool depth, bool alpha,
                      const CopyFilter& filter);

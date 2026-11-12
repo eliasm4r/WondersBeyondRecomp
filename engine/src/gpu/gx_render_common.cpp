@@ -208,14 +208,26 @@ std::vector<uint32_t> decode_texture(const uint8_t* data, uint32_t width, uint32
 }
 
 uint64_t hash_bytes(const uint8_t* data, size_t size) {
+    constexpr uint64_t kPrime = 1099511628211ull;
     uint64_t hash = 1469598103934665603ull;
     size_t words = size / 8;
     const uint64_t* p = reinterpret_cast<const uint64_t*>(data);
-    for (size_t i = 0; i < words; i++) {
-        hash = (hash ^ p[i]) * 1099511628211ull;
+    uint64_t lanes[4] = {hash, hash ^ 1, hash ^ 2, hash ^ 3};
+    size_t i = 0;
+    for (; i + 4 <= words; i += 4) {
+        lanes[0] = (lanes[0] ^ p[i]) * kPrime;
+        lanes[1] = (lanes[1] ^ p[i + 1]) * kPrime;
+        lanes[2] = (lanes[2] ^ p[i + 2]) * kPrime;
+        lanes[3] = (lanes[3] ^ p[i + 3]) * kPrime;
     }
-    for (size_t i = words * 8; i < size; i++) {
-        hash = (hash ^ data[i]) * 1099511628211ull;
+    for (uint64_t lane : lanes) {
+        hash = (hash ^ lane) * kPrime;
+    }
+    for (; i < words; i++) {
+        hash = (hash ^ p[i]) * kPrime;
+    }
+    for (size_t tail = words * 8; tail < size; tail++) {
+        hash = (hash ^ data[tail]) * kPrime;
     }
     return hash;
 }
@@ -601,6 +613,9 @@ bool fit_motion(const float (*from)[4], const float (*to)[4], size_t count, floa
                 kept += used[i];
             }
             if (kept < kMinimum || kept * 10 < count * 6) {
+                if (round >= 3) {
+                    break;
+                }
                 return false;
             }
         }
@@ -616,7 +631,7 @@ bool fit_motion(const float (*from)[4], const float (*to)[4], size_t count, floa
             for (int r = 0; r < 4; r++) {
                 for (int c = 0; c < 4; c++) {
                     system[r][c] += f[r] * f[c];
-                    system[r][4 + c] += f[r] * to[i][c];
+                    system[r][4 + c] += f[r] * (static_cast<double>(to[i][c]) - from[i][c]);
                 }
             }
         }
@@ -647,7 +662,7 @@ bool fit_motion(const float (*from)[4], const float (*to)[4], size_t count, floa
         }
         for (int r = 0; r < 4; r++) {
             for (int j = 0; j < 4; j++) {
-                solved[r][j] = system[j][4 + r] / system[j][j] * scale[j];
+                solved[r][j] = system[j][4 + r] / system[j][j] * scale[j] + (r == j ? 1.0 : 0.0);
             }
         }
     }

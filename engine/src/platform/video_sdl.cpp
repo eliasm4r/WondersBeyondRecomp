@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "wp/dsp.h"
+#include "wp/free_camera.h"
 #include "wp/game.h"
 #include "wp/gx.h"
 #include "wp/gx_render.h"
@@ -287,6 +288,10 @@ void handle_event(SDL_Window* window, const SDL_Event& event) {
         return;
     }
     case SDL_EVENT_MOUSE_MOTION: {
+        if (SDL_GetWindowRelativeMouseMode(window)) {
+            free_camera::add_mouse(event.motion.xrel, event.motion.yrel);
+            return;
+        }
         if (options::menu_open()) {
             float density = SDL_GetWindowPixelDensity(window);
             int x = static_cast<int>(event.motion.x * density);
@@ -396,6 +401,11 @@ void window_thread(bool visible) {
         }
         apply_option(window, options::poll_gamepads(window));
         perf::update();
+        bool capture = free_camera::current().enabled && free_camera::driving() && (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) &&
+                       !options::menu_open() && !free_camera::pointer_held();
+        if (capture != SDL_GetWindowRelativeMouseMode(window)) {
+            SDL_SetWindowRelativeMouseMode(window, capture);
+        }
         bool hide = hide_cursor() && !options::menu_open();
         if (hide != cursor_hidden) {
             cursor_hidden = hide;

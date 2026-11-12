@@ -106,7 +106,7 @@ std::map<int32_t, Device> g_devices;
 std::deque<std::pair<uint32_t, int32_t>> g_completions;
 uint32_t g_event_hook = 0;
 uint32_t g_kd_rtc = 0;
-int32_t g_next_descriptor = 1;
+constexpr int32_t kFirstDescriptor = 1;
 uint32_t g_di_last_error = 0;
 int32_t g_cache_descriptor = -1;
 uint32_t g_cache_chain = 0;
@@ -469,7 +469,10 @@ int32_t open(const std::string& path, uint32_t mode) {
     }
     std::fprintf(stderr, "IOS open %s\n", path.c_str());
     log::write("ios", "open %s", path.c_str());
-    int32_t descriptor = g_next_descriptor++;
+    int32_t descriptor = kFirstDescriptor;
+    while (g_devices.count(descriptor) != 0) {
+        descriptor++;
+    }
     g_devices[descriptor] = device;
     return descriptor;
 }

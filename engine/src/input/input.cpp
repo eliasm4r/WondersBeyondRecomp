@@ -14,6 +14,7 @@
 
 #include "wp/game.h"
 #include "wp/gamepad.h"
+#include "wp/free_camera.h"
 #include "wp/gx.h"
 #include "wp/keymap.h"
 #include "wp/log.h"
@@ -327,6 +328,7 @@ Sample device_sample(uint32_t channel) {
     }
     const keymap::Bindings& keys = bindings();
     bool mouse_aims = focused && any_pressed(keys.of(keymap::Action::Pointer));
+    free_camera::set_pointer_held(mouse_aims || (focused && any_pressed(keys.of(keymap::Action::MouseMotion))));
     if (focused) {
         result.buttons |= keyboard_buttons(keys, pressed, mouse_aims);
     }
@@ -394,6 +396,9 @@ Sample sample(uint32_t channel) {
     }
     if (channel == 0 && g_auto_confirm.load() && now_ms() % kConfirmPeriod < kConfirmLength) {
         result.buttons |= kButtonA;
+    }
+    if (channel == 0) {
+        free_camera::note_buttons(result.buttons);
     }
     return result;
 }

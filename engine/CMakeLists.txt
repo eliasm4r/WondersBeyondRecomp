@@ -7,6 +7,7 @@ add_library(wp_engine STATIC
     src/core/boot.cpp
     src/core/frame_pacing.cpp
     src/core/hle.cpp
+    src/core/stall_watch.cpp
     src/core/threads.cpp
     src/core/interrupts.cpp
     src/core/modules.cpp
@@ -29,6 +30,7 @@ add_library(wp_engine STATIC
     src/input/input.cpp
     src/input/keymap.cpp
     src/input/padmap.cpp
+    src/input/free_camera.cpp
     src/input/si.cpp
     src/core/exi.cpp
     src/core/hollywood.cpp

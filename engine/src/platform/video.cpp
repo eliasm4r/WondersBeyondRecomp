@@ -12,12 +12,14 @@
 #include <cstdint>
 #include <cstdlib>
 #include <ctime>
+#include <filesystem>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "wp/dsp.h"
+#include "wp/free_camera.h"
 #include "wp/game.h"
 #include "wp/gx.h"
 #include "wp/gx_render.h"
@@ -58,6 +60,26 @@ std::string g_title;
 bool hide_cursor() {
     static const settings::LiveFlag value("input.hide_cursor", "WP_HIDE_CURSOR");
     return value();
+}
+
+std::atomic<bool> g_captured{false};
+
+void update_capture(HWND window) {
+    bool capture = free_camera::current().enabled && free_camera::driving() && GetForegroundWindow() == window && !IsIconic(window) &&
+                   !options::menu_open() && !free_camera::pointer_held();
+    RECT client{};
+    if (capture && GetClientRect(window, &client)) {
+        POINT center{client.right / 2, client.bottom / 2};
+        ClientToScreen(window, &center);
+        RECT spot{center.x, center.y, center.x + 1, center.y + 1};
+        ClipCursor(&spot);
+        if (!g_captured) {
+            SetCursor(nullptr);
+        }
+    } else if (g_captured) {
+        ClipCursor(nullptr);
+    }
+    g_captured = capture;
 }
 
 constexpr DWORD kDwmUseImmersiveDarkMode = 20;
@@ -234,6 +256,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         if (wparam == kMenuTimer) {
             apply_option(window, options::poll_gamepads(window));
             perf::update();
+            update_capture(window);
             return 0;
         }
         return DefWindowProc(window, message, wparam, lparam);
@@ -267,8 +290,22 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
     case WM_SIZE:
         options::refresh_menu(window);
         return DefWindowProc(window, message, wparam, lparam);
+    case WM_INPUT: {
+        RAWINPUT raw{};
+        UINT size = sizeof raw;
+        if (g_captured && GetRawInputData(reinterpret_cast<HRAWINPUT>(lparam), RID_INPUT, &raw, &size, sizeof(RAWINPUTHEADER)) != static_cast<UINT>(-1) &&
+            raw.header.dwType == RIM_TYPEMOUSE && !(raw.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE)) {
+            free_camera::add_mouse(raw.data.mouse.lLastX, raw.data.mouse.lLastY);
+        }
+        return DefWindowProc(window, message, wparam, lparam);
+    }
+    case WM_KILLFOCUS:
+        if (g_captured.exchange(false)) {
+            ClipCursor(nullptr);
+        }
+        return DefWindowProc(window, message, wparam, lparam);
     case WM_SETCURSOR:
-        if (LOWORD(lparam) == HTCLIENT && hide_cursor() && !options::menu_open()) {
+        if (LOWORD(lparam) == HTCLIENT && (hide_cursor() || g_captured) && !options::menu_open()) {
             SetCursor(nullptr);
             return TRUE;
         }
@@ -334,6 +371,11 @@ std::string window_title(double fps) {
     return show_statistics() ? title + " | " + gx::render::api_name() + " | " + statistics : title;
 }
 
+bool hidden_window() {
+    const char* headless = std::getenv("WP_HEADLESS");
+    return headless && std::strcmp(headless, "window") == 0;
+}
+
 void window_thread() {
     WNDCLASSA window_class{};
     window_class.lpfnWndProc = window_proc;
@@ -355,15 +397,18 @@ void window_thread() {
         rect = {0, 0, client_width, client_height};
         AdjustWindowRect(&rect, WS_OVERLAPPEDWINDOW, FALSE);
     }
-    HWND window = CreateWindowA(kWindowClass, title.c_str(), WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT,
+    bool hidden = hidden_window();
+    HWND window = CreateWindowA(kWindowClass, title.c_str(), hidden ? WS_OVERLAPPEDWINDOW : WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT,
                                 CW_USEDEFAULT, rect.right - rect.left, rect.bottom - rect.top, nullptr, nullptr,
                                 window_class.hInstance, nullptr);
     g_window = window;
     apply_title_bar_theme(window);
-    if (settings::flag("video.fullscreen", "WP_FULLSCREEN")) {
+    if (!hidden && settings::flag("video.fullscreen", "WP_FULLSCREEN")) {
         set_fullscreen(window, true);
     }
     SetTimer(window, kMenuTimer, kMenuTimerPeriod, nullptr);
+    RAWINPUTDEVICE mouse{0x01, 0x02, 0, window};
+    RegisterRawInputDevices(&mouse, 1, sizeof mouse);
     MSG message;
     while (GetMessage(&message, nullptr, 0, 0) > 0) {
         TranslateMessage(&message);
@@ -377,7 +422,7 @@ void start() {
     log::write("video", "build %s", WP_BUILD);
     g_aspect = nand::widescreen() ? kWideAspect : kStandardAspect;
     apply_interface_language();
-    if (std::getenv("WP_HEADLESS")) {
+    if (std::getenv("WP_HEADLESS") && !hidden_window()) {
         return;
     }
     std::thread(window_thread).detach();
@@ -521,12 +566,29 @@ void save_screenshot() {
 
 }
 
+void save_recent_images() {
+    std::vector<gx::render::RecentImage> images;
+    if (!gx::render::read_recent(images)) {
+        return;
+    }
+    std::string folder = std::string(screenshot::kFolder) + "/" + screenshot::recent_folder(game::description().short_name, local_time());
+    std::thread([images = std::move(images), folder] {
+        std::error_code error;
+        std::filesystem::create_directories(folder, error);
+        for (size_t i = 0; i < images.size(); i++) {
+            save_png((folder + "/" + screenshot::recent_name(i + 1, images[i].between)).c_str(), images[i].pixels, images[i].width, images[i].height);
+        }
+        log::write("video", "%u recent images saved to %s", static_cast<unsigned>(images.size()), folder.c_str());
+    }).detach();
+}
+
 void present_on_gpu(HWND window, double aspect) {
     if (window) {
         gx::render::present_frame(window, aspect);
     }
     if (g_screenshot_requested.exchange(false)) {
         save_screenshot();
+        save_recent_images();
     }
     if (!g_next_frame_path.empty()) {
         std::vector<uint32_t> pixels;

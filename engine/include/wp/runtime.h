@@ -31,6 +31,8 @@ void forget_saved_context(uint32_t context, std::jmp_buf* point);
 void long_jump(Cpu& c);
 void print_thread_stacks();
 void print_guest_registers();
+void print_guest_threads();
+std::vector<uint32_t> guest_call_chain(uint32_t stack_pointer, size_t limit);
 uint32_t symbol_address(const char* name);
 void interrupt_left();
 

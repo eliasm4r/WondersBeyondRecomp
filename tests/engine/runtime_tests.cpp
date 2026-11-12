@@ -35,15 +35,22 @@
 #include "wp/save_backup.h"
 #include "wp/padmap.h"
 #include "wp/frame_pacing.h"
+#include "wp/free_camera.h"
 #include "wp/perf.h"
 #include "wp/perf_overlay.h"
 #include "wp/play_time.h"
 #include "wp/input.h"
+#include "wp/runtime.h"
 #include "wp/screenshot.h"
+#include "wp/stall_watch.h"
 #include "wp/settings.h"
 #include "wp/ui_text.h"
 #include "wp/video.h"
 #include "wp/wiimote.h"
+
+namespace wp::gx::render {
+uint64_t hash_bytes(const uint8_t* data, size_t size);
+}
 
 namespace {
 
@@ -456,6 +463,28 @@ void test_file_attributes() {
     fs::remove_all(parent, error);
 }
 
+void test_descriptor_reuse() {
+    const uint32_t request = 0x80206000;
+    auto close = [&](int32_t descriptor) {
+        wp::wr32(request, 2);
+        wp::wr32(request + 8, static_cast<uint32_t>(descriptor));
+        uint64_t ticks = 0;
+        return wp::ios::send(request, ticks);
+    };
+    int32_t kept = wp::ios::open("/dev/di");
+    int32_t highest = kept;
+    for (int i = 0; i < 300; i++) {
+        int32_t first = wp::ios::open("/dev/di");
+        int32_t second = wp::ios::open("/dev/di");
+        CHECK(first >= 0 && second >= 0 && first != second && first != kept && second != kept);
+        highest = std::max(highest, std::max(first, second));
+        CHECK(close(first) == 0);
+        CHECK(close(second) == 0);
+    }
+    CHECK(highest < 24);
+    CHECK(close(kept) == 0);
+}
+
 void test_pad_mapping() {
     using namespace wp::padmap;
     CHECK(format_binding(default_binding(3, true)) == "south");
@@ -788,6 +817,22 @@ void test_texture_keys() {
     CHECK(texture_key(0xFFFFFF, 0xFFFFFF, 15, 0xFFF) == ~0ull);
 }
 
+void test_texture_hash_sees_every_byte() {
+    for (size_t size : {1u, 7u, 8u, 31u, 32u, 33u, 64u, 71u, 200u}) {
+        std::vector<uint8_t> bytes(size);
+        for (size_t i = 0; i < size; i++) {
+            bytes[i] = static_cast<uint8_t>(i * 37 + 11);
+        }
+        uint64_t reference = wp::gx::render::hash_bytes(bytes.data(), size);
+        for (size_t i = 0; i < size; i++) {
+            bytes[i] ^= 0x40;
+            CHECK(wp::gx::render::hash_bytes(bytes.data(), size) != reference);
+            bytes[i] ^= 0x40;
+        }
+        CHECK(wp::gx::render::hash_bytes(bytes.data(), size) == reference);
+    }
+}
+
 void test_fit_motion() {
     const float camera[4][4] = {{0.99f, 0.0f, 0.00000002f, 0.03f}, {0.0f, 1.0f, 0.0f, -0.01f}, {50000.0f, 0.0f, 0.98f, 100000.0f}, {0.01f, 0.0f, 0.0f, 1.02f}};
     std::mt19937 random(7);
@@ -839,6 +884,25 @@ void test_fit_motion() {
     }
     CHECK(wp::gx::fit_motion(points(from), points(to), from.size(), fitted));
     CHECK(std::fabs(fitted[0][0] * 0.5f + fitted[0][1] * 0.25f + fitted[0][2] * 1000.0f + fitted[0][3] - 0.6f) < 0.001f);
+    from.clear();
+    to.clear();
+    for (int i = 0; i < 80; i++) {
+        std::array<float, 4> f = {unit(random) * 230.0f, unit(random) * 230.0f, 0.00768637f, 230.0f};
+        from.push_back(f);
+        to.push_back(f);
+    }
+    for (int i = 0; i < 20; i++) {
+        float w = 56.0f + unit(random);
+        std::array<float, 4> f = {unit(random) * 10.0f, unit(random) * 10.0f, 0.00943592f, w};
+        from.push_back(f);
+        to.push_back({f[0] + (i % 2 == 0 ? 20.0f : -20.0f) + 6.0f * unit(random), f[1] + 6.0f * unit(random), f[2], f[3] + unit(random)});
+    }
+    CHECK(wp::gx::fit_motion(points(from), points(to), from.size(), fitted));
+    for (int r = 0; r < 4; r++) {
+        for (int c = 0; c < 4; c++) {
+            CHECK(std::fabs(fitted[r][c] - (r == c ? 1.0f : 0.0f)) < 0.001f);
+        }
+    }
 }
 
 void test_gx_line_point_offsets() {
@@ -1141,6 +1205,28 @@ void test_settings_file_keys() {
     std::remove(path);
 }
 
+void test_recent_images() {
+    using namespace wp::screenshot;
+    CHECK(recent_level(640) == 0);
+    CHECK(recent_level(1280) == 0);
+    CHECK(recent_level(1920) == 1);
+    CHECK(recent_level(2560) == 1);
+    CHECK(recent_level(3840) == 2);
+    CHECK(recent_count(1280, 1056) == 198);
+    CHECK(recent_count(640, 528) == 360);
+    CHECK(recent_count(0, 528) == 0);
+    std::tm time{};
+    time.tm_year = 126;
+    time.tm_mon = 8;
+    time.tm_mday = 6;
+    time.tm_hour = 9;
+    time.tm_min = 5;
+    time.tm_sec = 3;
+    CHECK(recent_folder("pokepark2", time) == "pokepark2_2026-09-06_09-05-03_recent");
+    CHECK(recent_name(7, false) == "007.png");
+    CHECK(recent_name(112, true) == "112_between.png");
+}
+
 void test_screenshot_names() {
     std::tm time{};
     time.tm_year = 2026 - 1900;
@@ -1307,6 +1393,161 @@ void test_color() {
     wp::settings::load("");
 }
 
+void test_facing_of_thin_triangles() {
+    const float a[3] = {0x1.287a06p+9f, 0x1.541966p+9f, 0x1.d3fb02p+9f};
+    const float b[3] = {0x1.193f02p+9f, 0x1.44e126p+9f, 0x1.cbf0bap+9f};
+    const float c[3] = {0x1.29cd8p+9f, 0x1.566a28p+9f, 0x1.dbbb58p+9f};
+    CHECK(wp::gx::facing_area(a, b, c) > 0.0);
+    CHECK(wp::gx::facing_area(a, c, b) < 0.0);
+    const float p[3] = {0.0f, 0.0f, 1.0f};
+    const float q[3] = {1.0f, 0.0f, 1.0f};
+    const float r[3] = {0.0f, 1.0f, 1.0f};
+    CHECK(wp::gx::facing_area(p, q, r) == 1.0);
+}
+
+void test_guest_call_chain() {
+    wp::wr32(0x80003000, 0x80003020);
+    wp::wr32(0x80003020, 0x80003040);
+    wp::wr32(0x80003024, 0x80201234);
+    wp::wr32(0x80003040, 0);
+    wp::wr32(0x80003044, 0x80205678);
+    CHECK((wp::guest_call_chain(0x80003000, 8) == std::vector<uint32_t>{0x80201234, 0x80205678}));
+    CHECK((wp::guest_call_chain(0x80003000, 1) == std::vector<uint32_t>{0x80201234}));
+    CHECK(wp::guest_call_chain(0, 8).empty());
+    CHECK(wp::guest_call_chain(0x12345678, 8).empty());
+    wp::wr32(0x80003060, 0x80003060);
+    CHECK(wp::guest_call_chain(0x80003060, 8).empty());
+}
+
+void test_stall_watch() {
+    using std::chrono::seconds;
+    std::chrono::steady_clock::time_point start{};
+    wp::StallWatch watch(seconds(15));
+    CHECK(!watch.update(0, false, start));
+    CHECK(!watch.update(0, false, start + seconds(60)));
+    CHECK(!watch.update(10, false, start + seconds(61)));
+    CHECK(!watch.update(10, false, start + seconds(76)));
+    CHECK(watch.update(10, false, start + seconds(77)));
+    CHECK(!watch.update(10, false, start + seconds(120)));
+    CHECK(!watch.update(11, false, start + seconds(121)));
+    CHECK(!watch.update(11, true, start + seconds(140)));
+    CHECK(!watch.update(11, false, start + seconds(150)));
+    CHECK(watch.update(11, false, start + seconds(156)));
+}
+
+void test_token_wait() {
+    CHECK(wp::gx::wait_for_token(std::chrono::milliseconds(0)));
+}
+
+void test_free_camera() {
+    namespace fc = wp::free_camera;
+    auto near = [](float a, float b) { return std::fabs(a - b) < 0.01f; };
+    fc::View view = fc::from_offset(0.0f, 0.0f, 10.0f);
+    CHECK(near(view.yaw, 0.0f) && near(view.elevation, 0.0f) && near(view.distance, 10.0f));
+    float offset[3];
+    fc::to_offset(fc::View{1.0f, 0.5f, 20.0f}, offset);
+    view = fc::from_offset(offset[0], offset[1], offset[2]);
+    CHECK(near(view.yaw, 1.0f) && near(view.elevation, 0.5f) && near(view.distance, 20.0f));
+    CHECK(near(fc::wrap(7.0f), 7.0f - 2.0f * 3.14159265f) && near(fc::wrap(-4.0f), -4.0f + 2.0f * 3.14159265f));
+
+    fc::Settings settings{true, 1.0f, 1.0f, false};
+    fc::Turn right = fc::turn(10.0f, 0.0f, 0.0f, 0.0f, 0.0f, settings);
+    CHECK(right.yaw < 0.0f && right.pitch == 0.0f);
+    fc::Turn down = fc::turn(0.0f, 10.0f, 0.0f, 0.0f, 0.0f, settings);
+    CHECK(down.pitch > 0.0f && down.yaw == 0.0f);
+    fc::Turn inverted = fc::turn(0.0f, 10.0f, 0.0f, 0.0f, 0.0f, fc::Settings{true, 1.0f, 1.0f, true});
+    CHECK(near(inverted.pitch, -down.pitch));
+    fc::Turn faster = fc::turn(10.0f, 0.0f, 0.0f, 0.0f, 0.0f, fc::Settings{true, 2.0f, 1.0f, false});
+    CHECK(near(faster.yaw, 2.0f * right.yaw));
+    fc::Turn stick = fc::turn(0.0f, 0.0f, 1.0f, 0.0f, 0.5f, settings);
+    CHECK(stick.yaw < 0.0f);
+    fc::Turn idle = fc::turn(0.0f, 0.0f, 0.1f, -0.1f, 0.5f, settings);
+    CHECK(idle.yaw == 0.0f && idle.pitch == 0.0f);
+
+    const float target[3] = {100.0f, 5.0f, -50.0f};
+    float game[3];
+    fc::to_offset(fc::View{0.3f, 0.2f, 25.0f}, game);
+    fc::Orbit orbit;
+    float out[3];
+    orbit.update(game, target, fc::Turn{}, false, 1.0f / 30.0f, out);
+    CHECK(near(out[0], game[0]) && near(out[1], game[1]) && near(out[2], game[2]));
+    orbit.update(game, target, fc::Turn{0.5f, 0.0f}, false, 1.0f / 30.0f, out);
+    view = fc::from_offset(out[0], out[1], out[2]);
+    CHECK(near(view.yaw, 0.8f) && near(view.elevation, 0.2f) && near(view.distance, 25.0f));
+    fc::to_offset(fc::View{-1.0f, 0.2f, 30.0f}, game);
+    orbit.update(game, target, fc::Turn{}, false, 1.0f / 30.0f, out);
+    view = fc::from_offset(out[0], out[1], out[2]);
+    CHECK(near(view.yaw, 0.8f) && near(view.distance, 30.0f));
+
+    orbit.update(game, target, fc::Turn{0.0f, 10.0f}, false, 1.0f / 30.0f, out);
+    view = fc::from_offset(out[0], out[1], out[2]);
+    CHECK(near(view.elevation, fc::kMaxElevation));
+    orbit.update(game, target, fc::Turn{0.0f, -0.1f}, false, 1.0f / 30.0f, out);
+    view = fc::from_offset(out[0], out[1], out[2]);
+    CHECK(near(view.elevation, fc::kMaxElevation - 0.1f));
+    orbit.update(game, target, fc::Turn{0.0f, -10.0f}, false, 1.0f / 30.0f, out);
+    view = fc::from_offset(out[0], out[1], out[2]);
+    CHECK(near(view.elevation, fc::kMinElevation));
+
+    orbit.update(game, target, fc::Turn{}, true, 1.0f / 30.0f, out);
+    for (int frame = 0; frame < 60; frame++) {
+        orbit.update(game, target, fc::Turn{}, false, 1.0f / 30.0f, out);
+    }
+    CHECK(near(out[0], game[0]) && near(out[1], game[1]) && near(out[2], game[2]));
+
+    orbit.update(game, target, fc::Turn{1.0f, 0.0f}, false, 1.0f / 30.0f, out);
+    orbit.update(game, target, fc::Turn{}, true, 1.0f / 30.0f, out);
+    orbit.update(game, target, fc::Turn{0.2f, 0.0f}, false, 1.0f / 30.0f, out);
+    float before = fc::from_offset(out[0], out[1], out[2]).yaw;
+    orbit.update(game, target, fc::Turn{}, false, 1.0f / 30.0f, out);
+    CHECK(near(fc::from_offset(out[0], out[1], out[2]).yaw, before));
+
+    const float moved[3] = {400.0f, 5.0f, -50.0f};
+    orbit.update(game, moved, fc::Turn{}, false, 1.0f / 30.0f, out);
+    CHECK(near(out[0], game[0]) && near(out[2], game[2]));
+    orbit.update(game, moved, fc::Turn{0.4f, 0.0f}, false, 1.0f / 30.0f, out);
+    orbit.reset();
+    orbit.update(game, moved, fc::Turn{}, false, 1.0f / 30.0f, out);
+    CHECK(near(out[0], game[0]) && near(out[2], game[2]));
+
+    fc::note_buttons(wp::input::kButtonB);
+    fc::note_buttons(wp::input::kButtonB);
+    CHECK(fc::take_recenter());
+    CHECK(!fc::take_recenter());
+    fc::note_buttons(0);
+    fc::note_buttons(wp::input::kButtonB | wp::input::kButtonA);
+    CHECK(fc::take_recenter());
+
+    fc::add_mouse(3, -4);
+    fc::add_mouse(2, 1);
+    float mx = 0.0f;
+    float my = 0.0f;
+    fc::take_mouse(mx, my);
+    CHECK(mx == 5.0f && my == -3.0f);
+    fc::take_mouse(mx, my);
+    CHECK(mx == 0.0f && my == 0.0f);
+
+    wp::settings::load("");
+    fc::Settings defaults = fc::current();
+    CHECK(defaults.enabled && defaults.mouse == 1.0f && defaults.stick == 1.0f && !defaults.invert);
+    wp::settings::store("camera.mouse_speed", "200");
+    wp::settings::store("camera.stick_speed", "50");
+    wp::settings::store("camera.invert_y", "1");
+    wp::settings::store("camera.free", "0");
+    fc::Settings stored = fc::current();
+    CHECK(!stored.enabled && stored.mouse == 2.0f && stored.stick == 0.5f && stored.invert);
+    wp::settings::load("");
+
+    std::vector<std::string> keyboard = wp::options::tab_keys(3, wp::options::Device::Keyboard);
+    std::vector<std::string> gamepad = wp::options::tab_keys(3, wp::options::Device::Gamepad);
+    auto has = [](const std::vector<std::string>& keys, const char* key) { return std::find(keys.begin(), keys.end(), key) != keys.end(); };
+    CHECK(has(keyboard, "camera.free") && has(keyboard, "camera.mouse_speed") && has(keyboard, "camera.invert_y") && !has(keyboard, "camera.stick_speed"));
+    CHECK(has(gamepad, "camera.free") && has(gamepad, "camera.stick_speed") && has(gamepad, "camera.invert_y") && !has(gamepad, "camera.mouse_speed"));
+    CHECK(wp::options::kind("camera.free") == wp::options::Kind::Toggle && wp::options::kind("camera.mouse_speed") == wp::options::Kind::Slider);
+    CHECK(wp::options::live("camera.free") && wp::options::live("camera.stick_speed"));
+    CHECK(std::strcmp(wp::ui::label("camera.free", wp::ui::Language::French), "Caméra libre") == 0);
+}
+
 void test_options_menu() {
     wp::settings::load("");
     for (wp::ui::Language language : {wp::ui::Language::English, wp::ui::Language::French, wp::ui::Language::Spanish, wp::ui::Language::Galician}) {
@@ -1362,7 +1603,7 @@ void test_options_menu() {
     CHECK((wp::options::tab_keys(1) == std::vector<std::string>{"video.fps", "saves.backups", "system.discord", "stats.play_time"}));
     CHECK((wp::options::tab_keys(2) == std::vector<std::string>{"audio.volume", "audio.mute", "audio.wiimote_speaker"}));
     CHECK((wp::options::tab_keys(4) == std::vector<std::string>{"system.interface_language", "system.language"}));
-    CHECK((wp::options::tab_keys(5) == std::vector<std::string>{"overlay.show", "overlay.level", "overlay.corner", "video.show_fps", "video.custom_textures", "video.dump_textures"}));
+    CHECK((wp::options::tab_keys(5) == std::vector<std::string>{"overlay.show", "overlay.level", "overlay.corner", "video.show_fps", "video.custom_textures", "video.dump_textures", "video.bug_recorder"}));
     std::vector<std::string> keyboard = wp::options::tab_keys(3, wp::options::Device::Keyboard);
     CHECK(keyboard[0] == "controls.device" && keyboard[1] == "input.hide_cursor" && keyboard.back() == "keys.reset");
     CHECK(std::find(keyboard.begin(), keyboard.end(), "keys.overlay") != keyboard.end());
@@ -1437,23 +1678,27 @@ void test_options_menu() {
     CHECK(keys > wp::options::kVisibleRows);
     CHECK(menu.handle(wp::options::Action::Up).empty());
     CHECK(menu.selection() == keys - 1 && menu.scroll() == keys - wp::options::kVisibleRows);
-    menu.select(2);
-    CHECK(menu.rows()[2].key == "keys.a");
-    CHECK(menu.rows()[2].help == "Calls a partner Pokémon or switches to it.");
+    size_t first = 0;
+    while (first < keys && rows[first].key != "keys.a") {
+        first++;
+    }
+    CHECK(first == 5);
+    menu.select(first);
+    CHECK(menu.rows()[first].help == "Calls a partner Pokémon or switches to it.");
     CHECK(menu.handle(wp::options::Action::Accept).empty());
     CHECK(menu.capturing() && menu.capture_kind() == wp::options::Kind::Key);
-    CHECK(menu.rows()[2].help == "Press the new key or mouse button; Esc cancels.");
-    CHECK(menu.rows()[3].help != menu.rows()[2].help);
+    CHECK(menu.rows()[first].help == "Press the new key or mouse button; Esc cancels.");
+    CHECK(menu.rows()[first + 1].help != menu.rows()[first].help);
     CHECK(menu.capture("K") == "keys.a");
     CHECK(!menu.capturing());
     CHECK(wp::settings::text("keys.a", nullptr) == "K");
     menu.select(keys - 1);
     CHECK(menu.handle(wp::options::Action::Accept) == "keys.reset");
     CHECK(wp::settings::text("keys.a", nullptr) == "E");
-    menu.select(2);
+    menu.select(first);
     CHECK(menu.handle(wp::options::Action::Accept).empty());
     CHECK(menu.handle(wp::options::Action::Down).empty());
-    CHECK(!menu.capturing() && menu.selection() == 2);
+    CHECK(!menu.capturing() && menu.selection() == first);
     menu.select(0);
     CHECK(menu.handle(wp::options::Action::Next).empty());
     rows = menu.rows();
@@ -2088,6 +2333,7 @@ int main() {
     test_title_data_directory();
     test_read_directory_forms();
     test_file_attributes();
+    test_descriptor_reuse();
     test_pad_mapping();
     test_control_names();
     test_custom_texture_hash();
@@ -2097,14 +2343,21 @@ int main() {
     test_gx_line_point_offsets();
     test_texture_keys();
     test_fit_motion();
+    test_texture_hash_sees_every_byte();
     test_key_names();
     test_key_defaults();
     test_bindings_upgrade();
     test_keyboard_buttons();
     test_settings_file_keys();
     test_screenshot_names();
+    test_recent_images();
     test_live_settings();
     test_color();
+    test_free_camera();
+    test_token_wait();
+    test_stall_watch();
+    test_guest_call_chain();
+    test_facing_of_thin_triangles();
     test_options_menu();
     test_pad_motion();
     test_options_repeat();

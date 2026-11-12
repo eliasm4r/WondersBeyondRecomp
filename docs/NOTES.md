@@ -195,15 +195,15 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
 
 ## Controls
 
-- What each Wii Remote button does, held sideways (always the case in PokéPark 2), from the tutorial texts in
+- What each Wii Remote button does, held sideways (always the case in PokÃ©Park 2), from the tutorial texts in
   `Message/EU_English/Fd0801.msbt`, `Fd0101`, `Fd0102` and `Fd0302`. Their button icons are MSBT tags of group 2:
   2.0 the + Control Pad (move), 2.1 call or switch a partner, 2.2 turn the view to where Pikachu faces, 2.4 open the
-  PokéPark Pad, 2.5 take a Photo, 2.6 the 1 button (tap: Dash; hold then let go: Thunderbolt), 2.7 the 2 button (jump,
+  PokÃ©Park Pad, 2.5 take a Photo, 2.6 the 1 button (tap: Dash; hold then let go: Thunderbolt), 2.7 the 2 button (jump,
   talk, pick up, confirm). Shaking the Wii Remote uses Iron Tail, and Shake Sprint during Chase. Checked in game
-  with the keyboard: + opens the Pad and − takes a Photo.
+  with the keyboard: + opens the Pad and âˆ’ takes a Photo.
 - Default keys (US positions, moved to the local layout by `local_defaults`): 2 = Space, Enter; 1 = left click,
-  Backspace; shake = right click; A = E; B = C; + = Tab; − = P; HOME = H; tilts = J, L, I, K; swing = wheel, T, G;
-  pointer = Ctrl. The number row is left free: on AZERTY its keys write `&` and `é` and cannot be reached while
+  Backspace; shake = right click; A = E; B = C; + = Tab; âˆ’ = P; HOME = H; tilts = J, L, I, K; swing = wheel, T, G;
+  pointer = Ctrl. The number row is left free: on AZERTY its keys write `&` and `Ã©` and cannot be reached while
   playing.
 - `upgrade_bindings` runs once at start. It first moves US letters to the local layout (`unlocalized`), then, while
   `input.bindings_version` is below 2, gives the new default to every action whose stored keys are exactly its old
@@ -231,7 +231,7 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
 
   A combo that is a strict subset of another combo held at the same time does nothing, so LB + D-pad up swings
   without also pressing what the D-pad alone is bound to. The defaults are explicit button lists, so a rebinding
-  now works in the sideways grip too (the old code dropped every custom A/B/1/2/+/−/HOME button when sideways).
+  now works in the sideways grip too (the old code dropped every custom A/B/1/2/+/âˆ’/HOME button when sideways).
   Giving a button to an action in the menu removes it, as a single-button combo, from the other actions.
 - The gamepad pointer exists only while the pointer combo is held, and starts from the centre of the screen.
 - Button names (`control_names`): the gamepad worker records the family of each pad from `SDL_GetGamepadType`
@@ -261,6 +261,31 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
 - F9 reads the game frame before presentation, so `color::apply` runs the same steps on the CPU before the PNG is
   written. The headless frame dumps used by the tests stay unadjusted.
 
+## Free camera
+
+- The view in the field comes from a camera of the class whose vtable is at `0x80435278`; its update (slot 7,
+  `0x80024EE0`) writes the eye at +0x0C, a copy at +0x18 (from the base update `0x80019B00`) and the target at +0x28.
+  `CameraDolly` (`0x80434210`) also runs but does not drive the picture. Pikachu's moves follow the shown eye, so
+  turning it is enough for walking toward the screen's direction.
+- The update reads its previous eye back, so the eye written by the free camera is swapped for the game's own one
+  before each call; without that the game camera spins.
+- `hook_functions.csv` (address, name) makes the recompiler rename the original body to `f_hooked_<address>` and emit
+  a wrapper calling `game::hook(name)` with the original. `FieldCameraUpdate` runs the original, then
+  `free_camera::Orbit` keeps its own yaw and a pitch offset over the game's distance and elevation (elevation kept
+  between -0.2 and 1.3 rad). It starts from the game's view, and starts over when the camera object changes, after
+  half a second without updates or when the target jumps more than 40 units. Wii B eases it back to the game's yaw.
+- Mouse: raw input on Windows, relative mode with SDL. The cursor is held at the window's center while the free camera
+  drives the view and the window has focus, the F1 menu is closed and neither Ctrl (`keys.pointer`) nor the mouse
+  motion key is held. 0.004 rad per count at 100 %; the stick turns 2.6 rad/s sideways and 1.6 rad/s up and down at
+  100 %, with a 0.2 dead zone. Settings: `camera.free`, `camera.mouse_speed`, `camera.stick_speed` (10 to 300 %),
+  `camera.invert_y`.
+- The game aims about 4.1 units above Pikachu, but its target trails him by up to 8 units; seen from another angle that
+  lag puts him off center. The free camera asks for the followed position the same way the update does (`0x8001A610`
+  for the handle, `0x800C6710` for "none", `0x800C5D80` for the position, `0x800C64C0` to release it, called from the
+  hook on a scratch frame below the stack pointer) and aims 4.1 units above it, only the height being eased. Its eye
+  and target are swapped back for the game's own before each update.
+- Not seen yet in game: scenes that move this same camera themselves would be overridden too.
+
 ## Indirect maps left unbound
 
 `render::draw` bound only the maps named by TEV stage orders. A map read only by an indirect stage, such as the
@@ -268,7 +293,7 @@ normal map of the dash shockwave (64x64 IA8), stayed unbound and sampled as zero
 showed the scene shifted by 128 texels. `used_maps` now adds the maps of the indirect stages (BP 0x27).
 
 
-## Frame interpolation (120 fps) — work in progress
+## Frame interpolation (120 fps) â€” work in progress
 
 Status on 2026-11-10, not committed yet. 60 fps is fine. 120 fps works in the title menu but not fully in game.
 
@@ -297,16 +322,16 @@ Status on 2026-11-10, not committed yet. 60 fps is fine. 120 fps works in the ti
   backlog test now runs when the game has had time to queue the next frame.
 
 - User test of the above: pause menu noise still there, then every texture flickers after leaving the menu. Their
-  log shows the process growing from about 1 GB at 60 fps to 7–10.8 GB at 120 (scale 6), falling back 10–20 s after
+  log shows the process growing from about 1 GB at 60 fps to 7â€“10.8 GB at 120 (scale 6), falling back 10â€“20 s after
   recording stops (the twin prune), and hundreds of EFB write-backs a second at 120 against none at 60.
 - Twins only where needed (2026-11-10, built, not tested in game yet): a twin (two textures and 1 + `between`
   full copies per frame) is now made only for a target the frame sampled before its first copy into it. Other
   targets are filled before they are read, so replays copy straight into the game's texture, which then holds the
   last replay's image until the next frame fills it again. To check in the next log: the "memory" lines at 120.
 
-- User test of the twin change: memory is fixed (1.6–2.3 GB at 120 instead of 7–10.8 GB) but the pause menu, shadows
-  and footprints are as before. The log still has 50–230 write-backs a second at 120 once the player moves (GPU
-  thread 85–92% busy) and none at 60 (80% busy): the game copies to addresses it did not use in the last two frames.
+- User test of the twin change: memory is fixed (1.6â€“2.3 GB at 120 instead of 7â€“10.8 GB) but the pause menu, shadows
+  and footprints are as before. The log still has 50â€“230 write-backs a second at 120 once the player moves (GPU
+  thread 85â€“92% busy) and none at 60 (80% busy): the game copies to addresses it did not use in the last two frames.
 - Hypothesis: the game frees a frame's buffers on its token interrupt and takes the next frame's on its frame alarm.
   When the GPU thread reaches the token after the alarm, the game takes fresh buffers, every non-recurring copy is
   written back with a GPU wait, the thread gets later still, and in the pause menu the heap runs out.
@@ -316,9 +341,9 @@ Status on 2026-11-10, not committed yet. 60 fps is fine. 120 fps works in the ti
   yet, 100 ms at most. A frame whose token made the timers wait gets no replays. The "memory" log line counts the
   holds. Pass criteria: boots, 0 write-backs a second in the zones at 120, few holds at 60.
 
-- User test of the timer hold (scale 6, first open zone): 60 fps fine (0–3 holds a second, far characters pop in
-  and flicker, not known whether that is new). At 120 the write-backs are gone (0–36 a second, the pause menu looked
-  fine) but only 75 fps is shown: 15–25 holds a second and one frame in four gets its image. Shadows (the one under
+- User test of the timer hold (scale 6, first open zone): 60 fps fine (0â€“3 holds a second, far characters pop in
+  and flicker, not known whether that is new). At 120 the write-backs are gone (0â€“36 a second, the pause menu looked
+  fine) but only 75 fps is shown: 15â€“25 holds a second and one frame in four gets its image. Shadows (the one under
   Pikachu) and footprints still look wrong in the images, so that part is the interpolation itself, not the buffers.
 - After that (built 18:44, not run): the late flag is tied to the token (`g_held_token`) so one hold skips one
   frame's images, not several; a "replay" log line gives frames, frames with images, late frames, ms per frame spent
@@ -329,9 +354,9 @@ Status on 2026-11-10, not committed yet. 60 fps is fine. 120 fps works in the ti
   a new footprint shifts every pairing, and an unmatched decal stays at the new frame's place on ground drawn at the
   halfway place (depth mismatch). To see it, dump an interpolated image in a headless run.
 
-- User test of 18:48: still 75 fps. "replay" lines in the zone: 60 frames, 18 with images, 22 late, 0.6–0.7 ms per
+- User test of 18:48: still 75 fps. "replay" lines in the zone: 60 frames, 18 with images, 22 late, 0.6â€“0.7 ms per
   frame for the images (about 2.2 ms per replay); 19,800 draws per frame, 15,030 exact, 57 by order, 4,740 unpaired
-  (most likely culled draws, which never pair), 0–10 unpaired inline. In the title menu, with almost no load, 20 of
+  (most likely culled draws, which never pair), 0â€“10 unpaired inline. In the title menu, with almost no load, 20 of
   60 frames were "late" too: most holds are the one poll between the token and its interrupt, not a late thread, and
   each late frame also cost the next one its images (no saved EFB).
 - Built 19:08, not run: a frame is late only when the timers waited over 1 ms for a token the thread had not
@@ -340,14 +365,14 @@ Status on 2026-11-10, not committed yet. 60 fps is fine. 120 fps works in the ti
 - User description: the shadow under Pikachu blinks and the footprints tremble, only above 60 fps.
 - Built 19:20 (not noted at the time): draws of a mesh drawn many times follow their camera's motion (`find_cameras`,
   `kByCamera`), fitted from the pairs whose key is drawn once in both frames. User test: 90 fps at most, shadow,
-  footprints, far Pokémon and the sea still blink.
+  footprints, far PokÃ©mon and the sea still blink.
 
 - 2026-11-10 evening, found with headless image dumps (see "Image dumps" below):
   - The decal depth bias (-64, slope -2) was the sea's blue flicker: the sea and the wet sand layers (depth test on,
     write off) passed over the sand on every interpolated image, a bluer image twice per frame. With the bias off, an
     unmoved replay matches the real frame exactly (0.00 mean difference). Removed.
   - Ghost footprints and the darker shadow: each frame first draws the footprints and shadows from above into a
-    ground decal texture (draws 0–29, projections `c36825a9`/`0fe8fbc9`, no fitted motion), then copies it. The
+    ground decal texture (draws 0â€“29, projections `c36825a9`/`0fe8fbc9`, no fitted motion), then copies it. The
     footprints are one mesh drawn many times, paired by order, and the order shifts when one is added: each slid
     toward its neighbour, ghost footprints on the images in between. A pair that is not sure under a projection with
     no known motion now stays put (counted as "rejected" in the replay line).
@@ -357,27 +382,27 @@ Status on 2026-11-10, not committed yet. 60 fps is fine. 120 fps works in the ti
     points on screen only) follows the camera exactly like the multi-drawn meshes, and a thing that moves is
     interpolated in the world: its previous place seen by this frame's camera (`g_forward`, the inverse fit), lerped,
     then the camera's motion. Lerping clip positions directly put a moving decal off the ground whenever the camera
-    turned, since the error is t(1-t)·ΔM·ΔP.
+    turned, since the error is t(1-t)Â·Î”MÂ·Î”P.
   - Result on the beach run: blinking pixels per image (outside the range of their two real neighbours by more
-    than 12) 0.53–0.60 % before, 0.29 % after; the remaining ones are the electric aura, Pikachu's legs and the
-    water line on them. Far Pokémon and cliffs measured stable.
+    than 12) 0.53â€“0.60 % before, 0.29 % after; the remaining ones are the electric aura, Pikachu's legs and the
+    water line on them. Far PokÃ©mon and cliffs measured stable.
   - Not changed: copy targets written by the replays keep the last replay's content (a non-twin target the next
     frame samples before copying would show it). Restoring them changed nothing measurable once the bias was gone.
-  - Performance (headless, scale 6, beach): game at 56–57 fps with 120 on against 60 with 60, GPU thread 80 % against
-    63 %, images 2.9–3.4 ms per frame. Measuring further was stopped: the user was playing another game at the time,
+  - Performance (headless, scale 6, beach): game at 56â€“57 fps with 120 on against 60 with 60, GPU thread 80 % against
+    63 %, images 2.9â€“3.4 ms per frame. Measuring further was stopped: the user was playing another game at the time,
     and a run at the same settings fell to 30 fps.
-- User test 21:12 of that build: no texture blinks any more, 94–98 fps shown. Its "replay" lines: 54–57 frames,
-  8–16 late (a late frame gets no image, hence under 120), 1.8–2.2 ms per frame for the images, of which pairing
-  1.5–1.9 ms, positions 0.1, commands 0.2; GPU thread 90 % busy. Far Pokémon still vanish and come back at a
+- User test 21:12 of that build: no texture blinks any more, 94â€“98 fps shown. Its "replay" lines: 54â€“57 frames,
+  8â€“16 late (a late frame gets no image, hence under 120), 1.8â€“2.2 ms per frame for the images, of which pairing
+  1.5â€“1.9 ms, positions 0.1, commands 0.2; GPU thread 90 % busy. Far PokÃ©mon still vanish and come back at a
   distance; the 18:xx test above saw far characters pop in at 60 fps too, so it is likely not the interpolation.
 - Pairing is now split over helper threads (`parallel_for`, up to 3 helpers when the CPU has more than 4 cores): the
   close-enough checks of `match_by` run after the key pass over all candidates at once (same result: the trusted pass
   never used them to choose, the loose pass only rejects), and the per-draw choice (camera, partner, moving in the
-  world) runs per draw. Headless with another game running: pairing 2.0 → 1.1 ms. Running the pairing on its own
+  world) runs per draw. Headless with another game running: pairing 2.0 â†’ 1.1 ms. Running the pairing on its own
   thread from the frame copy on gained nothing: the token right after the copy calls `finish_frame` at once, so the
-  GPU thread waited the whole time. Blink rate unchanged (0.26–0.30 %, one run 0.54 % with Pikachu in the water).
+  GPU thread waited the whole time. Blink rate unchanged (0.26â€“0.30 %, one run 0.54 % with Pikachu in the water).
 - The "replay" log line now splits the image time: pairing, positions (filling the moved buffer), commands.
-- Far Pokémon that vanish depending on the camera angle (the pink one on the islet off the beach): the same on a
+- Far PokÃ©mon that vanish depending on the camera angle (the pink one on the islet off the beach): the same on a
   real Wii and on Dolphin (tested by the user), so it is the game's own behaviour. Checked on the way: the renderer
   only drops back faces (never a whole model), the game reads no PE pixel counters and makes no depth copies; it
   stops sending the model itself.
@@ -392,7 +417,86 @@ Status on 2026-11-10, not committed yet. 60 fps is fine. 120 fps works in the ti
   within 2e-3 of the screen and 2e-5 of the depth range (`kStillScreen`); samples are three points a draw for
   the first 2,048 points, then one, up to 8,192, so the far scenery is sampled too. Whole script: at most about
   700 draws a frame count as moving (was up to 7,000); a second motion is used in about 12 % of the frames. Beach
-  blink rate unchanged (0.25–0.35 %). Pairing about 2 ms headless with another game running.
+  blink rate unchanged (0.25â€“0.35 %). Pairing about 2 ms headless with another game running.
+- 2026-11-11, bug recorder captures from the user (`_between` images only): thin lines of background along polygon
+  edges of Pikachu and Piplup standing, and of the ground while the camera turns. Same family as above: the still or
+  moving choice was per draw, so a vertex shared by a still draw (camera path, on the graphics card) and a moving
+  draw (world lerp) got two positions, up to (1 - t) Â· 2e-3 of the screen apart. The choice is now per vertex inside
+  a moving draw (`stillness`), under the first motion then the second.
+- Second round the same evening (captures 22:16 and 22:19): lighter on the models, still long lines on the ground of
+  the candy zone while the camera moves. Three per-draw choices were left: a draw of more than 8 positions was judged
+  on 8 of them, a draw still under the second motion followed it as a whole, and a point off screen followed the
+  camera in a still draw but was lerped in a moving one. Now `moves_in_world` tests every position, the second motion
+  is only chosen per vertex, and an untested point follows the first motion everywhere: a paired vertex under a known
+  camera gets the same place whatever draw it is in. Headless beach run: no crash, pairing 1.8 ms and positions
+  0.3 ms as before. Not confirmed in game; a pair next to an unpaired draw can still differ.
+- Shadow wobble during a jump (capture 22:13, measured on the images): on the images in between, Pikachu's shadow is
+  about 0.5 pixel (at 960 wide) behind the middle of its two real places, near or just past the previous frame's
+  place, so it steps back and forth. The shadow goes through the ground decal texture, whose draws stay put
+  ("rejected"). Cause not found yet; look at what the twin of the decal target holds during a replay.
+- Far castle of the candy zone trembling (capture 22:47, then `still.txt` dumps from the user's save, frame 2400):
+  the glow quads on the castle windows and gate lose the depth test against the wall in triangle-shaped patches.
+  The castle sits at z/w 0.99994-0.99999, where the whole tower spans about 50 depth steps and the glows are less
+  than a step in front of the wall. `project` built the depth as z * z_scale + w * z_offset, two terms near
+  16,777,215 * w that cancel: about one step of noise per vertex, new at every camera move, so it trembles at 30 fps
+  too (user test) and any recomputed position on an image in between flips it (forced t = 1: 0 blinking pixels).
+  Tried on the images in between only and dropped: depth rebuilt as z_b / w_b * w' (no change, 1.5 ulp is enough);
+  z and w copied from the real frame (fixed, but bends the near ground decals while the camera turns); the copy
+  limited to far points (the user then saw Pikachu's ear and mouth deformed on the loading screen, not reproduced).
+  Fix: reversed depth on Direct3D. `project` outputs w * (range - z_offset) - z * z_scale, which has no
+  cancellation (GX clip z is 0 at the far plane), so far depth keeps its float precision; the depth functions are
+  mirrored in `depth_for`, the buffer clears to 0, the clear value, the fog and the depth copies read 1 - depth.
+  The OpenGL renderer keeps the old depth. Castle blinking on the images in between over 87 images: 746 pixels lit
+  3 times or more before, 17 after; moving run: no image over 500 bad pixels; unit tests pass.
+- Shadow under the Pokémon trembling above 60 fps (fine at 30, user test). The shadows are quads drawn from above
+  into the ground's decal texture, several with the same mesh under a projection with no known motion, so they
+  stayed put on the images in between: the shadow sat at the real frame's place while Pikachu was halfway
+  (`shadow_track.py` on a `run.txt` dump: shadow minus feet 11 px on the images in between against 3 px on the real
+  frames, a sawtooth inside every frame). `follow_decals` now handles each such group (same projection, 2 to 24
+  quads, w = 1): the shift most quads agree on is the decal camera's own motion (the still shadows all slide by it),
+  a quad that lands on some earlier quad plus that shift stands still and stays put, also when the order changed
+  (the ghost footprints), any other quad goes from its earlier place plus the shift to its new place
+  (`g_decal_shift`). After: 5 px against 6 px, no sawtooth.
+- `fit_motion` gave up when a late refinement round (limit down to 1e-4) kept under 60 % of the points, about one
+  moving frame in seven in the candy zone: that frame had no main camera, every draw was lerped on the screen and
+  787 repeated meshes stayed put. A late round that runs short now keeps the previous round's fit.
+- Loading screens with the running Pikachu showed him torn apart on the in-between image (user's captures of
+  2026-11-12, `139_between` on). Most samples there are the flat background at one depth, so clip z and w are both
+  constant and their columns cannot be told apart. The fit's small pull toward zero split the motion between them
+  (w row `10393 z + 0.65 w`), right for the background and wrong at any other depth: Pikachu counted as moved and
+  went through an inverse with elements near 1e7. `fit_motion` now fits the difference from no motion, so a
+  direction the samples do not settle stays the identity.
+- `WP_PROFILE_GPU=<file>` (Windows) samples the GPU thread every millisecond after a warm-up and writes, every five
+  seconds, how often each call chain (three return addresses inside the exe) was seen. First zone at 120 fps, scale
+  4: flat. `draw_primitive` 43 % by itself and 70 % with what it calls (17,000 draws of about 9 vertices a frame,
+  about 550 ns a draw), pairing and replay of the interpolation about 20 %, vertex copies about 12 %, `texture_hash`
+  5.5 %. In the user's slow seconds the GPU thread is near 80 % and the guest idle near 55 %: the GPU thread is the
+  limit, and no single cheap fix shows.
+- The candy zone sends about 33,000 draws a frame (18,000 on the beach): the GPU thread limit explains the lower
+  rate there.
+- Second profile, in the heavy spot of the user's save (21,900 draws a frame, 120 fps, scale 3): the draws already
+  reach Direct3D grouped (about 200 batches a frame), but 20 % of the GPU thread's time was spent waiting in
+  `ntdll` under `run_copy`. The game copies the frame buffer about 50 times a real frame, and each update of the
+  copy's constant buffer blocked about 0.1 ms in the NVIDIA driver, with `UpdateSubresource` and with
+  `Map(WRITE_DISCARD)` alike. Why is not known. The scene uses 16 distinct sets of constants, so `run_copy` now keeps
+  one immutable buffer per set and only binds it: 38 to 40 real frames a second became 48 to 53, an in-between image
+  5.8 ms became 2.8 ms (its commands 4.2 ms became 0.2 ms), and the GPU thread went from 70 % to 93 % busy with no
+  wait left. `hash_bytes` runs four multiply chains side by side (`texture_hash` was 5.7 % of the thread). The
+  profile is flat again: `draw_primitive` 44 % by itself, 74 % with what it calls.
+- With the images in between on, the same spot gives the user 53 to 57 real frames a second (110 at the 120 setting,
+  80 at the 90 setting) against a steady 60 without them: the GPU thread is 76 to 86 % busy at 60 and the pairing
+  adds about 2 ms a frame (exact keys 0.8, loose keys 0.26, camera fits 0.6, still or moving 0.35).
+- Tried and dropped: matching the draws on four threads, split by key hash (same pairs, per-thread tables and
+  result lists, helpers kept spinning between jobs). The four parts together took 3.4 ms against 1.06 ms on one
+  thread and the wall time did not move: the draw and position arrays were just written by the GPU thread and each
+  helper has to pull them over from that core. Camera fits per camera in parallel gained nothing either, one camera
+  holds nearly all samples.
+- Line profile of `draw_primitive` (48 % of the thread by itself): the two largest lines are the position transform
+  and the vertex clear at 7 % each of the exe time, everything else is under 2 % a line. The next real gain is
+  running the vertex work of several draws at once.
+- One run in four of that series showed 31 frames a second with the in-between commands at 8.8 ms and the GPU
+  thread 56 % busy, while a headless browser and a recorder of other programs were using the PC: taken as outside
+  load, not proven.
 - Tried and dropped: a camera per drawing pass (projection plus copies so far): the main scene is one pass, and the
   decal pass cameras lost their fit.
 - A run crashed once in the game's render-target code (0x80070fc0) after 175 s, with the images taking 8 ms on a
@@ -412,28 +516,74 @@ Status on 2026-11-10, not committed yet. 60 fps is fine. 120 fps works in the ti
 
 ### Open bugs at 120 fps (all fine at 60)
 
-1. Pause menu background turns to noise after a while (fine at the pause start and with replays disabled).
-   At 120 the menu uses many buffer addresses and copies to 0x80000000 (failed allocations); at 60 only 5 stable ones.
-2. Photo screen noise once (`Texturebug.png` at the repo root, local only).
-3. Crash in about 1 of 4 runs: out of memory in the texture-object init f_80070fc0 (alloc of 0x23a00 via
-   f_8000df50 → f_8037d4a0, failure handler f_80409388). 0 of 5 crashes at 60.
-4. Shadows and footprints still flicker in game (user report).
-5. In game the rate does not hold 120 (GPU thread 85–95% busy at 6x).
+1. Photo screen noise once (`Texturebug.png` at the repo root, local only).
+2. Shadows and footprints still flicker in game (user report), far textures tremble and some turn black for an
+   instant (user report, only above 60 fps). Not reproduced in the dumps of `run.txt`; the bug recorder below is
+   there to get the images from the user.
+3. In game the rate does not hold 120 (GPU thread 85â€“95% busy at 6x).
 
-Hypothesis for 1–3: the GPU thread lags, draw-done/token signals arrive late, the game believes buffers are still
-in use and allocates fresh ones until its heap runs out. Ideas: measure lag by pending tokens or time since the last
-token instead of FIFO bytes; limit the game's run-ahead (64 MB FIFO, `kMaxFramesAhead = 2`); cut the per-batch
-Map/state cost of replays. A write-back guard (`full_hash`) was tried and removed: no help.
+Solved on 2026-11-11, see "Temporary heap and late draw tokens": the pause menu noise, the black bars after leaving
+the pause menu and the crash in the texture-object init `f_80070fc0`.
 
 ### Test method
 
-- Scripts in `build/test-scripts/` (ignored): `hl.sh <tag> <runs> <timeout> [ENV=..]` runs headless with
-  `pause.txt` (opens the pause at ~105 s), retries while Windows Smart App Control blocks a fresh exe (rc=126,
-  "An Application Control policy has blocked this file"; rebuilding with different bytes gets past it),
-  kills leftovers and restores the save. `run.txt` moves 32–54 s, `empty.txt` stays on the title.
-- Save backup: `games/pokepark2/backups/claude_save/` (nand + settings.ini, 15:47). Re-take it after the user plays.
+- Scripts in `build/test-scripts/` (ignored): `run.sh <tag> <runs> <timeout> <script> [ENV=..]` copies the current
+  NAND, `settings.ini` and `stats.ini`, runs headless and muted with save backups off, retries while Windows Smart App
+  Control blocks a fresh exe (rc=126, "An Application Control policy has blocked this file"; rebuilding with
+  different bytes gets past it), kills leftovers, puts the copies back and checks them. `hl.sh` is `run.sh` with
+  `pause.txt` (opens the pause at ~105 s), `cam.sh` with the frame clock. `run.txt` moves 32â€“54 s, `empty.txt` stays
+  on the title.
+- Never restore a save copy taken earlier: on 2026-11-11 a stale copy overwrote a save of the day (recovered from the
+  game's own backup).
+- `WP_HEADLESS=window` keeps the window, hidden: the real present path runs (interpolated images, bug recorder,
+  realistic GPU thread load). `build/test-scripts/press.py <virtual key>` posts a key to it. Headless runs no longer
+  count play time.
+- A program argument after the data folder is a timeout in seconds: the run ends with the guest thread report.
 - Rules from the user: headless only (no window), ask before a test series, never build or run while
   `pokepark2.exe` runs, runs muted, never commit official images or the untracked files at the root.
+
+## Temporary heap and late draw tokens
+
+- The game draws with temporary buffers taken from six heaps of one pool (`0x804b6538`, 0x3C bytes per heap, free list
+  at +0x0C, next block at +8, allocation `0x8000DF50` â†’ `0x8037D4A0`). Heap 4 holds 4 MB: a frame in the first zone
+  takes 1.6 MB of it, a pause menu frame 3.5 MB.
+- Buffers are not freed at once: `0x8000E0B0` puts the pointer in a list of 40 entries (pool +0x1F0 entries, +0x1F4
+  links, +0x1F8 free slot, +0x1FC pending head), `0x8000E1C0` tags the untagged entries with the id of the draw token
+  the frame sends, and the token callback (`0x80031BD0` â†’ `0x8000E270`) frees the entries of that id. A zone frame
+  queues 19 frees, a pause menu frame 34. When the list is full the original code drops the free: the memory is lost
+  for good.
+- With the GPU thread a frame late (stalled 250 ms on purpose in the pause menu): 68 frees for 40 entries, about
+  1.4 MB of heap 4 lost per incident, then allocations return 0 (184 in one run). That was the pause menu noise, the
+  black bars and, once the heap was gone, the crash in the zone.
+- Fix (`games/pokepark2/game.cpp`, hooks `DeferredFree`, `ReleaseDeferredFrees`, `TempPoolAlloc`): a free that finds
+  the list full is kept aside and queued again after the next release; an allocation that does not fit while frees are
+  pending waits for the GPU thread to reach the last token sent (`gx::wait_for_token`, 500 ms at most) and polls the
+  interrupts so the token callback frees the buffers, then runs. Same stall with the fix: 0 failed allocations, heap 4
+  back to its 4 MB after each release, four waits of about 190 ms logged as `memory`.
+- Looked at and ruled out for the gray lines between polygons of moving models: the game changing vertex arrays or
+  indexed matrices while the GPU thread still draws from them (0 changes before the frame end over 600,000 samples a
+  second, even with the thread stalled 150 ms), and face culling in single precision (wrong for 10,000 to 17,000
+  triangles a second, all under 0.03 pixel of area; now computed in double precision by `gx::facing_area`).
+
+## Bug recorder and hang report
+
+- `video.bug_recorder` (Advanced tab, off by default, Direct3D 11): every image shown, real or interpolated, is copied
+  to a ring of textures, halved until it is at most 1400 pixels wide, 360 images (three seconds at 120 fps) or 1 GB at most. The screenshot key
+  then also saves the ring to `screenshots/<name>_recent/NNN.png` or `NNN_between.png` (interpolated), oldest first.
+- A watchdog in `main.cpp` writes a `hang` line to the log when the game has drawn no frame for 15 seconds outside the
+  options menu, followed by every guest thread (state, priority, saved pc and lr, the queue and mutex it waits on, its
+  call chain read from the stack back chain) and the IPC state and trace.
+- The log file is opened in append mode like the redirected stderr. Before, the log wrote at its own position and
+  overwrote whatever stderr had added, so the thread report after a `hang` line was lost as soon as another line came.
+- The "endless loading after a cutscene" (user's logs of 2026-11-11 14:24 and 2026-11-12 01:02, both stopping after
+  `ios open /tmp/Pokemon/Data.dan` while sound goes on) was the IOS descriptor number. The SDK's IPC profiler
+  (`IPCiProfInit` 0x802cde40, tables at 0x805264a0) copies the name of every opened device to `0x80527520 + fd * 0x30`
+  when the open reply comes back and clears those 0x30 bytes on close. The table holds 128 descriptors, the 96 entries
+  of the next table follow, then the PAD variables at 0x80529f20 and, for descriptor 228, the WPAD alarm at 0x80529fe0.
+  The engine handed out a new number for every open, so the 228th successful open of a session wrote a path over that
+  alarm: its `next` pointer no longer led to the alarms behind it, among them the frame timer of the main loop
+  (0x804ba548), and the main thread waited for ever on its message queue. `ios::open` now returns the lowest free
+  number, as IOS does. Found from a copy of the hung game's memory taken with gdb (alarm queue head at r13-0x2e08).
 
 ## Code notes
 
@@ -565,7 +715,9 @@ What the code added for frame interpolation, the timers and the input changes do
 - `double g_forward[kMaxCameras][4][4];`: Per camera: the inverse of its motion, from a clip position of the previous frame to the same point of the world seen by this frame's camera.
 - `bool moves_in_world(const RecordedDraw& draw, const RecordedDraw& before, const CameraM...`: True when some vertex of the draw is not where the camera's motion alone takes its pair: the thing moves in the world. The limits are well above the motion fit's error on the scenery (about 1e-5 of the screen, 2e-7 in depth).
 - `if (std::isnan(a[0]) || std::isnan(b[0]) || a[3] <= 0.0f || b[3] <= 0.0f || std::fabs(b...`: Points off screen or near the eye are left out: dividing by a w close to 0 blows the fit's error up.
+- `Stillness stillness(const std::array<float, 4>& a, const std::array<float, 4>& b, const...`: Whether one vertex stands still in the world under a camera's motion, the test `moves_in_world` runs on a draw's sample points.
 - `bool replay_between(const std::vector<std::pair<uint32_t, uint32_t>>& matches, float t,...`: Draws the recorded frame again with each matched draw at time t between the previous frame (0) and this one (1).
+- `size_t follow = stillness(*a, *b, g_cameras[camera]) == kStill ? camera`: Inside a draw that moves, a vertex that stands still follows the camera like the still draws do. A vertex shared by a still piece and a moving piece of one model was placed by two formulas, up to half the still limit apart: thin lines of background between the polygons of PokÃ©mon and of the ground on the images in between (user captures of 2026-11-11).
 - `float motion[kMaxCameras][4][4];`: Each camera's motion from this frame back to the previous one, taken as far as time t asks.
 - `const double (*forward)[4] = g_forward[camera];`: A thing that moves in the world: its previous place seen by this frame's camera, then halfway in the world, then through the camera's motion like the ground under it.
 - `static std::vector<std::pair<const RecordedTarget*, ReplayTarget*>> twins;`: The copy targets' twins start from the frame's beginning; draws sampling a target sample its twin.

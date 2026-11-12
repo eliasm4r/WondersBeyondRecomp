@@ -16,6 +16,8 @@
 #include <cstdlib>
 #include <condition_variable>
 #include <cstring>
+#include <map>
+#include <string>
 #include <deque>
 #include <filesystem>
 #include <mutex>
@@ -749,7 +751,11 @@ bool project(const float* eye, float* screen) {
     }
     screen[0] = x * p.x_scale + w * p.x_offset;
     screen[1] = y * p.y_scale + w * p.y_offset;
+#ifdef _WIN32
+    screen[2] = (w * (kDepthRange - p.z_offset) - z * p.z_scale) / kDepthRange;
+#else
     screen[2] = (z * p.z_scale + w * p.z_offset) / kDepthRange;
+#endif
     screen[3] = w;
     return std::isfinite(screen[0]) && std::isfinite(screen[1]) && std::isfinite(screen[2]) && std::isfinite(w);
 }
@@ -782,8 +788,10 @@ bool culled(const ScreenVertex& a, const ScreenVertex& b, const ScreenVertex& c)
     if (mode == 3) {
         return true;
     }
-    float area = a.x * (b.y * c.w - c.y * b.w) - a.y * (b.x * c.w - c.x * b.w) + a.w * (b.x * c.y - c.x * b.y);
-    bool front = area < 0.0f;
+    const float pa[3] = {a.x, a.y, a.w};
+    const float pb[3] = {b.x, b.y, b.w};
+    const float pc[3] = {c.x, c.y, c.w};
+    bool front = facing_area(pa, pb, pc) < 0.0;
     return mode == 1 ? !front : front;
 }
 
@@ -1703,7 +1711,90 @@ const bool g_threaded = [] {
 
 
 
+#ifdef _WIN32
+constexpr auto kProfileWarmUp = std::chrono::seconds(40);
+constexpr auto kProfileWritePeriod = std::chrono::seconds(5);
+
+void sample_thread(HANDLE thread, std::string path) {
+    struct Sample {
+        uint64_t leaf;
+        uint64_t frames[3];
+    };
+    uint64_t base = reinterpret_cast<uint64_t>(GetModuleHandle(nullptr));
+    auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
+    auto* nt = reinterpret_cast<IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+    uint64_t end = base + nt->OptionalHeader.SizeOfImage;
+    std::map<std::string, uint32_t> counts;
+    auto written = std::chrono::steady_clock::now();
+    std::this_thread::sleep_for(kProfileWarmUp);
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        Sample sample{};
+        SuspendThread(thread);
+        CONTEXT context{};
+        context.ContextFlags = CONTEXT_FULL;
+        if (GetThreadContext(thread, &context)) {
+            sample.leaf = context.Rip;
+            int found = 0;
+            for (int depth = 0; depth < 64 && found < 3 && context.Rip != 0; depth++) {
+                if (context.Rip >= base && context.Rip < end) {
+                    sample.frames[found++] = context.Rip - base;
+                }
+                DWORD64 image = 0;
+                PRUNTIME_FUNCTION function = RtlLookupFunctionEntry(context.Rip, &image, nullptr);
+                if (!function) {
+                    if (IsBadReadPtr(reinterpret_cast<void*>(context.Rsp), 8)) {
+                        break;
+                    }
+                    context.Rip = *reinterpret_cast<DWORD64*>(context.Rsp);
+                    context.Rsp += 8;
+                    continue;
+                }
+                void* handler_data = nullptr;
+                DWORD64 frame = 0;
+                RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, context.Rip, function, &context, &handler_data, &frame, nullptr);
+            }
+        }
+        ResumeThread(thread);
+        char key[256];
+        char module[MAX_PATH] = "exe";
+        if (sample.leaf < base || sample.leaf >= end) {
+            HMODULE handle = nullptr;
+            if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, reinterpret_cast<LPCSTR>(sample.leaf),
+                                   &handle) &&
+                GetModuleFileNameA(handle, module, sizeof module)) {
+                const char* name = std::strrchr(module, 92);
+                std::memmove(module, name ? name + 1 : module, std::strlen(name ? name + 1 : module) + 1);
+            } else {
+                std::strcpy(module, "unknown");
+            }
+        }
+        std::snprintf(key, sizeof key, "%s %llx %llx %llx", module, static_cast<unsigned long long>(sample.frames[0]),
+                      static_cast<unsigned long long>(sample.frames[1]), static_cast<unsigned long long>(sample.frames[2]));
+        counts[key]++;
+        auto now = std::chrono::steady_clock::now();
+        if (now - written > kProfileWritePeriod) {
+            written = now;
+            if (std::FILE* file = std::fopen(path.c_str(), "w")) {
+                for (const auto& entry : counts) {
+                    std::fprintf(file, "%u %s", entry.second, entry.first.c_str());
+                    std::fputc(10, file);
+                }
+                std::fclose(file);
+            }
+        }
+    }
+}
+#endif
+
 void gpu_thread() {
+#ifdef _WIN32
+    if (const char* path = std::getenv("WP_PROFILE_GPU")) {
+        HANDLE self = nullptr;
+        DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &self, 0, FALSE, DUPLICATE_SAME_ACCESS);
+        std::thread(sample_thread, self, std::string(path)).detach();
+    }
+#endif
     std::vector<uint8_t> buffer;
     while (true) {
         std::unique_lock<std::mutex> hold(g_gpu.lock);
@@ -1789,6 +1880,25 @@ void process() {
     item.bytes.swap(g_fifo);
     g_fifo.reserve(item.bytes.capacity());
     enqueue(std::move(item));
+}
+
+bool wait_for_token(std::chrono::milliseconds limit) {
+    process();
+    auto end = std::chrono::steady_clock::now() + limit;
+    while (g_token_sent.load() != g_token_done.load()) {
+        if (std::chrono::steady_clock::now() >= end) {
+            return false;
+        }
+        std::this_thread::yield();
+    }
+    return true;
+}
+
+double facing_area(const float a[3], const float b[3], const float c[3]) {
+    const double ax = a[0], ay = a[1], aw = a[2];
+    const double bx = b[0], by = b[1], bw = b[2];
+    const double cx = c[0], cy = c[1], cw = c[2];
+    return ax * (by * cw - cy * bw) - ay * (bx * cw - cx * bw) + aw * (bx * cy - cx * by);
 }
 
 void run_frame_task(std::function<void()> task) {

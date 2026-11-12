@@ -19,7 +19,10 @@ struct LogFile {
 
     LogFile() {
         if (const char* path = std::getenv("WP_LOG_FILE")) {
-            file = std::fopen(path, "w");
+            if (std::FILE* emptied = std::fopen(path, "w")) {
+                std::fclose(emptied);
+            }
+            file = std::fopen(path, "a");
         }
     }
 };

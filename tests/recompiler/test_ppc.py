@@ -1,9 +1,12 @@
+import collections
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "recompiler"))
 
+import recomp
 import rel
 from ppc.decoder import Instr
 from ppc.emit import Emitter, rotate_mask
@@ -268,6 +271,25 @@ class ModuleEmitterTests(unittest.TestCase):
 
     def test_relative_branch_inside_the_section_needs_no_relocation(self):
         self.assertEqual(lift_module(0x48000008, 0x40, {}), ["goto L_01000048;"])
+
+
+class HookTests(unittest.TestCase):
+    def test_load_hooks(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "hooks.csv"
+            path.write_text("address,name\n0x80024ee0,FieldCameraUpdate\n")
+            self.assertEqual(recomp.load_hooks(path), {0x80024EE0: "FieldCameraUpdate"})
+            self.assertEqual(recomp.load_hooks(Path(folder) / "missing.csv"), {})
+
+    def test_hooked_function_keeps_its_body_under_another_name(self):
+        stats = {"functions": 0, "instructions": 0, "illegal": 0, "jump_tables": 0, "unresolved_jumps": 0, "unsupported": collections.Counter(), "resumes": []}
+        lines = recomp.render_function(0x80004000, [Instr(0x80004000, 0x4E800020)], {0x80004000}, None, stats, {}, {0x80004000: "Example"}, None, None)
+        text = "\n".join(lines)
+        self.assertIn("void f_hooked_80004000(wp::Cpu& c);", text)
+        self.assertIn('wp::find_hook("Example")', text)
+        self.assertIn("hook(c, f_hooked_80004000);", text)
+        self.assertLess(text.index("void f_hooked_80004000(wp::Cpu& c);"), text.index("hook(c, f_hooked_80004000);"))
+        self.assertIn("void f_hooked_80004000(wp::Cpu& c) {", text)
 
 
 if __name__ == "__main__":

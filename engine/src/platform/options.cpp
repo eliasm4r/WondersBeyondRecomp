@@ -29,6 +29,7 @@ constexpr const char* kLiveKeys[] = {
     "audio.mute",           "audio.volume",         "audio.wiimote_speaker", "saves.backups",      "system.interface_language", "system.discord",
     "overlay.show",         "overlay.level",        "overlay.corner",        "controls.device",    "stats.play_time",
     "video.brightness",     "video.contrast",       "video.saturation",      "video.gamma",        "video.colors_reset",
+    "camera.free",          "camera.mouse_speed",   "camera.stick_speed",    "camera.invert_y",    "video.bug_recorder",
 };
 
 struct Language {
@@ -54,6 +55,8 @@ struct Slider {
 
 constexpr Slider kSliders[] = {{"audio.volume", 0, 100, 5},
                                {"input.stick_deadzone", 10, 90, 5},
+                               {"camera.mouse_speed", 10, 300, 10},
+                               {"camera.stick_speed", 10, 300, 10},
                                {color::kBrightness.key, color::kBrightness.low, color::kBrightness.high, 5},
                                {color::kContrast.key, color::kContrast.low, color::kContrast.high, 5},
                                {color::kSaturation.key, color::kSaturation.low, color::kSaturation.high, 5},
@@ -122,14 +125,14 @@ std::vector<std::string> tab_keys(size_t tab, Device device) {
         return {"audio.volume", "audio.mute", "audio.wiimote_speaker"};
     case 3: {
         if (device == Device::Keyboard) {
-            std::vector<std::string> keys = {kDevice, "input.hide_cursor"};
+            std::vector<std::string> keys = {kDevice, "input.hide_cursor", "camera.free", "camera.mouse_speed", "camera.invert_y"};
             for (size_t i = 0; i < keymap::kActionCount; i++) {
                 keys.push_back(keymap::setting_key(i));
             }
             keys.push_back(kResetKeys);
             return keys;
         }
-        std::vector<std::string> keys = {kDevice, "input.gamepads", "input.rumble", "input.stick_deadzone"};
+        std::vector<std::string> keys = {kDevice, "input.gamepads", "input.rumble", "input.stick_deadzone", "camera.free", "camera.stick_speed", "camera.invert_y"};
         for (size_t i = 0; i < padmap::kActionCount; i++) {
             keys.push_back(padmap::setting_key(i));
         }
@@ -139,7 +142,7 @@ std::vector<std::string> tab_keys(size_t tab, Device device) {
     case 4:
         return {"system.interface_language", "system.language"};
     case 5:
-        return {"overlay.show", "overlay.level", "overlay.corner", "video.show_fps", "video.custom_textures", "video.dump_textures"};
+        return {"overlay.show", "overlay.level", "overlay.corner", "video.show_fps", "video.custom_textures", "video.dump_textures", "video.bug_recorder"};
     default:
         return {};
     }

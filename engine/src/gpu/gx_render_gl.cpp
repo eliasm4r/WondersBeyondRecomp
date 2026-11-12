@@ -1936,6 +1936,10 @@ void dump_copies(const char* prefix) {
     }
 }
 
+bool read_recent(std::vector<RecentImage>&) {
+    return false;
+}
+
 bool read_frame(std::vector<uint32_t>& pixels, uint32_t& width, uint32_t& height) {
     if (!g_device.ready || !g_device.frame.framebuffer) {
         return false;

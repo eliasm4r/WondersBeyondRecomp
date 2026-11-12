@@ -26,6 +26,8 @@ const Description& description();
 // The game's own handler for a function listed in hle_functions.csv, or nullptr.
 HleFunction replacement(const char* name);
 
+HookFunction hook(const char* name);
+
 // Called on the CPU thread once per video retrace, after its interrupt handler.
 void retrace();
 

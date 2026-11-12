@@ -21,11 +21,14 @@
 #include "wp/disc.h"
 #include "wp/dol.h"
 #include "wp/game.h"
+#include "wp/gx.h"
 #include "wp/input.h"
 #include "wp/log.h"
 #include "wp/nand.h"
+#include "wp/options_window.h"
 #include "wp/ipc.h"
 #include "wp/settings.h"
+#include "wp/stall_watch.h"
 #include "wp/threads.h"
 #include "wp/video.h"
 #include "wp/watch.h"
@@ -122,7 +125,9 @@ void report_terminate() {
 
 int run(int argc, char** argv) {
     wp::settings::load(wp::game::description().settings_file);
-    wp::play_time::start(wp::play_time::stats_path(wp::game::description().settings_file));
+    if (!std::getenv("WP_HEADLESS")) {
+        wp::play_time::start(wp::play_time::stats_path(wp::game::description().settings_file));
+    }
     wp::input::upgrade_bindings();
     std::string extracted = argc > 1 ? argv[1] : wp::game::description().data_directory;
     int timeout_seconds = argc > 2 ? std::atoi(argv[2]) : 0;
@@ -165,6 +170,7 @@ int run(int argc, char** argv) {
             std::fprintf(stderr, "no progress after %d seconds\n", timeout_seconds);
             wp::print_call_stack();
             wp::print_thread_stacks();
+            wp::print_guest_threads();
             wp::ipc::report();
             wp::print_profile();
             wp::play_time::save();
@@ -173,6 +179,18 @@ int run(int argc, char** argv) {
     }
 
     wp::video::start();
+    std::thread([] {
+        constexpr auto kStall = std::chrono::seconds(15);
+        wp::StallWatch watch(kStall);
+        while (true) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            if (watch.update(wp::gx::frames_drawn(), wp::options::menu_open(), std::chrono::steady_clock::now())) {
+                wp::log::write("hang", "the game has drawn no frame for %d seconds", static_cast<int>(kStall.count()));
+                wp::print_guest_threads();
+                wp::ipc::report();
+            }
+        }
+    }).detach();
     if (!std::getenv("WP_HEADLESS")) {
         wp::discord::start();
     }

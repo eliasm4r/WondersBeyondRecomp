@@ -19,6 +19,7 @@ Supported disc: Europe (`S2LP01`). Other regions are planned.
 - **90 or 120 fps** through frame interpolation (Direct3D 11): images are drawn between the game's frames
 - **Internal resolution** up to 6x, 16:9 or 4:3, optional supersampled smoothing, anisotropic filtering, vsync
 - **Color settings**: brightness, contrast, saturation and gamma, applied to the game picture and screenshots
+- **Free camera**: turn the camera around Pikachu with the mouse or the right stick, with its own speed for each and an up/down invert; **C** (Wii B) brings it back behind Pikachu; it can be turned off to keep the game's camera
 - **Options menu (F1)** drawn as the game's dialog bubble, with six tabs (Screen, Game, Sound, Controls, Language, Advanced) and a help line for each setting, usable with keyboard, mouse or gamepad, without pausing the game
 - **Performance overlay (F2)**: frame rate, processor, graphics card and memory use, in three levels of detail and in any corner
 - **Play time** counted across sessions and shown in the options menu
@@ -28,7 +29,7 @@ Supported disc: Europe (`S2LP01`). Other regions are planned.
 - **Languages**: game and menu language (English, French, Spanish, Galician for the menu)
 - **Discord Rich Presence** while the game runs (can be turned off)
 - **Custom textures** loaded from `games/pokepark2/textures`
-- Save backups and crash reports
+- Save backups, crash and hang reports, and a bug recorder that saves the last three seconds of images with the screenshot key
 
 ## Playing
 
@@ -37,7 +38,6 @@ After building (below), start the game with `build/out/pokepark2.exe`. Press **F
 ## Roadmap
 
 - A steady 120 fps on more PCs
-- Free camera with the mouse or the right stick
 - Shader cache on disk to remove first-time stutters
 - Installer, then Linux and macOS builds
 
