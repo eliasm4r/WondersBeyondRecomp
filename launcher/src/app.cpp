@@ -1851,6 +1851,20 @@ void App::install(bool adding) {
     std::string incoming = std::string("games/") + kGame + "/versions/incoming";
     program(t.step_extract, "nodtool", {"extract", disc, adding ? incoming : std::string("games/") + kGame + "/extracted"}, 2.0f);
     steps.back().skip = [project, adding] { return !adding && project.extracted(); };
+    Step identify;
+    identify.title = t.step_verify_disc;
+    identify.action = [project, adding](std::string& message) {
+        std::filesystem::path folder = adding ? project.versions_folder() / "incoming" : project.extracted_folder();
+        std::string id = read_disc_id(folder);
+        if (id == kDiscId) {
+            return true;
+        }
+        std::error_code error;
+        std::filesystem::remove_all(folder, error);
+        message = format(texts().disc_other_game, id.empty() ? "?" : id, kDiscId);
+        return false;
+    };
+    steps.push_back(identify);
     if (adding) {
         std::error_code stale;
         std::filesystem::remove_all(project_.versions_folder() / "incoming", stale);
@@ -1891,14 +1905,10 @@ void App::install(bool adding) {
         sdl_arguments.push_back("--offline");
     }
     program(t.step_sdl, python, sdl_arguments, 1.0f);
-    program(t.step_unpack, python, {"recompiler/unpack_rels.py"}, 1.0f);
-    program(t.step_dol, python, {"recompiler/recomp.py"}, 1.0f);
-    program(t.step_modules, python, {"recompiler/recomp_rel.py", "--all"}, 3.0f);
-    program(t.step_links, python, {"recompiler/recomp.py"}, 1.0f);
-    program(t.step_module_calls, python, {"recompiler/recomp_rel.py", "--all"}, 3.0f);
+    program(t.step_dol, python, {"recompiler/recomp.py"}, 4.0f);
     program(t.step_dsp, python, {"recompiler/dsp/recomp_dsp.py"}, 1.0f);
     auto translated = std::make_shared<int>(-1);
-    for (size_t i = steps.size() - 6; i < steps.size(); i++) {
+    for (size_t i = steps.size() - 2; i < steps.size(); i++) {
         steps[i].skip = [project, translated] {
             if (*translated < 0) {
                 *translated = project.translation_current() ? 1 : 0;

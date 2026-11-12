@@ -34,6 +34,7 @@ struct Project {
 };
 
 constexpr const char* kGame = "pokepark2";
+constexpr const char* kDiscId = "S2LP01";
 constexpr const char* kInstallFolderName = "WondersBeyondRecomp";
 
 bool find_checkout(std::filesystem::path& root);

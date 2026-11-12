@@ -198,9 +198,6 @@ std::string Project::translation_inputs() const {
     for (const char* name : {"sys/boot.bin", "sys/main.dol"}) {
         lines.push_back(std::string(name) + " " + file_digest(extracted_folder() / name));
     }
-    for (const auto& entry : std::filesystem::directory_iterator(extracted_folder() / "files" / "rel", error)) {
-        lines.push_back(entry.path().filename().generic_u8string() + " " + std::to_string(entry.file_size(error)));
-    }
     std::sort(lines.begin(), lines.end());
     std::string joined;
     for (const std::string& line : lines) {

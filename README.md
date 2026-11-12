@@ -39,7 +39,7 @@ After building (below), start the game with `build/out/pokepark2.exe`. Press **F
 
 - A steady 120 fps on more PCs
 - Shader cache on disk to remove first-time stutters
-- Installer, then Linux and macOS builds
+- A released installer, then Linux and macOS builds
 
 ## Building from Source
 
@@ -58,6 +58,15 @@ cmake --build build/out --target pokepark2
 ```
 
 Run the tests with `ctest` in `build/out`. Technical notes on the fixes so far are in [docs/NOTES.md](docs/NOTES.md).
+
+### Installer
+
+```bash
+cmake -S launcher -B build/launcher -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build/launcher
+```
+
+`build/launcher/wondersbeyondrecomp-launcher.exe` is a single file for a PC without any of the tools above. It holds the sources of this repository and nothing of the game: it asks for a disc image of the European version, downloads the build tools, translates and compiles the game on that PC, then starts it. It is at the test stage and Windows only for now.
 
 The function list in `games/pokepark2/analysis/` was produced with [decomp-toolkit](https://github.com/encounter/decomp-toolkit).
 

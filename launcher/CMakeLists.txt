@@ -67,6 +67,9 @@ add_executable(launcher WIN32
     src/app_dolphin.cpp
     src/app_captures.cpp
     src/app_system.cpp
+    src/engine_glue.cpp
+    ${WP_ENGINE}/src/platform/control_names.cpp
+    ${WP_ENGINE}/src/platform/play_time.cpp
     ${WP_ENGINE}/src/platform/settings.cpp
     ${WP_ENGINE}/src/platform/options.cpp
     ${WP_ENGINE}/src/platform/ui_text.cpp

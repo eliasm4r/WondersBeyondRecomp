@@ -248,8 +248,27 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
 - Help lines: a key row shows `help.keys.<action>`; a gamepad row shows the same text, except motions
   (`pad.motion_help`) and the pointer (`help.pad.pointer`). The row being captured shows how to capture instead
   (`help.keys`, `help.pad.capture`): the help area holds two lines, too few for both.
-- `launcher/` (not built) still uses the old `padmap` interface and the "Automatic" text; it needs porting when the
-  installer work starts.
+- `launcher/` builds again. Its gamepad list still offers one button per action: "Default" stores an empty value,
+  which is the layout of the game, and a binding with a combination or several buttons also shows as "Default" until
+  one button is picked there. The full editor is the F1 menu.
+
+## Installer
+
+- `launcher/` is its own CMake project (`cmake -S launcher -B build/launcher`), not part of the game build. The
+  executable embeds `payload.tar.gz`, the files `git ls-files` lists for the engine, the recompiler, `games/pokepark2`,
+  `third_party`, `tests` and `tools/fetch_sdl.py`, so an installed copy needs no access to the repository. Nothing of
+  the disc is tracked, so nothing of it is embedded.
+- It links a few engine sources for the settings pages. `launcher/src/engine_glue.cpp` gives them the game description
+  and a gamepad family, which the game itself gets from `games/pokepark2/game.cpp` and the gamepad worker.
+- Install steps: unpack the sources, download the tools that are missing (nodtool, embedded Python, CMake, Ninja,
+  MinGW, each checked against a SHA-256), verify and extract the disc, check that it is `S2LP01`, `tools/fetch_sdl.py`,
+  `recompiler/recomp.py`, `recompiler/dsp/recomp_dsp.py`, configure, build. The game has no REL modules, so the module
+  steps of the upstream launcher are gone. Any other disc is refused after extraction and its files removed.
+- The default folder is `%LOCALAPPDATA%\WondersBeyondRecomp`. The update check reads the releases of the GitHub
+  repository and finds none while there are no releases.
+- Not checked on a PC yet: Smart App Control refuses the unsigned launcher on the development PC, as it does for
+  `windres.exe` of the downloaded MinGW. The same steps run by hand from the unpacked payload produce the game.
+- The launcher has English, Spanish and Galician texts, no French yet.
 
 ## Color settings
 

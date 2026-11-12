@@ -4,6 +4,10 @@ All notable changes to WondersBeyondRecomp. Dates are when the change landed on 
 
 ## 2026-11-12
 
+### Added
+- The installer builds again (`launcher/`): one executable that asks for the disc image, downloads the build tools
+  and builds the game on the PC it runs on. It refuses any disc other than the European version. Test stage.
+
 ### Changed
 - Higher frame rate in heavy zones: the vertices of consecutive draws are prepared on up to three helper threads
   (processors with more than four cores). In the measured spot at 120 fps the game went from about 50 to its full 60
