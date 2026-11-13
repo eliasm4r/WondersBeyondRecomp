@@ -2,8 +2,9 @@ TEXTS = {
     "window": "PokePark 2: Wonders Beyond - Setup",
     "title": "PokePark 2: Wonders Beyond",
     "intro": "This setup builds the PC version of the game on this computer from your own disc image, the ROM file of the game. "
+             "Only the European version of the game (S2LP01) works. "
              "It needs an internet connection, about {size} GB of free space and about 5 minutes.",
-    "disc": "Disc image, the ROM file of the game (European version, .iso, .rvz or .wbfs)",
+    "disc": "Disc image, the ROM file of the game (European version S2LP01 only, .iso, .rvz or .wbfs)",
     "folder": "Install folder",
     "browse": "Browse...",
     "shortcut": "Create a desktop shortcut",

@@ -24,6 +24,8 @@ No emulator, up to 120 fps, high resolutions, keyboard, mouse and modern control
 
 > [!IMPORTANT]
 > **No game files are included.** You need your own copy of PokéPark 2: Wonders Beyond. The setup reads your disc image and builds the game on your PC.
+>
+> **Only the European version works** (`S2LP01`). The American and Japanese versions are refused by the setup.
 
 > [!NOTE]
 > **Alpha.** The whole game boots, plays and saves, but expect rough edges. Please [report what you find](https://github.com/eliasm4r/WondersBeyondRecomp/issues).
@@ -84,7 +86,7 @@ No emulator, up to 120 fps, high resolutions, keyboard, mouse and modern control
 |:---:|---|
 | **1** | Download **`WondersBeyondRecomp-Setup.zip`** from the [latest release](https://github.com/eliasm4r/WondersBeyondRecomp/releases/latest) and unzip it anywhere. |
 | **2** | Start **`Setup.exe`**. |
-| **3** | Pick your **disc image**: the ROM file of the game, `.iso`, `.rvz` or `.wbfs`. |
+| **3** | Pick your **disc image**: the ROM file of the **European** version (`S2LP01`), `.iso`, `.rvz` or `.wbfs`. |
 | **4** | Pick an install folder and press **Install**. |
 | **5** | Wait about **5 minutes** while the setup builds the game, then press **Play**. |
 
