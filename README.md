@@ -14,6 +14,8 @@ No emulator, up to 120 fps, high resolutions, keyboard, mouse and modern control
 [![Platform](https://img.shields.io/badge/platform-Windows-0078d4?style=for-the-badge)](#requirements)
 [![License](https://img.shields.io/badge/license-GPL--3.0-6a3d1b?style=for-the-badge)](LICENSE)
 
+<a href="https://recomplauncher.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
+
 **[Download](https://github.com/eliasm4r/WondersBeyondRecomp/releases/latest)** ·
 **[Install](#install)** ·
 **[Controls](#controls)** ·
