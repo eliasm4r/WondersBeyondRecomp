@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "wp/gx_render.h"
@@ -34,6 +35,9 @@ struct Constants {
     int32_t fog_integer[4];
     float fog_range[3][4];
 };
+
+constexpr size_t kVariantHeader = 10;
+std::string variant_key(const Constants& constants, bool early_depth);
 
 struct Layout {
     uint32_t block_width;

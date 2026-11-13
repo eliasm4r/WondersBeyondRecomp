@@ -1908,26 +1908,10 @@ struct ShaderVariant {
     std::atomic<ID3D11PixelShader*> shader{nullptr};
 };
 
-constexpr size_t kVariantHeader = 10;
 std::unordered_map<std::string, ShaderVariant> g_variants;
 std::mutex g_variant_mutex;
 std::condition_variable g_variant_wake;
 std::vector<std::pair<std::string, ShaderVariant*>> g_variant_jobs;
-
-// Key words: stage count, early depth, swaps, indirect, then five words per stage (the stage and its indirect setup).
-std::string variant_key(const Constants& constants, bool early_depth) {
-    uint32_t words[kVariantHeader + kMaxStages * 5] = {};
-    uint32_t count = std::min(constants.header[0], kMaxStages);
-    words[0] = count;
-    words[1] = early_depth ? 1 : 0;
-    std::memcpy(words + 2, constants.swaps, sizeof constants.swaps);
-    std::memcpy(words + 6, constants.indirect, sizeof constants.indirect);
-    for (uint32_t i = 0; i < count; i++) {
-        std::memcpy(words + kVariantHeader + i * 5, constants.stage[i], sizeof constants.stage[i]);
-        words[kVariantHeader + i * 5 + 4] = constants.tevind[i][0];
-    }
-    return std::string(reinterpret_cast<const char*>(words), (kVariantHeader + count * 5) * sizeof(uint32_t));
-}
 
 std::string variant_source(const std::string& key) {
     std::vector<uint32_t> words(key.size() / sizeof(uint32_t));

@@ -207,6 +207,20 @@ std::vector<uint32_t> decode_texture(const uint8_t* data, uint32_t width, uint32
     return cropped;
 }
 
+std::string variant_key(const Constants& constants, bool early_depth) {
+    uint32_t words[kVariantHeader + kMaxStages * 5] = {};
+    uint32_t count = std::min(constants.header[0], kMaxStages);
+    words[0] = count;
+    words[1] = early_depth ? 1 : 0;
+    std::memcpy(words + 2, constants.swaps, sizeof constants.swaps);
+    std::memcpy(words + 6, constants.indirect, sizeof constants.indirect);
+    for (uint32_t i = 0; i < count; i++) {
+        std::memcpy(words + kVariantHeader + i * 5, constants.stage[i], sizeof constants.stage[i]);
+        words[kVariantHeader + i * 5 + 4] = constants.tevind[i][0];
+    }
+    return std::string(reinterpret_cast<const char*>(words), (kVariantHeader + count * 5) * sizeof(uint32_t));
+}
+
 uint64_t hash_bytes(const uint8_t* data, size_t size) {
     constexpr uint64_t kPrime = 1099511628211ull;
     uint64_t hash = 1469598103934665603ull;

@@ -49,7 +49,7 @@ namespace {
     X(GetShaderiv) X(GetString) X(GetStringi) X(GetUniformBlockIndex) X(GetUniformLocation) X(LinkProgram) X(PixelStorei) X(ReadPixels)             \
     X(SamplerParameterf) X(SamplerParameteri) X(Scissor) X(ShaderSource) X(TexImage2D) X(TexParameteri) X(TexSubImage2D) X(Uniform1i)              \
     X(Uniform1f) X(Uniform4f) X(UniformBlockBinding) X(UseProgram) X(VertexAttribPointer) X(Viewport) X(MapBufferRange) X(UnmapBuffer)    \
-    X(FenceSync) X(ClientWaitSync) X(DeleteSync)
+    X(FenceSync) X(ClientWaitSync) X(DeleteSync) X(DeleteProgram)
 
 #define WP_GL_RUN_FUNCTIONS(X)                                                                                                                              \
     X(CullFace) X(DeleteBuffers) X(DisableVertexAttribArray) X(DrawElementsBaseVertex) X(GetError) X(TexBuffer) X(VertexAttrib4f) X(VertexAttribI4ui)  \
@@ -725,7 +725,7 @@ void main() {
         ivec2 base = fixpoint(coord);
         ivec2 offset = ivec2(0);
         if (has_stage && bump != 0u) {
-            alphabump = (indirect_texel[bt][bump - 1u] << kBumpShifts[format]) & 248;
+            alphabump = (indirect_texel[bt][max(bump, 1u) - 1u] << kBumpShifts[format]) & 248;
         }
         if (has_stage && matrix_index != 0u) {
             ivec3 crd = indirect_texel[bt] >> kFormatShifts[format];
@@ -745,8 +745,8 @@ void main() {
             offset = shift >= 0 ? (offset >> shift) : (offset << (-shift));
         }
         ivec2 wrapped;
-        wrapped.x = wrap_s == 0u ? base.x : (wrap_s >= 6u ? 0 : (base.x & (kWraps[wrap_s - 1u] - 1)));
-        wrapped.y = wrap_t == 0u ? base.y : (wrap_t >= 6u ? 0 : (base.y & (kWraps[wrap_t - 1u] - 1)));
+        wrapped.x = wrap_s == 0u ? base.x : (wrap_s >= 6u ? 0 : (base.x & (kWraps[max(wrap_s, 1u) - 1u] - 1)));
+        wrapped.y = wrap_t == 0u ? base.y : (wrap_t >= 6u ? 0 : (base.y & (kWraps[max(wrap_t, 1u) - 1u] - 1)));
         tevcoord = ((ind >> 20u) & 1u) != 0u ? tevcoord + wrapped + offset : wrapped + offset;
         tevcoord = (tevcoord << 8) >> 8;
         ivec4 tex = ivec4(255);
@@ -802,8 +802,8 @@ void main() {
     }
     ivec4 result = r[0];
     if (count > 0u) {
-        uint last_color = (stage[count - 1u].x >> 22u) & 3u;
-        uint last_alpha = (stage[count - 1u].y >> 22u) & 3u;
+        uint last_color = (stage[max(count, 1u) - 1u].x >> 22u) & 3u;
+        uint last_alpha = (stage[max(count, 1u) - 1u].y >> 22u) & 3u;
         result = ivec4(r[last_color].rgb, r[last_alpha].a);
     }
     result &= 255;
@@ -1296,6 +1296,157 @@ bool create_run_pipeline() {
     g_device.early_run = early;
     log::write("video", "the graphics card places the vertices");
     return true;
+}
+
+constexpr GLenum kCompletionStatus = 0x91B1;
+const char* const kEarlyPrefix = "#extension GL_ARB_shader_image_load_store : require\nlayout(early_fragment_tests) in;\n";
+
+struct Variant {
+    Program program;
+    GLuint linking = 0;
+    bool done = false;
+};
+
+std::unordered_map<std::string, Variant> g_variants[2];
+GLuint g_variant_vertex[2] = {};
+uint32_t g_variant_budget = 0;
+uint32_t g_variants_linking = 0;
+constexpr uint32_t kMaxLinking = 4;
+uint32_t g_variants_ready = 0;
+uint32_t g_variants_failed = 0;
+double g_variant_seconds = 0.0;
+
+bool parallel_compile() {
+    static const bool available = [] {
+        using MaxThreads = void(APIENTRY*)(GLuint);
+        for (const char* name : {"KHR", "ARB"}) {
+            std::string extension = std::string("GL_") + name + "_parallel_shader_compile";
+            auto function = reinterpret_cast<MaxThreads>(SDL_GL_GetProcAddress((std::string("glMaxShaderCompilerThreads") + name).c_str()));
+            if (has_extension(extension.c_str()) && function) {
+                function(0xFFFFFFFFu);
+                log::write("video", "pixel shader variants compile in the background (%s)", extension.c_str());
+                return true;
+            }
+        }
+        log::write("video", "pixel shader variants compile one per image: this OpenGL cannot compile in the background");
+        return false;
+    }();
+    return available;
+}
+
+std::string variant_fragment(const std::string& key) {
+    std::vector<uint32_t> words(key.size() / sizeof(uint32_t));
+    std::memcpy(words.data(), key.data(), key.size());
+    uint32_t count = words[0];
+    std::string source = kTevFragment;
+    auto replace = [&source](const char* from, const std::string& to) {
+        size_t at = source.find(from);
+        if (at != std::string::npos) {
+            source.replace(at, std::strlen(from), to);
+        }
+    };
+    auto vector = [](const uint32_t* v) {
+        char text[96];
+        std::snprintf(text, sizeof text, "uvec4(%uu, %uu, %uu, %uu)", v[0], v[1], v[2], v[3]);
+        return std::string(text);
+    };
+    std::string stages = "const uvec4 stage[16] = uvec4[16](";
+    std::string indirects = "const uvec4 tevind[16] = uvec4[16](";
+    const uint32_t zero[4] = {};
+    for (uint32_t i = 0; i < kMaxStages; i++) {
+        const uint32_t* stage = i < count ? &words[kVariantHeader + i * 5] : zero;
+        const uint32_t indirect[4] = {i < count ? words[kVariantHeader + i * 5 + 4] : 0, 0, 0, 0};
+        stages += vector(stage) + (i + 1 < kMaxStages ? ", " : ");\n");
+        indirects += vector(indirect) + (i + 1 < kMaxStages ? ", " : ");\n");
+    }
+    replace("    uvec4 stage[16];", "    uvec4 stage_slot[16];");
+    replace("    uvec4 swaps;", "    uvec4 swaps_slot;");
+    replace("    uvec4 indirect;", "    uvec4 indirect_slot;");
+    replace("    uvec4 tevind[16];", "    uvec4 tevind_slot[16];");
+    replace("uniform sampler2D t0;", stages + indirects + "const uvec4 swaps = " + vector(&words[2]) + ";\nconst uvec4 indirect = " + vector(&words[6]) +
+                                         ";\nuniform sampler2D t0;");
+    replace("uint count = header.x;", "const uint count = " + std::to_string(count) + "u;");
+    return std::string("#version 410 core\n") + (words[1] ? kEarlyPrefix : "") + source;
+}
+
+void start_variant(Variant& variant, int kind, const std::string& key) {
+    if (!g_variant_vertex[kind]) {
+        g_variant_vertex[kind] = compile_stage(GL_VERTEX_SHADER, kind ? kRunVertex : kTevVertex);
+    }
+    std::string fragment = variant_fragment(key);
+    const char* text = fragment.c_str();
+    GLuint fs = gl.CreateShader(GL_FRAGMENT_SHADER);
+    gl.ShaderSource(fs, 1, &text, nullptr);
+    gl.CompileShader(fs);
+    GLuint id = gl.CreateProgram();
+    gl.AttachShader(id, g_variant_vertex[kind]);
+    gl.AttachShader(id, fs);
+    gl.LinkProgram(id);
+    gl.DeleteShader(fs);
+    variant.linking = id;
+    g_variants_linking++;
+}
+
+void finish_variant(Variant& variant, int kind) {
+    GLuint id = variant.linking;
+    variant.linking = 0;
+    g_variants_linking--;
+    variant.done = true;
+    GLint ok = 0;
+    gl.GetProgramiv(id, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        char text[4096];
+        gl.GetProgramInfoLog(id, sizeof text, nullptr, text);
+        log::write("video", "a pixel shader variant did not build, the generic shader keeps drawing it: %s", text);
+        gl.DeleteProgram(id);
+        g_variants_failed++;
+        return;
+    }
+    if (kind) {
+        bind_samplers(id, {"t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "rows"});
+        variant.program.row = gl.GetUniformLocation(id, "run_row");
+    } else {
+        bind_samplers(id, {"t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7"});
+    }
+    gl.Uniform1i(gl.GetUniformLocation(id, "depth_zero_to_one"), g_device.clip_control ? 1 : 0);
+    gl.UniformBlockBinding(id, gl.GetUniformBlockIndex(id, "Constants"), 0);
+    variant.program.id = id;
+    g_variants_ready++;
+}
+
+const Program& tev_program(const Constants& constants, bool early_depth, int kind) {
+    const Program& generic = kind ? (early_depth ? g_device.early_run : g_device.run) : (early_depth ? g_device.early_tev : g_device.tev);
+    static const bool off = std::getenv("WP_GENERIC_SHADER") != nullptr;
+    if (off) {
+        return generic;
+    }
+    bool early = early_depth && g_device.early_tev.id != g_device.tev.id;
+    std::string key = variant_key(constants, early);
+    Variant& variant = g_variants[kind][key];
+    if (variant.program.id) {
+        return variant.program;
+    }
+    if (variant.done) {
+        return generic;
+    }
+    bool parallel = parallel_compile();
+    auto started = std::chrono::steady_clock::now();
+    if (!variant.linking) {
+        if (parallel ? g_variants_linking >= kMaxLinking : g_variant_budget == 0) {
+            return generic;
+        }
+        g_variant_budget -= parallel ? 0 : 1;
+        start_variant(variant, kind, key);
+    }
+    GLint complete = 1;
+    if (parallel) {
+        gl.GetProgramiv(variant.linking, kCompletionStatus, &complete);
+    }
+    if (complete) {
+        finish_variant(variant, kind);
+    }
+    g_variant_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    return variant.program.id ? variant.program : generic;
 }
 
 bool create_kept_buffers() {
@@ -1807,7 +1958,7 @@ void point_run_inputs(uint32_t layout, uint32_t stride, GLuint buffer, uint32_t 
 }
 
 void issue_runs(bool early_depth, uint32_t vertex_start, uint32_t index_start, uint32_t row_start) {
-    const Program& program = early_depth ? g_device.early_run : g_device.run;
+    const Program& program = tev_program(g_pending.constants, early_depth, 1);
     gl.UseProgram(program.id);
     gl.ActiveTexture(GL_TEXTURE0 + kRowsUnit);
     gl.BindTexture(GL_TEXTURE_BUFFER, g_device.run_rows_texture);
@@ -1908,7 +2059,7 @@ void flush_pending() {
     g_batches++;
     g_batch_vertices += static_cast<uint32_t>(pending.vertices.size());
     set_batch_state(pending);
-    gl.UseProgram(pending.early_depth ? g_device.early_tev.id : g_device.tev.id);
+    gl.UseProgram(tev_program(pending.constants, pending.early_depth, 0).id);
     gl.BindVertexArray(g_device.tev_layout);
     gl.BindBuffer(GL_ARRAY_BUFFER, g_device.vertex_buffer);
     size_t total = pending.vertices.size();
@@ -2422,6 +2573,14 @@ void copy_to_framebuffer(int x, int y, int width, int height, bool depth, const 
         gl.DeleteSync(oldest);
     }
     oldest = gl.FenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    g_variant_budget = 1;
+    static auto logged = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
+    if (g_variant_seconds > 0.0 && now - logged >= std::chrono::seconds(1)) {
+        logged = now;
+        log::write("video", "%u pixel shader variants ready, %u refused, %.1f ms spent building them", g_variants_ready, g_variants_failed, g_variant_seconds * 1000.0);
+        g_variant_seconds = 0.0;
+    }
     g_frame++;
     g_texture_epoch++;
     x = std::max(0, x);

@@ -799,6 +799,15 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
   at every copy to the frame buffer and the one of two frames earlier is waited for, as Direct3D's frame latency of
   two. Memory then stays near 1.1 GB and the drawing time fell from 708 to 120 ms a second.
 - `WP_DUMP_SEQUENCE=first,count` writes the final image of those frames to `captures/seq` (no in-between images).
+- Pixel shader variants, as in Direct3D: `variant_key` (now in gx_render_common.cpp, shared) and `variant_fragment`
+  turn the TEV stages, swaps and indirect setup into GLSL constants. Without them the heavy zone ran at 54-57 fps at
+  scale 3 and 59-60 at scale 1 (the generic shader was the limit on the graphics card); with them 59-60 at scale 3.
+  With `GL_KHR_parallel_shader_compile` (or the ARB one) at most four compile in the background at once: starting
+  sixty at a zone load froze the NVIDIA driver for 4.5 s. Without it (macOS) one variant compiles per image, 1-3 ms
+  each on NVIDIA, about 30 ms for the first ones. The generic shader draws until a variant is ready, and keeps
+  drawing those that fail (logged). Dead branches must not index out of bounds once the stages are constants
+  (NVIDIA rejects `x[bump - 1u]` with `bump` = 0 even under `bump != 0u`), hence the `max(v, 1u) - 1u` indices.
+  `WP_GENERIC_SHADER=1` turns variants off. Log line `video ... pixel shader variants ready` while some are built.
 - Measured headless on an RTX 4070, frames 1500-1505 of `still.txt`: 2 % of pixels differ from Direct3D, as between
   two Direct3D runs.
 
