@@ -1,55 +1,213 @@
-# WondersBeyondRecomp — PokéPark 2 Recomp for PC
+<div align="center">
 
-**PokéPark 2: Wonders Beyond** running natively on PC through static recompilation.
+<img src="games/pokepark2/res/pokepark2.png" width="140" alt="WondersBeyondRecomp icon">
+
+# WondersBeyondRecomp
+
+### PokéPark 2: Wonders Beyond, running natively on PC
+
+A static recompilation of the Wii game: its code is translated to C++ ahead of time and built into a real PC program.<br>
+No emulator, up to 120 fps, high resolutions, keyboard, mouse and modern controllers.
+
+[![Latest release](https://img.shields.io/github/v/release/eliasm4r/WondersBeyondRecomp?include_prereleases&style=for-the-badge&label=release&color=f08a00)](https://github.com/eliasm4r/WondersBeyondRecomp/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/eliasm4r/WondersBeyondRecomp/total?style=for-the-badge&color=2e7d32)](https://github.com/eliasm4r/WondersBeyondRecomp/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows-0078d4?style=for-the-badge)](#requirements)
+[![License](https://img.shields.io/badge/license-GPL--3.0-6a3d1b?style=for-the-badge)](LICENSE)
+
+**[Download](https://github.com/eliasm4r/WondersBeyondRecomp/releases/latest)** ·
+**[Install](#install)** ·
+**[Controls](#controls)** ·
+**[FAQ](#faq)** ·
+**[Changelog](CHANGELOG.md)**
+
+</div>
+
+> [!IMPORTANT]
+> **No game files are included.** You need your own copy of PokéPark 2: Wonders Beyond. The setup reads your disc image and builds the game on your PC.
 
 > [!NOTE]
-> **Project status: playable, in development.** The game boots, plays and saves on Windows at up to 120 fps and high internal resolutions. Expect rough edges; see [CHANGELOG.md](CHANGELOG.md) for what changed.
+> **Alpha.** The whole game boots, plays and saves, but expect rough edges. Please [report what you find](https://github.com/eliasm4r/WondersBeyondRecomp/issues).
 
-## Overview
+<br>
 
-WondersBeyondRecomp translates the game's PowerPC code into C++ ahead of time and compiles it into a native PC program. The game and the Nintendo SDK code run translated; the console hardware (GPU, DSP audio, Bluetooth, IOS, disc and NAND) is reimplemented underneath.
+## Highlights
 
-**No game files are distributed.** You need your own copy of PokéPark 2: Wonders Beyond; the build reads your disc image.
+<table>
+<tr>
+<td width="50%" valign="top">
 
-Supported disc: Europe (`S2LP01`). Other regions are planned.
+### Smooth
+- **30, 45 or 60 fps** gameplay, 60 by default
+- **90 or 120 fps** with images drawn between the game's own frames
+- Movies and cutscenes kept at their native 30 fps
+- Most of the work done by the graphics card, so laptops hold 60 fps too
 
-## Features
+</td>
+<td width="50%" valign="top">
 
-- **30, 45 or 60 fps** gameplay (`video.fps`, 60 by default), with movies and cutscenes kept at their native 30 fps
-- **90 or 120 fps** through frame interpolation (Direct3D 11): images are drawn between the game's frames
-- **Internal resolution** up to 6x, 16:9 or 4:3, optional supersampled smoothing, anisotropic filtering, vsync
-- **Color settings**: brightness, contrast, saturation and gamma, applied to the game picture and screenshots
-- **Free camera**: turn the camera around Pikachu with the mouse or the right stick, with its own speed for each and an up/down invert; **C** (Wii B) brings it back behind Pikachu; it can be turned off to keep the game's camera
-- **Options menu (F1)** drawn as the game's dialog bubble, with six tabs (Screen, Game, Sound, Controls, Language, Advanced) and a help line for each setting, usable with keyboard, mouse or gamepad, without pausing the game
-- **Performance overlay (F2)**: frame rate, processor, graphics card and memory use, in three levels of detail and in any corner
-- **Play time** counted across sessions and shown in the options menu
-- **Keyboard and mouse**: **Space** jumps and talks, **left click** dashes (hold it for Thunderbolt), **right click** shakes, **E** calls a partner, **C** turns the view, **Tab** opens the PokéPark Pad, **P** takes a photo; every action can be rebound, and keys are shown as written on your keyboard; hold **Ctrl** to aim the Wii Remote pointer with the mouse (left click then acts as A)
-- **Gamepads** (XInput and SDL): the options menu names the buttons of the connected Xbox, PlayStation or Switch controller; rebinding, stick deadzone, rumble; hold **L3** to aim with the right stick; a sharp jolt of a gamepad with a motion sensor counts as a Wii Remote shake; gamepads keep working while the window is in the background
-- **Sound**: volume up to 300 %, mute, Wii Remote speaker
-- **Languages**: game and menu language (English, French, Spanish, Galician for the menu)
-- **Discord Rich Presence** while the game runs (can be turned off)
-- **Custom textures** loaded from `games/pokepark2/textures`
-- Save backups, crash and hang reports, and a bug recorder that saves the last three seconds of images with the screenshot key
+### Sharp
+- **Internal resolution up to 6x**, in 16:9 or 4:3
+- Supersampled smoothing and anisotropic filtering
+- Brightness, contrast, saturation and gamma
+- **Custom texture packs**
 
-## Installing
+</td>
+</tr>
+<tr>
+<td valign="top">
 
-Download `WondersBeyondRecomp-Setup.zip` from the [latest release](https://github.com/eliasm4r/WondersBeyondRecomp/releases/latest), unzip it and start `Setup.exe`. It asks for your disc image (the ROM file of the European version) and a folder, then builds the game on your PC in about 5 minutes. Windows only for now.
+### Played your way
+- **Keyboard and mouse** with every key rebindable
+- **Xbox, PlayStation and Switch controllers**, with their own button names in the menus
+- **Real Wii Remotes** and their speaker
+- **Free camera**: turn the view around Pikachu with the mouse or the right stick
 
-## Playing
+</td>
+<td valign="top">
 
-After building (below), start the game with `build/out/pokepark2.exe`. Press **F1** for the options menu and **F2** for the performance overlay. Settings are stored in `games/pokepark2/settings.ini`, the play time in `games/pokepark2/stats.ini` and saves in `games/pokepark2/nand`.
+### Made for PC
+- **Options menu on F1**, drawn as the game's own dialog bubble, without pausing
+- **Performance overlay on F2**
+- Automatic save backups and a play time counter
+- **Discord Rich Presence**
+- Menu in English, French, Spanish and Galician
 
-## Roadmap
+</td>
+</tr>
+</table>
 
-- A steady 120 fps on more PCs
-- Shader cache on disk to remove first-time stutters
-- Linux and macOS builds
+<br>
 
-## Building from Source
+## Install
 
-Requirements: Python 3.11+, CMake 3.20+, Ninja, a MinGW-w64 GCC 13+ and [nodtool](https://github.com/encounter/nod).
+| | |
+|:---:|---|
+| **1** | Download **`WondersBeyondRecomp-Setup.zip`** from the [latest release](https://github.com/eliasm4r/WondersBeyondRecomp/releases/latest) and unzip it anywhere. |
+| **2** | Start **`Setup.exe`**. |
+| **3** | Pick your **disc image**: the ROM file of the game, `.iso`, `.rvz` or `.wbfs`. |
+| **4** | Pick an install folder and press **Install**. |
+| **5** | Wait about **5 minutes** while the setup builds the game, then press **Play**. |
 
-Put your disc image at `games/pokepark2/disc/pokepark2.rvz` (`.iso` and `.wbfs` also work with nodtool), then:
+The setup downloads the build tools, translates the game code from your disc image, compiles it for your PC and adds a desktop shortcut. You only run it once: every setting lives in the game itself.
+
+> [!TIP]
+> **Windows refuses to open `Setup.exe`?** Smart App Control blocks programs that carry no signature. Open the `python` folder and start **`Setup (if blocked).exe`** instead: it is the same setup, run by the signed official Python.
+
+<details>
+<summary><b>Updating to a new version</b></summary>
+<br>
+
+Download the new setup and point it at the same folder. It sees the game already there, updates it without asking for the disc image again, and keeps your saves and settings.
+</details>
+
+### Requirements
+
+| | |
+|---|---|
+| **System** | Windows 10 or 11, 64-bit |
+| **Graphics** | A Direct3D 11 graphics card |
+| **Disk space** | About 4 GB during the install |
+| **Internet** | Needed by the setup to download the build tools |
+| **Game** | Your own disc image of the **European** version (`S2LP01`) |
+
+Other regions, Linux and macOS are planned.
+
+<br>
+
+## Controls
+
+The defaults below can all be changed in the **Controls** tab of the options menu (**F1**). Keys follow your keyboard layout, so `W A S D` becomes `Z Q S D` on AZERTY.
+
+<table>
+<tr>
+<th>Action</th>
+<th>Keyboard and mouse</th>
+<th>Controller (Xbox names)</th>
+</tr>
+<tr><td>Move</td><td><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> or arrows</td><td>Left stick</td></tr>
+<tr><td>Jump, talk, confirm</td><td><kbd>Space</kbd> or <kbd>Enter</kbd></td><td><kbd>A</kbd></td></tr>
+<tr><td>Dash, attack (hold for Thunderbolt)</td><td><kbd>Left click</kbd> or <kbd>Backspace</kbd></td><td><kbd>B</kbd> or <kbd>X</kbd></td></tr>
+<tr><td>Call a partner</td><td><kbd>E</kbd></td><td><kbd>Y</kbd> or <kbd>RB</kbd></td></tr>
+<tr><td>Turn the camera</td><td>Mouse</td><td>Right stick</td></tr>
+<tr><td>Camera back behind Pikachu</td><td><kbd>C</kbd></td><td><kbd>RT</kbd></td></tr>
+<tr><td>Shake the Wii Remote</td><td><kbd>Right click</kbd></td><td><kbd>LT</kbd>, or jolt a controller with a motion sensor</td></tr>
+<tr><td>PokéPark Pad</td><td><kbd>Tab</kbd></td><td><kbd>Start</kbd></td></tr>
+<tr><td>Take a photo</td><td><kbd>P</kbd></td><td><kbd>Back</kbd></td></tr>
+<tr><td>Aim the Wii Remote pointer</td><td>Hold <kbd>Ctrl</kbd> and move the mouse</td><td>Hold <kbd>L3</kbd> and move the right stick</td></tr>
+<tr><td>Swing up and down</td><td>Mouse wheel, <kbd>T</kbd> <kbd>G</kbd></td><td><kbd>LB</kbd> + D-pad</td></tr>
+<tr><td>Tilt</td><td><kbd>I</kbd> <kbd>J</kbd> <kbd>K</kbd> <kbd>L</kbd></td><td><kbd>LB</kbd> + right stick</td></tr>
+</table>
+
+| Key | |
+|---|---|
+| <kbd>F1</kbd> | Options menu |
+| <kbd>F2</kbd> | Performance overlay |
+| <kbd>F9</kbd> | Screenshot |
+| <kbd>F11</kbd> | Full screen |
+
+<br>
+
+## Performance
+
+The game spends most of its time drawing, so the graphics card does the heavy part: it places the vertices, keeps the models that do not change in its own memory and redraws the scene for the images in between at 90 and 120 fps.
+
+| PC | Before | Now |
+|---|:---:|:---:|
+| Laptop, Ryzen 5 5600H and Radeon RX 6500M, heaviest zone | 25 to 42 fps | **steady 60 fps** |
+
+Press **F2** at any time to see the frame rate and the load on the processor and the graphics card.
+
+<br>
+
+## FAQ
+
+<details>
+<summary><b>Where do I get the game?</b></summary>
+<br>
+
+From your own Wii disc of PokéPark 2: Wonders Beyond. CleanRip, run on a modded Wii, turns a disc you own into a disc image. This project does not provide one and does not help to find one.
+</details>
+
+<details>
+<summary><b>Why does the setup build the game instead of shipping it?</b></summary>
+<br>
+
+The finished program is made from the game's code, which belongs to its owners and cannot be shared. So the setup ships only this project's own code and turns your disc image into the game on your PC.
+</details>
+
+<details>
+<summary><b>Which version of the game works?</b></summary>
+<br>
+
+The European version (`S2LP01`), the one sold in Europe and Australia. The setup checks the disc image and says so if it is another one. Trimmed `.wbfs` copies are fine.
+</details>
+
+<details>
+<summary><b>Where are my saves and settings?</b></summary>
+<br>
+
+In the install folder, under `games/pokepark2`: `settings.ini` for the settings, `stats.ini` for the play time and `nand` for the saves. Backups of the saves are made automatically.
+</details>
+
+<details>
+<summary><b>The game crashed or froze. What do I send?</b></summary>
+<br>
+
+The file `logs/pokepark2.log` in the install folder, and `logs/pokepark2.previous.log` if you already started the game again. Open an [issue](https://github.com/eliasm4r/WondersBeyondRecomp/issues) with it and a few words on what you were doing.
+</details>
+
+<details>
+<summary><b>Is it an emulator?</b></summary>
+<br>
+
+No. An emulator reads the game's PowerPC instructions one by one while you play. Here they are translated to C++ once, during the install, and compiled into a normal Windows program. Only the console hardware underneath (graphics, sound, Wii Remotes, storage) is recreated.
+</details>
+
+<br>
+
+## Building from source
+
+You need Python 3.11+, CMake 3.20+, Ninja, MinGW-w64 GCC 13+ and [nodtool](https://github.com/encounter/nod). Put your disc image at `games/pokepark2/disc/pokepark2.rvz` (`.iso` and `.wbfs` work too), then:
 
 ```bash
 nodtool extract games/pokepark2/disc/pokepark2.rvz games/pokepark2/extracted
@@ -61,26 +219,21 @@ cmake --build build/out --target pokepark2
 ./build/out/pokepark2
 ```
 
-Run the tests with `ctest` in `build/out`. Technical notes on the fixes so far are in [docs/NOTES.md](docs/NOTES.md).
+Run the tests with `ctest` in `build/out`. Technical notes on every fix so far are in [`docs/NOTES.md`](docs/NOTES.md).
 
-### Installer
+To make the setup zip, run `python tools/make_setup.py`. It writes `build/dist/WondersBeyondRecomp-Setup.zip`, which holds the official Python with its window toolkit, the scripts of `installer/` and the sources of this repository, and nothing of the game.
 
-```bash
-python tools/make_setup.py
-```
-
-`build/dist/WondersBeyondRecomp-Setup.zip` is for a PC without any of the tools above. It holds the official Python with its window toolkit, the scripts of `installer/` and the sources of this repository, and nothing of the game. Unzip it and start `Setup.exe`, or `python/Setup (if blocked).exe` when Smart App Control refuses the first one: it asks for a disc image of the European version and a folder, downloads the build tools, translates and compiles the game on that PC and adds a shortcut. It only installs; every setting is in the game (F1). It is at the test stage and Windows only.
-
-The function list in `games/pokepark2/analysis/` was produced with [decomp-toolkit](https://github.com/encounter/decomp-toolkit).
+<br>
 
 ## Credits
 
-WondersBeyondRecomp is built on [Wii Party Recomp](https://github.com/arelkair/wiiparty-recomp) by arelkair, whose recompiler and Wii runtime do most of the heavy lifting. Third-party code and libraries are listed in `THIRD_PARTY_NOTICES.md`.
+- Built on **[Wii Party Recomp](https://github.com/arelkair/wiiparty-recomp)** by arelkair, whose recompiler and Wii runtime do most of the heavy lifting.
+- Function list made with **[decomp-toolkit](https://github.com/encounter/decomp-toolkit)**, disc reading by **[nod](https://github.com/encounter/nod)**.
+- Third-party code and libraries are listed in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+- Developed with the help of [Claude](https://claude.com/claude-code), Anthropic's AI assistant.
 
-This project was developed with the help of [Claude](https://claude.com/claude-code), Anthropic's AI assistant.
+## Legal
 
-## Legal & Licensing
+Independent fan project, not affiliated with or endorsed by Nintendo, Creatures Inc., Game Freak or The Pokémon Company. Pokémon and PokéPark are trademarks of their respective owners. You must supply your own legally obtained copy of the game.
 
-Independent fan project, not affiliated with or endorsed by Nintendo, Creatures Inc., Game Freak or The Pokémon Company. Pokémon and PokéPark are trademarks of their respective owners. Users must supply their own legally obtained game files.
-
-Licensed under the GPL-3.0-or-later.
+Licensed under the [GPL-3.0-or-later](LICENSE).
