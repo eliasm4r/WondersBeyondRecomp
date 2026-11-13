@@ -249,6 +249,10 @@ int run(int argc, char** argv) {
 
 int main(int argc, char** argv) {
     std::set_terminate(report_terminate);
+    if (const char* root = std::getenv("WP_ROOT")) {
+        std::error_code error;
+        std::filesystem::current_path(root, error);
+    }
     move_old_game_folder();
     use_default_log();
     if (const char* log_path = std::getenv("WP_LOG_FILE")) {

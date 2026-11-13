@@ -145,11 +145,12 @@ def shell_folder(identifier):
 
 
 class Install:
-    def __init__(self, root, disc, bundle, shortcut, texts, report):
+    def __init__(self, root, disc, bundle, shortcut, texts, report, menu=True):
         self.root = Path(root)
         self.disc = disc
         self.bundle = Path(bundle)
         self.shortcut = shortcut
+        self.menu = menu
         self.texts = texts
         self.report = report
         self.stop = threading.Event()
@@ -380,7 +381,7 @@ class Install:
         for file in [built / EXECUTABLE] + sorted(built.glob("*.dll")):
             shutil.copyfile(file, self.root / file.name)
         shutil.rmtree(self.root / "downloads", ignore_errors=True)
-        links = [shell_folder(0x02)]
+        links = [shell_folder(0x02)] if self.menu else []
         if self.shortcut:
             links.append(shell_folder(0x10))
         for folder in links:

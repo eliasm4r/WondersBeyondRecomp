@@ -1,3 +1,4 @@
+import argparse
 import ctypes
 import os
 import queue
@@ -13,6 +14,14 @@ import steps
 from texts import TEXTS
 
 HERE = Path(__file__).resolve().parent
+
+
+def folder_problem(folder, texts):
+    if not folder or not Path(folder).is_absolute() or not folder.isascii() or any(sign in folder[2:] for sign in '<>:"|?*%&^!;'):
+        return texts["plain_folder"]
+    if len(folder) > steps.LONGEST_FOLDER:
+        return texts["long_folder"]
+    return ""
 
 
 class Window:
@@ -102,10 +111,9 @@ class Window:
         t = self.texts
         folder = self.folder.get().strip().strip('"')
         disc = self.disc.get().strip().strip('"')
-        if not folder or not Path(folder).is_absolute() or not folder.isascii() or any(sign in folder[2:] for sign in '<>:"|?*%&^!;'):
-            return self.refuse(t["plain_folder"])
-        if len(folder) > steps.LONGEST_FOLDER:
-            return self.refuse(t["long_folder"])
+        problem = folder_problem(folder, t)
+        if problem:
+            return self.refuse(problem)
         if not steps.game_extracted(folder):
             if not disc:
                 return self.refuse(t["need_disc"])
@@ -167,7 +175,51 @@ class Window:
         self.root.destroy()
 
 
+def prepare(disc):
+    t = TEXTS
+    folder = str(HERE.parent)
+    state = {"step": "", "shown": -1.0, "result": 1}
+
+    def say(line):
+        if sys.stdout:
+            print(line, flush=True)
+
+    def report(kind, value):
+        if kind == "step":
+            state["step"] = value
+            state["shown"] = -1.0
+        elif kind == "progress" and (value - state["shown"] >= 0.005 or state["shown"] < 0 or value >= 1):
+            state["shown"] = value
+            say(f"progress {value:.3f} {state['step']}")
+        elif kind == "done":
+            state["result"] = 0
+        elif kind == "failed":
+            say(t["failed"].format(step=value[0]))
+            say(value[1])
+            say(t["log"].format(path=Path(folder) / "logs" / "install.log"))
+
+    if sys.stdout:
+        sys.stdout.reconfigure(encoding="utf-8")
+    problem = folder_problem(folder, t)
+    if not problem and not steps.game_extracted(folder) and not Path(disc).is_file():
+        problem = t["missing_disc"].format(path=disc)
+    free = steps.free_gigabytes(folder)
+    if not problem and free < steps.NEEDED_GIGABYTES and not (Path(folder) / steps.EXECUTABLE).is_file():
+        problem = t["low_space"].format(free=int(free), size=steps.NEEDED_GIGABYTES)
+    if problem:
+        say(problem)
+        return 1
+    steps.Install(folder, disc, HERE.parent, False, t, report, menu=False).execute()
+    return state["result"]
+
+
 def main():
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--prepare", action="store_true")
+    parser.add_argument("--game", default="")
+    arguments, _ = parser.parse_known_args()
+    if arguments.prepare:
+        return prepare(arguments.game)
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("WondersBeyondRecomp.Setup")
