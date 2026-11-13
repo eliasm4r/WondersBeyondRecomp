@@ -6,6 +6,9 @@
 #include <pthread.h>
 #include <time.h>
 #endif
+#ifdef __APPLE__
+#include <mach/mach.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -873,6 +876,22 @@ double thread_seconds(ThreadClock thread) {
     }
     auto ticks = [](const FILETIME& time) { return (static_cast<uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime; };
     return static_cast<double>(ticks(kernel) + ticks(user)) * 1e-7;
+}
+#elif defined(__APPLE__)
+using ThreadClock = thread_act_t;
+
+ThreadClock current_thread_clock() {
+    return mach_thread_self();
+}
+
+double thread_seconds(ThreadClock thread) {
+    thread_basic_info_data_t info{};
+    mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+    if (!thread || thread_info(thread, THREAD_BASIC_INFO, reinterpret_cast<thread_info_t>(&info), &count) != KERN_SUCCESS) {
+        return 0.0;
+    }
+    return static_cast<double>(info.user_time.seconds + info.system_time.seconds) +
+           static_cast<double>(info.user_time.microseconds + info.system_time.microseconds) * 1e-6;
 }
 #else
 using ThreadClock = clockid_t;
