@@ -14,6 +14,7 @@ from pathlib import Path
 
 GAME = "pokepark2"
 DISC_ID = "S2LP01"
+OLD_FOLDER = Path("games") / GAME
 FOLDER_NAME = "WondersBeyondRecomp"
 EXECUTABLE = "pokepark2.exe"
 SHORTCUT_NAME = "PokePark 2 Wonders Beyond"
@@ -54,7 +55,27 @@ def default_folder():
 
 
 def game_extracted(root):
-    return (Path(root) / "games" / GAME / "extracted" / "sys" / "main.dol").is_file()
+    return any((Path(root) / folder / "extracted" / "sys" / "main.dol").is_file() for folder in ("game", OLD_FOLDER))
+
+
+def move_old_folder(root):
+    old = Path(root) / OLD_FOLDER
+    if not old.is_dir():
+        return
+    folder = Path(root) / "game"
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in ("disc", "extracted", "nand", "backups", "textures", "settings.ini", "stats.ini"):
+        if (old / name).exists() and not (folder / name).exists():
+            os.replace(old / name, folder / name)
+    for name in ("analysis", "res"):
+        shutil.rmtree(old / name, ignore_errors=True)
+    for name in ("CMakeLists.txt", "game.cpp", "game.toml"):
+        (old / name).unlink(missing_ok=True)
+    for empty in (old, old.parent):
+        try:
+            empty.rmdir()
+        except OSError:
+            pass
 
 
 def free_gigabytes(folder):
@@ -174,6 +195,7 @@ class Install:
             (self.root / "logs").mkdir(parents=True, exist_ok=True)
             self.log = open(self.root / "logs" / "install.log", "a", encoding="utf-8", errors="replace")
             self.note(time.strftime("install started %Y-%m-%d %H:%M:%S"))
+            move_old_folder(self.root)
             steps = self.plan()
             total = sum(weight for _, weight, _ in steps)
             done = 0.0
@@ -319,16 +341,16 @@ class Install:
             raise Failure(self.texts["disc_damaged"])
 
     def extract_disc(self, move):
-        target = self.root / "games" / GAME / "extracted"
+        target = self.root / "game" / "extracted"
         shutil.rmtree(target, ignore_errors=True)
         try:
-            self.run([self.program("nodtool"), "--no-color", "extract", self.disc, f"games/{GAME}/extracted"])
+            self.run([self.program("nodtool"), "--no-color", "extract", self.disc, "game/extracted"])
         except (Failure, Stopped):
             shutil.rmtree(target, ignore_errors=True)
             raise
 
     def identify_disc(self, move):
-        folder = self.root / "games" / GAME / "extracted"
+        folder = self.root / "game" / "extracted"
         try:
             with open(folder / "sys" / "boot.bin", "rb") as file:
                 found = file.read(6).decode("ascii", "replace")
@@ -339,7 +361,7 @@ class Install:
             raise Failure(self.texts["disc_other"].format(found=found, wanted=DISC_ID))
 
     def configure(self, move):
-        self.run([self.program("cmake"), "-S", ".", "-B", "build/out", "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", f"-DWP_GAME={GAME}"])
+        self.run([self.program("cmake"), "-S", ".", "-B", "build/out", "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release"])
 
     def build(self, move):
         pattern = re.compile(r"^\[(\d+)/(\d+)\]")

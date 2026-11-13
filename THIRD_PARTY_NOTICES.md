@@ -59,7 +59,7 @@ All components adapted from the **Dolphin Emulator** originate from a source sna
 - **Upstream Origin:** `Source/Core/Core/DSP/` core infrastructure, interpreter modules, and standalone data blobs.
 - **Copyright:** Copyright 2004-2018 Dolphin Emulator Project / Duddie & Tratax.
 - **License Compliance:** `SPDX-License-Identifier: GPL-2.0-or-later`.
-- **Ingested Assets:** Includes `dsp_rom.bin` and `dsp_coef.bin` (Version 0.4 free alternative ROMs created by Dolphin contributors). Embedded as clean native C++ resources into `games/pokepark2/res/pokepark2.rc`. Contains zero Nintendo code.
+- **Ingested Assets:** Includes `dsp_rom.bin` and `dsp_coef.bin` (Version 0.4 free alternative ROMs created by Dolphin contributors). Embedded as clean native C++ resources into `game/res/pokepark2.rc`. Contains zero Nintendo code.
 - **Engineering Changes:** 
   - Completely purged the upstream DSP JIT engine; forced exclusive lockstep execution of the interpreter directly on the main CPU thread.
   - Patched signed integer overflows (undefined behavior at `-O2` optimization flags) in `GetMultiplyProduct` inside `DSPInterpreter.cpp`.
@@ -143,4 +143,4 @@ The following materials are strictly prohibited from entering this repository un
 - Development leaks, proprietary platform SDK components, or unverified source code.
 - Original PokePark 2 game resources (`main.dol`, `.rel` modules, ISO dumps, textures, models, audio).
 
-*Note: The local paths `games/pokepark2/disc/`, `games/pokepark2/extracted/`, and `reference/` must remain permanently enforced in `.gitignore` [3].*
+*Note: The local paths `game/disc/`, `game/extracted/`, and `reference/` must remain permanently enforced in `.gitignore` [3].*

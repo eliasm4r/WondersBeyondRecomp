@@ -9,7 +9,7 @@ DEFAULT_GAME = "pokepark2"
 class Game:
     def __init__(self, key):
         self.key = key
-        self.folder = ROOT / "games" / key
+        self.folder = ROOT / "game"
         config = tomllib.loads((self.folder / "game.toml").read_text(encoding="utf-8"))
         self.name = config["name"]
         self.id = config["id"]

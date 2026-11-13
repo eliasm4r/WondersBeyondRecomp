@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="games/pokepark2/res/pokepark2.png" width="140" alt="WondersBeyondRecomp icon">
+<img src="game/res/pokepark2.png" width="140" alt="WondersBeyondRecomp icon">
 
 # WondersBeyondRecomp
 
@@ -137,7 +137,7 @@ The European version (`S2LP01`), the one sold in Europe and Australia. The setup
 <summary><b>Where are my saves and settings?</b></summary>
 <br>
 
-In the install folder, under `games/pokepark2`: `settings.ini` for the settings, `stats.ini` for the play time and `nand` for the saves. Backups of the saves are made automatically.
+In the install folder, under `game`: `settings.ini` for the settings, `stats.ini` for the play time and `nand` for the saves. Backups of the saves are made automatically.
 </details>
 
 <details>
@@ -158,10 +158,10 @@ No. An emulator reads the game's PowerPC instructions one by one while you play.
 
 ## Building from source
 
-You need Python 3.11+, CMake 3.20+, Ninja, MinGW-w64 GCC 13+ and [nodtool](https://github.com/encounter/nod). Put your disc image at `games/pokepark2/disc/pokepark2.rvz` (`.iso` and `.wbfs` work too), then:
+You need Python 3.11+, CMake 3.20+, Ninja, MinGW-w64 GCC 13+ and [nodtool](https://github.com/encounter/nod). Put your disc image at `game/disc/pokepark2.rvz` (`.iso` and `.wbfs` work too), then:
 
 ```bash
-nodtool extract games/pokepark2/disc/pokepark2.rvz games/pokepark2/extracted
+nodtool extract game/disc/pokepark2.rvz game/extracted
 python tools/fetch_sdl.py
 python recompiler/recomp.py
 python recompiler/dsp/recomp_dsp.py

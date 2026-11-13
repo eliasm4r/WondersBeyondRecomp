@@ -5,7 +5,7 @@ Every change that alters runtime behavior is recorded here with what was verifie
 ## Game analysis (S2LP01)
 
 - `main.dol` holds all the code; the disc has no REL modules.
-- Function list: 18,275 functions from decomp-toolkit 1.8.4 (`dtk dol config` + `dtk dol split`), converted to `games/pokepark2/analysis/dol_functions.csv`. The lifter discovers 41 more entries (18,316 translated, 1,035,189 instructions).
+- Function list: 18,275 functions from decomp-toolkit 1.8.4 (`dtk dol config` + `dtk dol split`), converted to `game/analysis/dol_functions.csv`. The lifter discovers 41 more entries (18,316 translated, 1,035,189 instructions).
 - System functions not named by dtk, identified by hand from their position in `OSContext.c` / `OSMemory.c` and their instructions:
   - `OSGetCurrentContext` 0x8028f2d0, `OSSaveContext` 0x8028f2e0 (`stmw r13, 0x34(r3)`), `OSSwitchFiber` 0x8028f450, `OSSwitchFiberEx` 0x8028f480.
   - `OSRealModeCall` 0x80294740: `clrlwi r3,r3,2; mtsrr0; mfmsr; rlwinm; mtsrr1; rfi`, the SDK's `RealMode`.
@@ -40,7 +40,7 @@ Every change that alters runtime behavior is recorded here with what was verifie
 
 - `nsNile::nsSequence::SequencerBoot` (update 0x801314b0, state at +4) plays Strap (scene 1, the Wii Remote strap notice), then CheckData (scene 3) only when the save is not ready, then Hold (scene 2, how to hold the Wii Remote), then returns 2 for the title. Scene table: 0x80469cc8, 0x68 bytes per scene.
 - Strap and Hold cannot be skipped: Strap starts loading the save and the common data, and skipping Hold crashed the sound thread right after the title started (`DVDConvertPathToEntrynum` called with 7 as the path).
-- Change: the update is replaced (`SequencerBootUpdate` in `hle_functions.csv`, handler in `games/pokepark2/game.cpp`). It runs the same scenes, but while Strap and Hold run the engine keeps the screen black (`gx::set_screen_hidden`, no copy to the shown frame) and player 1 taps A (`input::set_auto_confirm`). CheckData is left visible, as it can ask about the save.
+- Change: the update is replaced (`SequencerBootUpdate` in `hle_functions.csv`, handler in `game/game.cpp`). It runs the same scenes, but while Strap and Hold run the engine keeps the screen black (`gx::set_screen_hidden`, no copy to the shown frame) and player 1 taps A (`input::set_auto_confirm`). CheckData is left visible, as it can ask about the save.
 - Verified: headless runs at 1x; frames are black until the title, which appears with its intro; no crash in 40 s.
 
 ## IOS reply speed
@@ -176,7 +176,7 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
 - Tabs: Screen, Game, Sound, Controls, Language, Advanced. The Controls tab's first row switches between keyboard and
   gamepad bindings and is back on the keyboard each time the menu opens. Each row's help text is `help.<key>` in
   `ui_text.cpp` (see "Controls" for the key and button rows).
-- Play time: counted while the game runs, saved as `play_time=<seconds>` in `games/pokepark2/stats.ini` every minute
+- Play time: counted while the game runs, saved as `play_time=<seconds>` in `game/stats.ini` every minute
   and on exit (written to a temporary file, then renamed), shown in the Game tab.
 - Gamepads keep working while the window is in the background; the keyboard and the mouse count only while it has the
   focus.
@@ -256,7 +256,7 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
 - `tools/make_setup.py` makes `build/dist/WondersBeyondRecomp-Setup.zip`: Python 3.12.10 from its NuGet package and
   the Tcl/Tk part of the python.org installer (both checked against a SHA-256), the scripts of `installer/`,
   `installer/sources.zip` and `Setup.exe`. `sources.zip` holds the files
-  `git ls-files` lists for the engine, the recompiler, `games/pokepark2`, `third_party`, `tests` and
+  `git ls-files` lists for the engine, the recompiler, `game`, `third_party`, `tests` and
   `tools/fetch_sdl.py`. Nothing of the disc is tracked, so nothing of it is in the zip.
 - Why a zip and scripts: Smart App Control refuses an unsigned installer executable, and nothing of ours is signed.
   Every program in the zip but the launcher is signed by the Python Software Foundation; `make_setup.py` stops if one is not, which is
@@ -650,7 +650,7 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
 - With the GPU thread a frame late (stalled 250 ms on purpose in the pause menu): 68 frees for 40 entries, about
   1.4 MB of heap 4 lost per incident, then allocations return 0 (184 in one run). That was the pause menu noise, the
   black bars and, once the heap was gone, the crash in the zone.
-- Fix (`games/pokepark2/game.cpp`, hooks `DeferredFree`, `ReleaseDeferredFrees`, `TempPoolAlloc`): a free that finds
+- Fix (`game/game.cpp`, hooks `DeferredFree`, `ReleaseDeferredFrees`, `TempPoolAlloc`): a free that finds
   the list full is kept aside and queued again after the next release; an allocation that does not fit while frees are
   pending waits for the GPU thread to reach the last token sent (`gx::wait_for_token`, 500 ms at most) and polls the
   interrupts so the token callback frees the buffers, then runs. Same stall with the fix: 0 failed allocations, heap 4

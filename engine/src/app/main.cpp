@@ -129,6 +129,23 @@ void report_terminate() {
     std::_Exit(134);
 }
 
+void move_old_game_folder() {
+    namespace fs = std::filesystem;
+    const wp::game::Description& game = wp::game::description();
+    fs::path old_folder = fs::path("games") / game.short_name;
+    fs::path folder = fs::path(game.settings_file).parent_path();
+    std::error_code error;
+    if (folder.empty() || !fs::is_directory(old_folder, error)) {
+        return;
+    }
+    fs::create_directories(folder, error);
+    for (const char* name : {"disc", "extracted", "nand", "backups", "textures", "settings.ini", "stats.ini"}) {
+        if (fs::exists(old_folder / name, error) && !fs::exists(folder / name, error)) {
+            fs::rename(old_folder / name, folder / name, error);
+        }
+    }
+}
+
 void use_default_log() {
 #ifdef _WIN32
     if (std::getenv("WP_LOG_FILE") || std::getenv("WP_HEADLESS")) {
@@ -232,6 +249,7 @@ int run(int argc, char** argv) {
 
 int main(int argc, char** argv) {
     std::set_terminate(report_terminate);
+    move_old_game_folder();
     use_default_log();
     if (const char* log_path = std::getenv("WP_LOG_FILE")) {
         wp::log::write("boot", "log started");
