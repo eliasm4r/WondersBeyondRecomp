@@ -19,9 +19,13 @@ Every change to WondersBeyondRecomp, newest first.
 - **Gentler mouse camera.** At 100 % the mouse turns the free camera 2.5 times slower than before. The setting still goes up to 300 %.
 - **Quieter default volume.** 100 % is now a third of the game's own level, which was too loud, and the slider goes up to 300 %. If you set the volume in an earlier build, the game now sounds three times quieter: raise it in the **Sound** tab.
 - **Setup.** `Setup.exe` carries the game icon, and the window says the install takes about 5 minutes and that the disc image is the ROM file of the game. If Smart App Control refuses `Setup.exe`, start `python/Setup (if blocked).exe`.
+- **Pikachu icon** for the game and the setup.
+- **Game files in a `game` folder.** The saves, settings and extracted disc now sit in `game` next to the program. Installs from the test builds move them there by themselves on the next start or update.
+- **Setup zip renamed** `WondersBeyondRecomp-Setup-Windows.zip`, since a macOS version is on its way.
 
 ### Fixed
 - At 90 and 120 fps, the shadows of the Pokémon grew and turned for one image whenever the player changed direction.
+- A rare crash a few minutes into play, in the check made before the game takes temporary memory.
 
 <br>
 
