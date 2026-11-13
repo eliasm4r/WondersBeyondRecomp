@@ -24,6 +24,7 @@
 #include "wp/game.h"
 #include "wp/gx.h"
 #include "wp/gx_render.h"
+#include "wp/host_stacks.h"
 #include "wp/input.h"
 #include "wp/keymap.h"
 #include "wp/log.h"
@@ -527,6 +528,7 @@ void start() {
 }
 
 void serve_main_thread() {
+    host_stacks::watch_current_thread("window");
     bool visible = false;
     {
         std::unique_lock<std::mutex> hold(g_main.lock);

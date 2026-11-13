@@ -8,6 +8,7 @@ add_library(wp_engine STATIC
     src/core/frame_pacing.cpp
     src/core/hle.cpp
     src/core/stall_watch.cpp
+    src/core/host_stacks.cpp
     src/core/threads.cpp
     src/core/interrupts.cpp
     src/core/modules.cpp

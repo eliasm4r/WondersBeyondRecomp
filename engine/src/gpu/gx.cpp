@@ -36,6 +36,7 @@
 #include "wp/log.h"
 #include "wp/memory.h"
 #include "wp/perf.h"
+#include "wp/host_stacks.h"
 #include "wp/profile.h"
 #include "wp/settings.h"
 #include "wp/video.h"
@@ -2518,6 +2519,7 @@ void sample_thread(HANDLE thread, std::string path) {
 #endif
 
 void gpu_thread() {
+    host_stacks::watch_current_thread("graphics");
 #ifdef _WIN32
     if (const char* path = std::getenv("WP_PROFILE_GPU")) {
         HANDLE self = nullptr;

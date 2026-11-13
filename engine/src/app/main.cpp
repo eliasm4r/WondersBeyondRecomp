@@ -21,6 +21,7 @@
 #include "wp/disc.h"
 #include "wp/dol.h"
 #include "wp/game.h"
+#include "wp/host_stacks.h"
 #include "wp/gx.h"
 #include "wp/input.h"
 #include "wp/log.h"
@@ -236,6 +237,7 @@ int run(int argc, char** argv) {
                 wp::log::write("hang", "the game has drawn no frame for %d seconds", static_cast<int>(kStall.count()));
                 wp::print_guest_threads();
                 wp::ipc::report();
+                wp::host_stacks::print();
             }
         }
     }).detach();
@@ -275,7 +277,10 @@ int main(int argc, char** argv) {
     std::signal(SIGILL, report_crash);
     std::signal(SIGFPE, report_crash);
     std::signal(SIGABRT, report_crash);
-    wp::start_with_stack(size_t{512} << 20, [argc, argv] { std::exit(run(argc, argv)); });
+    wp::start_with_stack(size_t{512} << 20, [argc, argv] {
+        wp::host_stacks::watch_current_thread("game");
+        std::exit(run(argc, argv));
+    });
     wp::video::serve_main_thread();
     return 0;
 #endif
