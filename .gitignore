@@ -18,9 +18,9 @@
 *.bin
 !/third_party/dolphin/Data/Sys/GC/*.bin
 
-/ghidra/projects/
-/ghidra/install/
-/ghidra/extensions/
+/tools/ghidra/projects/
+/tools/ghidra/install/
+/tools/ghidra/extensions/
 
 /build/
 *.o
@@ -53,3 +53,4 @@ __pycache__/
 /settings.local.json
 /*.bat
 /*.whl
+/perso/
