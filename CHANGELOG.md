@@ -2,6 +2,22 @@
 
 All notable changes to WondersBeyondRecomp. Dates are when the change landed on `main`.
 
+## 2026-11-13 - v0.1.0-alpha
+
+### Changed
+- Much higher frame rate on slower processors and laptops: the graphics card now places the vertices, models that do
+  not change stay in video memory, the images in between at 90 and 120 fps are redrawn by the graphics card, and the
+  game thread rests while the game waits. A Ryzen 5 5600H laptop went from 25-42 to a steady 60 frames a second in
+  the heaviest zone.
+- The mouse turns the free camera 2.5 times slower at 100 %; the setting still goes up to 300 %.
+- Volume: 100 % is now a third of the game's own level, which was too loud, and the slider goes up to 300 %. A volume
+  set before this version sounds three times quieter: raise it in the Sound tab.
+- Setup: `Setup.exe` carries the game icon, the window says the install takes about 5 minutes and that the disc image
+  is the ROM file of the game. If Smart App Control refuses `Setup.exe`, start `python/Setup (if blocked).exe`.
+
+### Fixed
+- Shadows of the Pokémon grew and turned for one image when the player changed direction at 90 or 120 fps.
+
 ## 2026-11-12
 
 ### Added

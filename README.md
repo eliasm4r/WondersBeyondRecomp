@@ -25,11 +25,15 @@ Supported disc: Europe (`S2LP01`). Other regions are planned.
 - **Play time** counted across sessions and shown in the options menu
 - **Keyboard and mouse**: **Space** jumps and talks, **left click** dashes (hold it for Thunderbolt), **right click** shakes, **E** calls a partner, **C** turns the view, **Tab** opens the PokéPark Pad, **P** takes a photo; every action can be rebound, and keys are shown as written on your keyboard; hold **Ctrl** to aim the Wii Remote pointer with the mouse (left click then acts as A)
 - **Gamepads** (XInput and SDL): the options menu names the buttons of the connected Xbox, PlayStation or Switch controller; rebinding, stick deadzone, rumble; hold **L3** to aim with the right stick; a sharp jolt of a gamepad with a motion sensor counts as a Wii Remote shake; gamepads keep working while the window is in the background
-- **Sound**: volume, mute, Wii Remote speaker
+- **Sound**: volume up to 300 %, mute, Wii Remote speaker
 - **Languages**: game and menu language (English, French, Spanish, Galician for the menu)
 - **Discord Rich Presence** while the game runs (can be turned off)
 - **Custom textures** loaded from `games/pokepark2/textures`
 - Save backups, crash and hang reports, and a bug recorder that saves the last three seconds of images with the screenshot key
+
+## Installing
+
+Download `WondersBeyondRecomp-Setup.zip` from the [latest release](https://github.com/eliasm4r/WondersBeyondRecomp/releases/latest), unzip it and start `Setup.exe`. It asks for your disc image (the ROM file of the European version) and a folder, then builds the game on your PC in about 5 minutes. Windows only for now.
 
 ## Playing
 
@@ -39,7 +43,7 @@ After building (below), start the game with `build/out/pokepark2.exe`. Press **F
 
 - A steady 120 fps on more PCs
 - Shader cache on disk to remove first-time stutters
-- A released installer, then Linux and macOS builds
+- Linux and macOS builds
 
 ## Building from Source
 
