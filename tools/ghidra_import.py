@@ -9,14 +9,14 @@ sys.path.insert(0, str(ROOT / "recompiler"))
 import game
 
 GAME = game.load()
-GHIDRA = ROOT / "ghidra" / "install" / "support" / "analyzeHeadless.bat"
-SCRIPTS = ROOT / "ghidra" / "scripts"
+GHIDRA = ROOT / "tools" / "ghidra" / "install" / "support" / "analyzeHeadless.bat"
+SCRIPTS = ROOT / "tools" / "ghidra" / "scripts"
 LANGUAGE = "PowerPC:BE:32:Gekko_Broadway"
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--projects", default=str(ROOT / "ghidra" / "projects"))
+    parser.add_argument("--projects", default=str(ROOT / "tools" / "ghidra" / "projects"))
     args = parser.parse_args()
 
     projects = Path(args.projects)

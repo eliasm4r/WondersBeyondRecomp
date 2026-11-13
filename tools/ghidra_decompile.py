@@ -3,9 +3,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-GHIDRA = ROOT / "ghidra" / "install" / "support" / "analyzeHeadless.bat"
-PROJECTS = ROOT / "ghidra" / "projects"
-SCRIPTS = ROOT / "ghidra" / "scripts"
+GHIDRA = ROOT / "tools" / "ghidra" / "install" / "support" / "analyzeHeadless.bat"
+PROJECTS = ROOT / "tools" / "ghidra" / "projects"
+SCRIPTS = ROOT / "tools" / "ghidra" / "scripts"
 PREFIX = "DecompileFunctions.java> "
 
 
