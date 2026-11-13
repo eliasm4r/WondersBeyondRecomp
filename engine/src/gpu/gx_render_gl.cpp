@@ -2041,8 +2041,24 @@ void draw_runs() {
     g_run_palette = kNoPalette;
 }
 
+GLsync g_frames_in_flight[2] = {};
+int g_frame_to_wait = -1;
+
+void wait_for_frame(int slot) {
+    GLsync& fence = g_frames_in_flight[slot];
+    if (fence) {
+        gl.ClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, kWaitForever);
+        gl.DeleteSync(fence);
+        fence = nullptr;
+    }
+}
+
 void flush_pending() {
     PendingBatch& pending = g_pending;
+    if (g_frame_to_wait >= 0 && (!g_run_draws.empty() || !pending.vertices.empty())) {
+        wait_for_frame(g_frame_to_wait);
+        g_frame_to_wait = -1;
+    }
     if (!g_run_draws.empty()) {
         auto started = std::chrono::steady_clock::now();
         g_batches++;
@@ -2566,13 +2582,9 @@ void copy_to_framebuffer(int x, int y, int width, int height, bool depth, const 
     }
     flush_pending();
     complete_write_backs(false);
-    static GLsync frames_in_flight[2] = {};
-    GLsync& oldest = frames_in_flight[g_frame % 2];
-    if (oldest) {
-        gl.ClientWaitSync(oldest, GL_SYNC_FLUSH_COMMANDS_BIT, kWaitForever);
-        gl.DeleteSync(oldest);
-    }
-    oldest = gl.FenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    wait_for_frame(g_frame % 2);
+    g_frames_in_flight[g_frame % 2] = gl.FenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    g_frame_to_wait = static_cast<int>((g_frame + 1) % 2);
     g_variant_budget = 1;
     static auto logged = std::chrono::steady_clock::now();
     auto now = std::chrono::steady_clock::now();

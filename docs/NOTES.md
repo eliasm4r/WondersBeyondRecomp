@@ -662,6 +662,18 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
   not an aligned address inside guest memory and logs the first such link once (`memory ... links to`). Our hooks had
   not acted before either crash (no wait, no full free list). Whether that link is a real corruption is unknown: if
   the game later crashes inside 0x8037D4A0, the log line gives the heap, the block and the value.
+- It is a real corruption: in an OpenGL run with the frame wait still at the copy (late tokens, about 12
+  write-backs a second) the log said `free block 1 after 814f9950 links to ffffffff`, heap 4 shrank to 0 KB and the
+  game crashed inside 0x8037D4A0 itself 18 ms later. Not found: a build that walked heap 4 before and after every
+  write-back and compared each written range with the free blocks never saw it break in seven runs (63 to 1003
+  write-backs each). Every sighting came with a renderer late on its tokens (OpenGL waiting at the copy, the friend's
+  Direct3D at 120 fps), so that is the condition to recreate when looking further.
+- It is a real corruption: in an OpenGL run with the frame wait still at the copy (late tokens, about 12
+  write-backs a second) the log said `free block 1 after 814f9950 links to ffffffff`, heap 4 shrank to 0 KB and the
+  game crashed inside 0x8037D4A0 itself 18 ms later. Not found: a build that walked heap 4 before and after every
+  write-back and compared each written range with the free blocks never saw it break in seven runs (63 to 1003
+  write-backs each). Every sighting came with a renderer late on its tokens (OpenGL waiting at the copy, the friend's
+  Direct3D at 120 fps), so that is the condition to recreate when looking further.
 - Looked at and ruled out for the gray lines between polygons of moving models: the game changing vertex arrays or
   indexed matrices while the GPU thread still draws from them (0 changes before the frame end over 600,000 samples a
   second, even with the thread stalled 150 ms), and face culling in single precision (wrong for 10,000 to 17,000
@@ -803,8 +815,12 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
   only the sky and the map were left.
 - A hidden or occluded window does not make `SDL_GL_SwapWindow` wait, so nothing limited how many frames the GPU
   thread queued: headless, the driver's private memory grew by about 250 MB a second up to 27 GB. A fence is placed
-  at every copy to the frame buffer and the one of two frames earlier is waited for, as Direct3D's frame latency of
-  two. Memory then stays near 1.1 GB and the drawing time fell from 708 to 120 ms a second.
+  at every copy to the frame buffer, and the fence of the frame before is waited for at the first draw of the next
+  frame (`wait_for_frame` in `flush_pending`), so at most two frames are queued, as Direct3D's frame latency of two.
+  Memory then stays near 1.1 GB and the drawing time fell from 708 to 120 ms a second. Waiting at the copy itself
+  held back the draw token that follows it, so the game got its temporary buffers back late, copied into buffers
+  that were not the ones of the frame before and had them written back to RAM: three interleaved pairs of runs gave
+  12-53 write-backs and 42-221 slow frames for the wait at the copy, none and 5-6 for the wait at the next draw.
 - `WP_DUMP_SEQUENCE=first,count` writes the final image of those frames to `captures/seq` (no in-between images).
 - Pixel shader variants, as in Direct3D: `variant_key` (now in gx_render_common.cpp, shared) and `variant_fragment`
   turn the TEV stages, swaps and indirect setup into GLSL constants. Without them the heavy zone ran at 54-57 fps at
