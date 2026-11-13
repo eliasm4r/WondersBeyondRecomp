@@ -11,8 +11,13 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Ninja
-        run: brew install ninja
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Ninja and NumPy
+        run: |
+          brew install ninja
+          python -m pip install numpy
       - name: Configure
         run: cmake -S . -B build/out -G Ninja -DCMAKE_BUILD_TYPE=Release -DWP_REQUIRE_SDL3=ON
       - name: Build
