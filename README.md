@@ -47,7 +47,7 @@ No emulator, up to 120 fps, high resolutions, keyboard, mouse and modern control
 
 ## Install
 
-1. Download **`WondersBeyondRecomp-Setup.zip`** from the [latest release](https://github.com/eliasm4r/WondersBeyondRecomp/releases/latest) and unzip it anywhere.
+1. Download **`WondersBeyondRecomp-Setup-Windows.zip`** from the [latest release](https://github.com/eliasm4r/WondersBeyondRecomp/releases/latest) and unzip it anywhere.
 2. Start **`Setup.exe`**.
 3. Pick your **disc image**: the ROM file of the **European** version (`S2LP01`), `.iso`, `.rvz` or `.wbfs`.
 4. Pick an install folder and press **Install**.
@@ -172,7 +172,7 @@ cmake --build build/out --target pokepark2
 
 Run the tests with `ctest` in `build/out`. Technical notes on every fix so far are in [`docs/NOTES.md`](docs/NOTES.md).
 
-To make the setup zip, run `python tools/make_setup.py`. It writes `build/dist/WondersBeyondRecomp-Setup.zip`, which holds the official Python with its window toolkit, the scripts of `installer/` and the sources of this repository, and nothing of the game.
+To make the setup zip, run `python tools/make_setup.py`. It writes `build/dist/WondersBeyondRecomp-Setup-Windows.zip`, which holds the official Python with its window toolkit, the scripts of `installer/` and the sources of this repository, and nothing of the game.
 
 <br>
 

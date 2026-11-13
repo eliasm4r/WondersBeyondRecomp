@@ -253,7 +253,7 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
 
 ## Installer
 
-- `tools/make_setup.py` makes `build/dist/WondersBeyondRecomp-Setup.zip`: Python 3.12.10 from its NuGet package and
+- `tools/make_setup.py` makes `build/dist/WondersBeyondRecomp-Setup-Windows.zip`: Python 3.12.10 from its NuGet package and
   the Tcl/Tk part of the python.org installer (both checked against a SHA-256), the scripts of `installer/`,
   `installer/sources.zip` and `Setup.exe`. `sources.zip` holds the files
   `git ls-files` lists for the engine, the recompiler, `game`, `third_party`, `tests` and

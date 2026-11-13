@@ -105,7 +105,7 @@ def main():
     (bundle / "python" / (SIGNED + "._pth")).write_bytes(b"Lib\r\nDLLs\r\n..\\installer\r\nimport site\r\n")
     check_signatures()
     add_launcher()
-    output = root / "build" / "dist" / (NAME + ".zip")
+    output = root / "build" / "dist" / (NAME + "-Windows.zip")
     output.parent.mkdir(parents=True, exist_ok=True)
     output.unlink(missing_ok=True)
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
