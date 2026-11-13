@@ -10,7 +10,9 @@ Every change to WondersBeyondRecomp, newest first.
 
 <br>
 
-## Unreleased
+## v0.1.1-alpha · 2026-11-13
+
+> **RecompLauncher support.** The game can now be installed, started and set up from [RecompLauncher](https://recomplauncher.com). [Download it here.](https://github.com/eliasm4r/WondersBeyondRecomp/releases/tag/v0.1.1-alpha)
 
 ### Added
 - **RecompLauncher support.** RecompLauncher can now install the game from your disc image without the setup window, start it and change its main settings (resolution, frame rate, window, picture shape, V-Sync, smoothing, texture filtering, volume, game language).
