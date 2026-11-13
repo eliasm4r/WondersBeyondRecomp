@@ -431,7 +431,11 @@ void window_thread(bool visible) {
 std::tm local_time() {
     std::time_t now = std::time(nullptr);
     std::tm time{};
+#ifdef _WIN32
+    localtime_s(&time, &now);
+#else
     localtime_r(&now, &time);
+#endif
     return time;
 }
 

@@ -8,6 +8,7 @@
 #include <SDL3/SDL_opengl.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -50,9 +51,14 @@ namespace {
     X(Uniform1f) X(Uniform4f) X(UniformBlockBinding) X(UseProgram) X(VertexAttribPointer) X(Viewport) X(MapBufferRange) X(UnmapBuffer)    \
     X(FenceSync) X(ClientWaitSync) X(DeleteSync)
 
+#define WP_GL_RUN_FUNCTIONS(X)                                                                                                                              \
+    X(CullFace) X(DeleteBuffers) X(DisableVertexAttribArray) X(DrawElementsBaseVertex) X(GetError) X(TexBuffer) X(VertexAttrib4f) X(VertexAttribI4ui)  \
+    X(VertexAttribIPointer)
+
 struct Gl {
 #define WP_GL_MEMBER(name) decltype(&::gl##name) name = nullptr;
     WP_GL_FUNCTIONS(WP_GL_MEMBER)
+    WP_GL_RUN_FUNCTIONS(WP_GL_MEMBER)
 #undef WP_GL_MEMBER
     decltype(&::glClipControl) ClipControl = nullptr;
 };
@@ -69,6 +75,16 @@ bool load_functions() {
     }
     WP_GL_FUNCTIONS(WP_GL_LOAD)
 #undef WP_GL_LOAD
+    return ok;
+}
+
+bool load_run_functions() {
+    bool ok = true;
+#define WP_GL_LOAD_RUN(name)                                                                \
+    gl.name = reinterpret_cast<decltype(gl.name)>(SDL_GL_GetProcAddress("gl" #name));       \
+    ok = ok && gl.name != nullptr;
+    WP_GL_RUN_FUNCTIONS(WP_GL_LOAD_RUN)
+#undef WP_GL_LOAD_RUN
     return ok;
 }
 
@@ -216,6 +232,243 @@ void main() {
     for (int i = 0; i < 8; i++) {
         v_uv[i] = a_uv[i];
     }
+}
+)GLSL";
+
+const char* kRunVertex = R"GLSL(#version 410 core
+uniform samplerBuffer rows;
+uniform int run_row;
+uniform int depth_zero_to_one;
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec4 a_c0;
+layout(location = 2) in vec4 a_c1;
+layout(location = 3) in vec3 a_normal;
+layout(location = 4) in uvec4 a_m0;
+layout(location = 5) in uvec4 a_m1;
+layout(location = 6) in uvec4 a_m2;
+layout(location = 7) in vec2 a_t0;
+layout(location = 8) in vec2 a_t1;
+layout(location = 9) in vec2 a_t2;
+layout(location = 10) in vec2 a_t3;
+layout(location = 11) in vec2 a_t4;
+layout(location = 12) in vec2 a_t5;
+layout(location = 13) in vec2 a_t6;
+layout(location = 14) in vec2 a_t7;
+out vec4 v_c0;
+out vec4 v_c1;
+out vec3 v_uv[8];
+
+vec4 row(int at) {
+    return texelFetch(rows, at);
+}
+
+vec3 transformed(int at, vec3 v) {
+    vec4 r0 = row(at);
+    vec4 r1 = row(at + 1);
+    vec4 r2 = row(at + 2);
+    precise vec3 result;
+    result.x = r0.x * v.x + r0.y * v.y + r0.z * v.z + r0.w;
+    result.y = r1.x * v.x + r1.y * v.y + r1.z * v.z + r1.w;
+    result.z = r2.x * v.x + r2.y * v.y + r2.z * v.z + r2.w;
+    return result;
+}
+
+vec3 unit(vec3 v) {
+    float extent = sqrt(dot(v, v));
+    return extent == 0.0 ? v : v / extent;
+}
+
+float ratio(float n, float d) {
+    return d == 0.0 ? (n > 0.0 ? 1.0 : 0.0) : n / d;
+}
+
+float light_factor(int at, uint control, vec3 eye, vec3 normal) {
+    vec4 a = row(at + 1);
+    vec4 b = row(at + 2);
+    vec4 c = row(at + 3);
+    vec3 angle = a.xyz;
+    vec3 range = vec3(a.w, b.x, b.y);
+    vec3 direction = c.yzw;
+    uint diffuse = (control >> 7) & 3u;
+    uint attenuation = (control >> 9) & 3u;
+    vec3 toward = vec3(b.z, b.w, c.x) - eye;
+    float amount = 1.0;
+    if (attenuation == 1u) {
+        toward = unit(toward);
+        amount = dot(toward, normal) >= 0.0 ? max(0.0, dot(direction, normal)) : 0.0;
+        vec3 powers = vec3(1.0, amount, amount * amount);
+        if (diffuse != 0u) {
+            range = unit(range);
+        }
+        amount = ratio(max(0.0, dot(powers, angle)), dot(powers, range));
+    } else if (attenuation == 3u) {
+        float square = dot(toward, toward);
+        float span = sqrt(square);
+        toward = toward / span;
+        amount = max(0.0, dot(toward, direction));
+        float cone = angle.x + angle.y * amount + angle.z * amount * amount;
+        float fade = range.x + range.y * span + range.z * square;
+        amount = ratio(max(0.0, cone), fade);
+    } else {
+        toward = unit(toward);
+        if (toward.x == 0.0 && toward.y == 0.0 && toward.z == 0.0) {
+            toward = normal;
+        }
+    }
+    float facing = dot(toward, normal);
+    if (diffuse == 1u) {
+        return amount * facing;
+    }
+    if (diffuse == 2u) {
+        return amount * max(0.0, facing);
+    }
+    return amount;
+}
+
+float modulated(float material, float light) {
+    int value = clamp(int(light), 0, 255);
+    return float((int(material) * (value + (value >> 7))) >> 8) / 255.0;
+}
+
+uint light_mask(uint control) {
+    return (control & 2u) != 0u ? (((control >> 2) & 15u) | (((control >> 11) & 15u) << 4)) : 0u;
+}
+
+void light_colors(int light, int matrix_row, uint word, vec3 eye, vec3 raw, inout vec4 c0, inout vec4 c1) {
+    vec4 controls = row(light);
+    int first = matrix_row + int(word >> 2);
+    vec4 n0 = row(first);
+    vec4 n1 = row(first + 1);
+    vec4 n2 = row(first + 2);
+    float m[12] = float[12](n0.x, n0.y, n0.z, n0.w, n1.x, n1.y, n1.z, n1.w, n2.x, n2.y, n2.z, n2.w);
+    uint k = word & 3u;
+    vec3 normal = unit(vec3(m[k] * raw.x + m[k + 1u] * raw.y + m[k + 2u] * raw.z,
+                            m[k + 3u] * raw.x + m[k + 4u] * raw.y + m[k + 5u] * raw.z,
+                            m[k + 6u] * raw.x + m[k + 7u] * raw.y + m[k + 8u] * raw.z));
+    vec4 given[2] = vec4[2](c0, c1);
+    vec4 result[2];
+    for (uint channel = 0u; channel < 2u; channel++) {
+        vec4 vertex = floor(given[channel] * 255.0 + 0.5);
+        vec4 material = row(light + 1 + int(channel));
+        vec4 ambient = row(light + 3 + int(channel));
+        uint color = uint(channel == 0u ? controls.x : controls.y);
+        uint alpha = uint(channel == 0u ? controls.z : controls.w);
+        vec3 color_material = (color & 1u) != 0u ? vertex.rgb : material.rgb;
+        float alpha_material = (alpha & 1u) != 0u ? vertex.a : material.a;
+        uint color_mask = light_mask(color);
+        uint alpha_mask = light_mask(alpha);
+        vec3 sum = (color & 64u) != 0u ? vertex.rgb : ambient.rgb;
+        float alpha_sum = (alpha & 64u) != 0u ? vertex.a : ambient.a;
+        for (uint i = 0u; i < 8u; i++) {
+            uint bit = 1u << i;
+            int at = light + 8 + 4 * int(i);
+            if ((color_mask & bit) != 0u) {
+                sum += row(at).rgb * light_factor(at, color, eye, normal);
+            }
+            if ((alpha_mask & bit) != 0u) {
+                alpha_sum += row(at).a * light_factor(at, alpha, eye, normal);
+            }
+        }
+        if ((color & 2u) != 0u) {
+            result[channel].rgb = vec3(modulated(color_material.r, sum.r), modulated(color_material.g, sum.g), modulated(color_material.b, sum.b));
+        } else {
+            result[channel].rgb = color_material / 255.0;
+        }
+        result[channel].a = (alpha & 2u) != 0u ? modulated(alpha_material, alpha_sum) : alpha_material / 255.0;
+    }
+    c0 = result[0];
+    c1 = result[1];
+}
+
+void main() {
+    int run = run_row;
+    vec4 p0 = row(run);
+    vec4 p1 = row(run + 1);
+    vec4 p2 = row(run + 2);
+    vec4 p3 = row(run + 3);
+    int origin = run + int(p3.z);
+    precise vec3 eye = transformed(origin + int(p1.w) + int(a_m0.x), a_position);
+    precise float x;
+    precise float y;
+    precise float z;
+    precise float w;
+    if (p1.z != 0.0) {
+        x = p0.x * eye.x + p0.y;
+        y = p0.z * eye.y + p0.w;
+        z = p1.x * eye.z + p1.y;
+        w = 1.0;
+    } else {
+        x = p0.x * eye.x + p0.y * eye.z;
+        y = p0.z * eye.y + p0.w * eye.z;
+        z = p1.x * eye.z + p1.y;
+        w = -eye.z;
+    }
+    precise vec4 position;
+    position.x = x * p2.x + w * p2.y;
+    position.y = y * p2.z + w * p2.w;
+    position.z = (z * p3.x + w * (16777215.0 - p3.y)) / 16777215.0;
+    position.w = w;
+    uint setup = uint(p3.w);
+    uint count = min(setup & 15u, 8u);
+    bool dual = (setup & 16u) != 0u;
+    uint indices[8] = uint[8](a_m0.y, a_m0.z, a_m0.w, a_m1.x, a_m1.y, a_m1.z, a_m1.w, a_m2.x);
+    vec2 inputs[8] = vec2[8](a_t0, a_t1, a_t2, a_t3, a_t4, a_t5, a_t6, a_t7);
+    vec3 uv[8];
+    for (uint k = 0u; k < 8u; k++) {
+        uv[k] = vec3(0.0);
+    }
+    for (uint i = 0u; i < count; i++) {
+        int place = run + 7 + 7 * int(i);
+        vec4 info = row(place);
+        uint source = uint(info.x);
+        uint flags = uint(info.y);
+        vec3 given = vec3(0.0, 0.0, 1.0);
+        if (source == 0u) {
+            given = a_position;
+        } else if (source == 1u) {
+            given = a_normal;
+        } else if (source >= 5u && source < 13u) {
+            given.xy = inputs[source - 5u];
+        }
+        if ((flags & 2u) == 0u) {
+            given.z = 1.0;
+        }
+        vec3 coord = transformed(origin + int(info.z) + int(indices[i]), given);
+        if ((flags & 1u) == 0u) {
+            coord.z = 1.0;
+        }
+        if (dual) {
+            if ((flags & 4u) != 0u) {
+                float extent = sqrt(coord.x * coord.x + coord.y * coord.y + coord.z * coord.z);
+                if (extent > 0.0) {
+                    coord /= extent;
+                }
+            }
+            coord = transformed(place + 4, coord);
+        }
+        if (coord.z == 0.0) {
+            coord.xy = clamp(coord.xy / 2.0, -1.0, 1.0);
+            coord.z = 1.0;
+        }
+        uv[i] = coord;
+    }
+    vec4 c0 = a_c0;
+    vec4 c1 = a_c1;
+    if ((setup & 32u) != 0u) {
+        int light = run + 7 + 7 * int(count);
+        if (p1.w == 0.0) {
+            light_colors(light, origin + 66, (a_m0.x & 31u) * 3u, eye, a_normal, c0, c1);
+        } else {
+            light_colors(light, light + 5, 0u, eye, a_normal, c0, c1);
+        }
+    }
+    v_c0 = c0;
+    v_c1 = c1;
+    for (int k = 0; k < 8; k++) {
+        v_uv[k] = uv[k];
+    }
+    float depth = depth_zero_to_one != 0 ? position.z : 2.0 * position.z - position.w;
+    gl_Position = vec4(position.x, -position.y, depth, position.w);
 }
 )GLSL";
 
@@ -665,6 +918,7 @@ struct PendingWriteBack {
 struct Program {
     GLuint id = 0;
     GLint flip = -1;
+    GLint row = -1;
 };
 
 struct Device {
@@ -707,6 +961,15 @@ struct Device {
     uint32_t bar_height = 0;
     uint64_t bar_version = 0;
     bool clip_control = false;
+    Program run;
+    Program early_run;
+    GLuint run_layout = 0;
+    GLuint run_vertices = 0;
+    GLuint run_indices = 0;
+    GLuint run_rows = 0;
+    GLuint run_rows_texture = 0;
+    GLuint kept_vertices = 0;
+    GLuint kept_indices = 0;
     std::map<uint64_t, GLuint> samplers;
     std::map<uint64_t, CachedTexture> textures;
     std::map<uint32_t, CopiedTexture> copies;
@@ -950,6 +1213,109 @@ bool create_pipeline() {
     gl.PixelStorei(GL_UNPACK_ALIGNMENT, 4);
     gl.PixelStorei(GL_PACK_ALIGNMENT, 4);
     gl.Enable(GL_DEPTH_CLAMP);
+    return true;
+}
+
+constexpr uint32_t kRunVertexBytes = 16u << 20;
+constexpr uint32_t kRunIndexBytes = 4u << 20;
+constexpr uint32_t kRunRowCapacity = 1u << 16;
+constexpr uint32_t kKeptVertexBytes = 64u << 20;
+constexpr uint32_t kKeptIndexBytes = 16u << 20;
+constexpr GLuint kRowsUnit = kTextureMaps;
+
+void clear_errors() {
+    for (int i = 0; i < 16 && gl.GetError() != GL_NO_ERROR; i++) {
+    }
+}
+
+bool link_run(Program& program, const std::string& fragment) {
+    if (!link(program, kRunVertex, fragment)) {
+        return false;
+    }
+    bind_samplers(program.id, {"t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "rows"});
+    gl.Uniform1i(gl.GetUniformLocation(program.id, "depth_zero_to_one"), g_device.clip_control ? 1 : 0);
+    gl.UniformBlockBinding(program.id, gl.GetUniformBlockIndex(program.id, "Constants"), 0);
+    program.row = gl.GetUniformLocation(program.id, "run_row");
+    return program.row >= 0;
+}
+
+void allocate(GLuint buffer, uint32_t bytes, GLenum usage) {
+    gl.BindBuffer(GL_ARRAY_BUFFER, buffer);
+    gl.BufferData(GL_ARRAY_BUFFER, bytes, nullptr, usage);
+}
+
+bool create_run_pipeline() {
+    static bool tried = false;
+    if (tried) {
+        return g_device.run.id != 0;
+    }
+    tried = true;
+    if (!load_run_functions()) {
+        log::write("video", "vertices stay on the processor: this OpenGL lacks a function the vertex shader needs");
+        return false;
+    }
+    GLint texels = 0;
+    GLint attributes = 0;
+    gl.GetIntegerv(GL_MAX_TEXTURE_BUFFER_SIZE, &texels);
+    gl.GetIntegerv(GL_MAX_VERTEX_ATTRIBS, &attributes);
+    if (texels < static_cast<GLint>(kRunRowCapacity) || attributes < 15) {
+        log::write("video", "vertices stay on the processor: this OpenGL has %d buffer texels and %d vertex inputs", texels, attributes);
+        return false;
+    }
+    clear_errors();
+    Program run;
+    Program early;
+    bool ok = link_run(run, std::string("#version 410 core\n") + kTevFragment);
+    if (ok && g_device.early_tev.id != g_device.tev.id) {
+        ok = link_run(early, std::string("#version 410 core\n#extension GL_ARB_shader_image_load_store : require\nlayout(early_fragment_tests) in;\n") + kTevFragment);
+    } else {
+        early = run;
+    }
+    if (ok) {
+        gl.GenVertexArrays(1, &g_device.run_layout);
+        GLuint buffers[3] = {};
+        gl.GenBuffers(3, buffers);
+        g_device.run_vertices = buffers[0];
+        g_device.run_indices = buffers[1];
+        g_device.run_rows = buffers[2];
+        allocate(g_device.run_vertices, kRunVertexBytes, GL_STREAM_DRAW);
+        allocate(g_device.run_indices, kRunIndexBytes, GL_STREAM_DRAW);
+        allocate(g_device.run_rows, kRunRowCapacity * sizeof(float[4]), GL_STREAM_DRAW);
+        gl.GenTextures(1, &g_device.run_rows_texture);
+        gl.ActiveTexture(GL_TEXTURE0 + kRowsUnit);
+        gl.BindTexture(GL_TEXTURE_BUFFER, g_device.run_rows_texture);
+        gl.TexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, g_device.run_rows);
+        gl.ActiveTexture(GL_TEXTURE0);
+        ok = gl.GetError() == GL_NO_ERROR;
+    }
+    if (!ok) {
+        log::write("video", "vertices stay on the processor: the graphics card refused the vertex shader or its buffers");
+        return false;
+    }
+    g_device.run = run;
+    g_device.early_run = early;
+    log::write("video", "the graphics card places the vertices");
+    return true;
+}
+
+bool create_kept_buffers() {
+    static bool tried = false;
+    if (tried) {
+        return g_device.kept_indices != 0;
+    }
+    tried = true;
+    clear_errors();
+    GLuint buffers[2] = {};
+    gl.GenBuffers(2, buffers);
+    allocate(buffers[0], kKeptVertexBytes, GL_STATIC_DRAW);
+    allocate(buffers[1], kKeptIndexBytes, GL_STATIC_DRAW);
+    if (gl.GetError() != GL_NO_ERROR) {
+        gl.DeleteBuffers(2, buffers);
+        log::write("video", "models are decoded on every image: the graphics card refused the buffers that would keep them");
+        return false;
+    }
+    g_device.kept_vertices = buffers[0];
+    g_device.kept_indices = buffers[1];
     return true;
 }
 
@@ -1323,14 +1689,165 @@ void bind_efb() {
     gl.Viewport(0, 0, scaled(kEfbWidth), scaled(kEfbHeight));
 }
 
-void flush_pending() {
-    PendingBatch& pending = g_pending;
-    if (pending.vertices.empty()) {
-        return;
+constexpr uint32_t kNoPalette = ~0u;
+
+struct RunDraw {
+    uint32_t layout = 0;
+    uint32_t stride = 0;
+    uint32_t cull = 0;
+    uint32_t vertex_offset = 0;
+    uint32_t first_index = 0;
+    uint32_t indices = 0;
+    uint32_t row = 0;
+    bool kept = false;
+};
+
+std::vector<RunDraw> g_run_draws;
+std::vector<uint8_t> g_run_vertex_bytes;
+std::vector<uint16_t> g_run_index_words;
+std::vector<std::array<float, 4>> g_run_row_values;
+uint32_t g_run_vertex_used = 0;
+uint32_t g_run_index_used = 0;
+uint32_t g_run_row_used = 0;
+uint32_t g_run_palette = kNoPalette;
+uint64_t g_run_palette_serial = 0;
+uint32_t g_run_vertex_cursor = kRunVertexBytes;
+uint32_t g_run_index_cursor = kRunIndexBytes;
+uint32_t g_run_row_cursor = kRunRowCapacity * sizeof(float[4]);
+uint32_t g_run_kept = 0;
+uint32_t g_run_kept_indices = 0;
+uint32_t g_kept_vertex_used = 0;
+uint32_t g_kept_index_used = 0;
+uint32_t g_kept_generation = 1;
+
+bool batch_empty() {
+    return g_pending.vertices.empty() && g_run_draws.empty();
+}
+
+template <typename T>
+void reserve_run(std::vector<T>& values, size_t wanted) {
+    if (values.size() < wanted) {
+        values.resize(std::max(wanted, values.size() * 2));
     }
-    auto started = std::chrono::steady_clock::now();
-    g_batches++;
-    g_batch_vertices += static_cast<uint32_t>(pending.vertices.size());
+}
+
+bool upload_run(GLuint buffer, uint32_t& cursor, uint32_t capacity, const void* data, uint32_t size, uint32_t& start) {
+    if (size == 0) {
+        return true;
+    }
+    gl.BindBuffer(GL_ARRAY_BUFFER, buffer);
+    bool orphaned = false;
+    if (cursor + size > capacity) {
+        gl.BufferData(GL_ARRAY_BUFFER, capacity, nullptr, GL_STREAM_DRAW);
+        cursor = 0;
+        orphaned = true;
+    }
+    void* mapped = gl.MapBufferRange(GL_ARRAY_BUFFER, cursor, size, GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
+    if (!mapped) {
+        return false;
+    }
+    std::memcpy(mapped, data, size);
+    if (!gl.UnmapBuffer(GL_ARRAY_BUFFER)) {
+        return false;
+    }
+    if (orphaned && buffer == g_device.run_rows) {
+        gl.ActiveTexture(GL_TEXTURE0 + kRowsUnit);
+        gl.BindTexture(GL_TEXTURE_BUFFER, g_device.run_rows_texture);
+        gl.TexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, g_device.run_rows);
+    }
+    start = cursor;
+    cursor += size;
+    return true;
+}
+
+const void* buffer_offset(size_t bytes) {
+    return reinterpret_cast<const void*>(static_cast<uintptr_t>(bytes));
+}
+
+void point_run_inputs(uint32_t layout, uint32_t stride, GLuint buffer, uint32_t base) {
+    bool normal = (layout & 1) != 0;
+    bool indices = (layout & 2) != 0;
+    uint32_t inputs = layout >> 2;
+    GLsizei step = static_cast<GLsizei>(stride);
+    gl.BindBuffer(GL_ARRAY_BUFFER, buffer);
+    gl.EnableVertexAttribArray(0);
+    gl.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, step, buffer_offset(base));
+    gl.EnableVertexAttribArray(1);
+    gl.VertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, step, buffer_offset(base + 12));
+    gl.EnableVertexAttribArray(2);
+    gl.VertexAttribPointer(2, 4, GL_UNSIGNED_BYTE, GL_TRUE, step, buffer_offset(base + 16));
+    uint32_t offset = base + 20;
+    if (normal) {
+        gl.EnableVertexAttribArray(3);
+        gl.VertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, step, buffer_offset(offset));
+        offset += 12;
+    } else {
+        gl.DisableVertexAttribArray(3);
+        gl.VertexAttrib4f(3, 0.0f, 0.0f, 0.0f, 1.0f);
+    }
+    for (GLuint i = 0; i < 3; i++) {
+        if (indices) {
+            gl.EnableVertexAttribArray(4 + i);
+            gl.VertexAttribIPointer(4 + i, 4, GL_UNSIGNED_BYTE, step, buffer_offset(offset + 4 * i));
+        } else {
+            gl.DisableVertexAttribArray(4 + i);
+            gl.VertexAttribI4ui(4 + i, 0, 0, 0, 0);
+        }
+    }
+    offset += indices ? 12 : 0;
+    for (GLuint i = 0; i < 8; i++) {
+        if (i < inputs) {
+            gl.EnableVertexAttribArray(7 + i);
+            gl.VertexAttribPointer(7 + i, 2, GL_FLOAT, GL_FALSE, step, buffer_offset(offset + 8 * i));
+        } else {
+            gl.DisableVertexAttribArray(7 + i);
+            gl.VertexAttrib4f(7 + i, 0.0f, 0.0f, 0.0f, 1.0f);
+        }
+    }
+}
+
+void issue_runs(bool early_depth, uint32_t vertex_start, uint32_t index_start, uint32_t row_start) {
+    const Program& program = early_depth ? g_device.early_run : g_device.run;
+    gl.UseProgram(program.id);
+    gl.ActiveTexture(GL_TEXTURE0 + kRowsUnit);
+    gl.BindTexture(GL_TEXTURE_BUFFER, g_device.run_rows_texture);
+    gl.BindVertexArray(g_device.run_layout);
+    const RunDraw* group = nullptr;
+    GLuint index_buffer = 0;
+    uint32_t cull = 0;
+    for (const RunDraw& draw : g_run_draws) {
+        if (!group || group->layout != draw.layout || group->stride != draw.stride || group->kept != draw.kept) {
+            group = &draw;
+            point_run_inputs(draw.layout, draw.stride, draw.kept ? g_device.kept_vertices : g_device.run_vertices, draw.kept ? 0 : vertex_start + draw.vertex_offset);
+            GLuint wanted = draw.kept ? g_device.kept_indices : g_device.run_indices;
+            if (index_buffer != wanted) {
+                index_buffer = wanted;
+                gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, wanted);
+            }
+        }
+        if (draw.cull != cull) {
+            if (cull == 0) {
+                gl.Enable(GL_CULL_FACE);
+            }
+            cull = draw.cull;
+            if (cull == 0) {
+                gl.Disable(GL_CULL_FACE);
+            } else {
+                gl.CullFace(cull == 1 ? GL_BACK : GL_FRONT);
+            }
+        }
+        uint32_t first_index = draw.kept ? draw.first_index : index_start + draw.first_index;
+        uint32_t base_vertex = draw.kept ? draw.vertex_offset / draw.stride : (draw.vertex_offset - group->vertex_offset) / draw.stride;
+        gl.Uniform1i(program.row, static_cast<GLint>(row_start + draw.row));
+        gl.DrawElementsBaseVertex(GL_TRIANGLES, static_cast<GLsizei>(draw.indices), GL_UNSIGNED_SHORT, buffer_offset(static_cast<size_t>(first_index) * sizeof(uint16_t)),
+                                  static_cast<GLint>(base_vertex));
+    }
+    if (cull != 0) {
+        gl.Disable(GL_CULL_FACE);
+    }
+}
+
+void set_batch_state(const PendingBatch& pending) {
     gl.BindBuffer(GL_UNIFORM_BUFFER, g_device.constants);
     gl.BufferData(GL_UNIFORM_BUFFER, sizeof(Constants), &pending.constants, GL_STREAM_DRAW);
     gl.BindBufferBase(GL_UNIFORM_BUFFER, 0, g_device.constants);
@@ -1352,6 +1869,45 @@ void flush_pending() {
     gl.Scissor(scaled(left), scaled(top), std::max(0, scaled(right - left)), std::max(0, scaled(bottom - top)));
     apply_blend(pending.blend);
     apply_depth(pending.depth);
+}
+
+void draw_runs() {
+    uint32_t vertex_start = 0;
+    uint32_t index_start = 0;
+    uint32_t row_start = 0;
+    bool ok = upload_run(g_device.run_rows, g_run_row_cursor, kRunRowCapacity * sizeof(float[4]), g_run_row_values.data(), g_run_row_used * sizeof(float[4]), row_start) &&
+              upload_run(g_device.run_vertices, g_run_vertex_cursor, kRunVertexBytes, g_run_vertex_bytes.data(), g_run_vertex_used, vertex_start) &&
+              upload_run(g_device.run_indices, g_run_index_cursor, kRunIndexBytes, g_run_index_words.data(), g_run_index_used * sizeof(uint16_t), index_start);
+    if (ok) {
+        issue_runs(g_pending.early_depth, vertex_start, index_start / static_cast<uint32_t>(sizeof(uint16_t)), row_start / static_cast<uint32_t>(sizeof(float[4])));
+    }
+    g_run_draws.clear();
+    g_run_kept = 0;
+    g_run_kept_indices = 0;
+    g_run_vertex_used = 0;
+    g_run_index_used = 0;
+    g_run_row_used = 0;
+    g_run_palette = kNoPalette;
+}
+
+void flush_pending() {
+    PendingBatch& pending = g_pending;
+    if (!g_run_draws.empty()) {
+        auto started = std::chrono::steady_clock::now();
+        g_batches++;
+        g_batch_vertices += g_run_index_used + g_run_kept_indices;
+        set_batch_state(pending);
+        draw_runs();
+        g_batch_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+        return;
+    }
+    if (pending.vertices.empty()) {
+        return;
+    }
+    auto started = std::chrono::steady_clock::now();
+    g_batches++;
+    g_batch_vertices += static_cast<uint32_t>(pending.vertices.size());
+    set_batch_state(pending);
     gl.UseProgram(pending.early_depth ? g_device.early_tev.id : g_device.tev.id);
     gl.BindVertexArray(g_device.tev_layout);
     gl.BindBuffer(GL_ARRAY_BUFFER, g_device.vertex_buffer);
@@ -1396,23 +1952,157 @@ bool interpolating() {
     return false;
 }
 
+namespace {
+
+void select_batch() {
+    // Most tiny draws only change a matrix: with no register the batch depends on written, join the pending batch as is.
+    static uint64_t batched_serial = ~0ull;
+    static uint64_t batched_epoch = 0;
+    static int batched_scale = 0;
+    PendingBatch& pending = g_pending;
+    if (!batch_empty() && batched_serial == register_serial() && batched_epoch == g_texture_epoch && batched_scale == g_scale) {
+        return;
+    }
+    const uint32_t* bp = bp_registers();
+    Constants constants;
+    fill_constants(constants, g_scale);
+    GLuint views[kTextureMaps] = {};
+    GLuint samplers[kTextureMaps] = {};
+    uint32_t used = used_maps(constants);
+    for (uint32_t map = 0; map < kTextureMaps; map++) {
+        if (used & (1u << map)) {
+            views[map] = texture_for(map);
+            samplers[map] = sampler_for(map);
+        }
+    }
+    uint32_t pixel_format = bp[0x43] & 7;
+    AlphaTestResult alpha_test = alpha_test_result(bp[0xF3]);
+    uint32_t blend = (bp[0x41] & 0xFFFF) | (static_cast<uint32_t>(pixel_format == 1) << 16) | (((bp[0x42] >> 8) & 1) << 17) |
+                     (static_cast<uint32_t>(!alpha_test.can_pass) << 18);
+    uint32_t depth = bp[0x40] & 0x1F;
+    bool early_depth = (depth & 1) != 0 && (bp[0x43] & (1u << 6)) != 0 && alpha_test.can_pass && alpha_test.can_fail;
+    bool same = !batch_empty() && pending.blend == blend && pending.depth == depth && pending.early_depth == early_depth && pending.top_left == bp[0x20] &&
+                pending.bottom_right == bp[0x21] && pending.scissor_offset == bp[kBpScissorOffset] && std::memcmp(&pending.constants, &constants, sizeof constants) == 0 &&
+                std::memcmp(pending.views, views, sizeof views) == 0 && std::memcmp(pending.samplers, samplers, sizeof samplers) == 0;
+    if (!same) {
+        flush_pending();
+        pending.constants = constants;
+        std::memcpy(pending.views, views, sizeof views);
+        std::memcpy(pending.samplers, samplers, sizeof samplers);
+        pending.blend = blend;
+        pending.depth = depth;
+        pending.early_depth = early_depth;
+        pending.top_left = bp[0x20];
+        pending.bottom_right = bp[0x21];
+        pending.scissor_offset = bp[kBpScissorOffset];
+    }
+    batched_serial = register_serial();
+    batched_epoch = g_texture_epoch;
+    batched_scale = g_scale;
+}
+
+bool add_run(const VertexRun& run, uint32_t bytes, uint32_t index_count) {
+    uint32_t rows = run.row_count + (run.palette ? kPaletteRows + kNormalRows : 0);
+    if (!g_pending.vertices.empty() || g_run_vertex_used + bytes > kRunVertexBytes / 2 || (g_run_index_used + index_count) * sizeof(uint16_t) > kRunIndexBytes / 2 ||
+        g_run_row_used + rows > kRunRowCapacity / 2) {
+        flush_pending();
+    }
+    select_batch();
+    reserve_run(g_run_vertex_bytes, g_run_vertex_used + bytes);
+    reserve_run(g_run_index_words, g_run_index_used + index_count);
+    reserve_run(g_run_row_values, g_run_row_used + rows);
+    if (run.palette && (g_run_palette == kNoPalette || g_run_palette_serial != run.palette_serial)) {
+        std::memcpy(g_run_row_values.data() + g_run_row_used, run.palette, kPaletteRows * sizeof(float[4]));
+        g_run_palette = g_run_row_used;
+        g_run_palette_serial = run.palette_serial;
+        g_run_row_used += kPaletteRows;
+        std::memcpy(g_run_row_values.data() + g_run_row_used, run.palette + kNormalWords, kNormalRows * sizeof(float[4]));
+        g_run_row_used += kNormalRows;
+    }
+    std::memcpy(g_run_row_values.data() + g_run_row_used, run.rows, run.row_count * sizeof(float[4]));
+    if (run.palette) {
+        g_run_row_values[g_run_row_used + 3][2] = static_cast<float>(static_cast<int>(g_run_palette) - static_cast<int>(g_run_row_used));
+    }
+    RunDraw draw;
+    draw.layout = (run.normal ? 1u : 0u) | (run.matrix_indices ? 2u : 0u) | (run.texture_inputs << 2);
+    draw.stride = run.stride;
+    draw.cull = run.cull;
+    draw.vertex_offset = g_run_vertex_used;
+    draw.first_index = g_run_index_used;
+    draw.indices = run.indices;
+    draw.row = g_run_row_used;
+    g_run_draws.push_back(draw);
+    g_run_row_used += run.row_count;
+    return true;
+}
+
+}
+
 bool transforms_vertices() {
-    return false;
+    static const settings::LiveFlag enabled("video.gpu_vertices", "WP_GPU_VERTICES");
+    return enabled() && initialize() && create_run_pipeline();
 }
 
-bool begin_run(const VertexRun&, uint8_t**, uint16_t**) {
-    return false;
+bool begin_run(const VertexRun& run, uint8_t** vertices, uint16_t** indices) {
+    uint32_t bytes = run.vertices * run.stride;
+    if (!add_run(run, bytes, run.indices)) {
+        return false;
+    }
+    *vertices = g_run_vertex_bytes.data() + g_run_vertex_used;
+    *indices = g_run_index_words.data() + g_run_index_used;
+    g_run_vertex_used += bytes;
+    g_run_index_used += run.indices;
+    return true;
 }
 
-bool keep_run(const VertexRun&, const uint8_t*, const uint16_t*, KeptRun&, bool) {
-    return false;
+bool draw_kept(const VertexRun& run, const KeptRun& kept) {
+    if (kept.generation != g_kept_generation || !add_run(run, 0, 0)) {
+        return false;
+    }
+    RunDraw& draw = g_run_draws.back();
+    draw.kept = true;
+    draw.vertex_offset = kept.vertex;
+    draw.first_index = kept.index;
+    g_run_kept++;
+    g_run_kept_indices += run.indices;
+    return true;
 }
 
-bool draw_kept(const VertexRun&, const KeptRun&) {
-    return false;
+bool keep_run(const VertexRun& run, const uint8_t* vertices, const uint16_t* indices, KeptRun& kept, bool placed) {
+    if (!create_kept_buffers()) {
+        return false;
+    }
+    uint32_t bytes = run.vertices * run.stride;
+    if (placed && kept.generation == g_kept_generation) {
+        if (g_run_kept != 0) {
+            flush_pending();
+        }
+    } else {
+        uint32_t vertex = (g_kept_vertex_used + run.stride - 1) / run.stride * run.stride;
+        if (vertex + bytes > kKeptVertexBytes || (g_kept_index_used + run.indices) * sizeof(uint16_t) > kKeptIndexBytes) {
+            return false;
+        }
+        kept.vertex = vertex;
+        kept.index = g_kept_index_used;
+        kept.generation = g_kept_generation;
+        g_kept_vertex_used = vertex + bytes;
+        g_kept_index_used += run.indices;
+    }
+    gl.BindBuffer(GL_ARRAY_BUFFER, g_device.kept_vertices);
+    gl.BufferSubData(GL_ARRAY_BUFFER, kept.vertex, bytes, vertices);
+    gl.BindBuffer(GL_ARRAY_BUFFER, g_device.kept_indices);
+    gl.BufferSubData(GL_ARRAY_BUFFER, static_cast<GLintptr>(kept.index) * sizeof(uint16_t), static_cast<GLsizeiptr>(run.indices) * sizeof(uint16_t), indices);
+    return true;
 }
 
-void reset_kept() {}
+void reset_kept() {
+    if (g_run_kept != 0) {
+        flush_pending();
+    }
+    g_kept_generation++;
+    g_kept_vertex_used = 0;
+    g_kept_index_used = 0;
+}
 
 void finish_frame() {}
 
@@ -1436,52 +2126,11 @@ void draw(const ScreenVertex* vertices, uint32_t count, const DrawSource*) {
     if (count == 0 || !initialize()) {
         return;
     }
-    // Most tiny draws only change a matrix: with no register the batch depends on written, join the pending batch as is.
-    static uint64_t batched_serial = ~0ull;
-    static uint64_t batched_epoch = 0;
-    static int batched_scale = 0;
-    PendingBatch& pending = g_pending;
-    if (!pending.vertices.empty() && batched_serial == register_serial() && batched_epoch == g_texture_epoch && batched_scale == g_scale) {
-        pending.vertices.insert(pending.vertices.end(), vertices, vertices + count);
-        return;
-    }
-    const uint32_t* bp = bp_registers();
-    Constants constants;
-    fill_constants(constants, g_scale);
-    GLuint views[kTextureMaps] = {};
-    GLuint samplers[kTextureMaps] = {};
-    uint32_t used = used_maps(constants);
-    for (uint32_t map = 0; map < kTextureMaps; map++) {
-        if (used & (1u << map)) {
-            views[map] = texture_for(map);
-            samplers[map] = sampler_for(map);
-        }
-    }
-    uint32_t pixel_format = bp[0x43] & 7;
-    AlphaTestResult alpha_test = alpha_test_result(bp[0xF3]);
-    uint32_t blend = (bp[0x41] & 0xFFFF) | (static_cast<uint32_t>(pixel_format == 1) << 16) | (((bp[0x42] >> 8) & 1) << 17) |
-                     (static_cast<uint32_t>(!alpha_test.can_pass) << 18);
-    uint32_t depth = bp[0x40] & 0x1F;
-    bool early_depth = (depth & 1) != 0 && (bp[0x43] & (1u << 6)) != 0 && alpha_test.can_pass && alpha_test.can_fail;
-    bool same = !pending.vertices.empty() && pending.blend == blend && pending.depth == depth && pending.early_depth == early_depth && pending.top_left == bp[0x20] &&
-                pending.bottom_right == bp[0x21] && pending.scissor_offset == bp[kBpScissorOffset] && std::memcmp(&pending.constants, &constants, sizeof constants) == 0 &&
-                std::memcmp(pending.views, views, sizeof views) == 0 && std::memcmp(pending.samplers, samplers, sizeof samplers) == 0;
-    if (!same) {
+    if (!g_run_draws.empty()) {
         flush_pending();
-        pending.constants = constants;
-        std::memcpy(pending.views, views, sizeof views);
-        std::memcpy(pending.samplers, samplers, sizeof samplers);
-        pending.blend = blend;
-        pending.depth = depth;
-        pending.early_depth = early_depth;
-        pending.top_left = bp[0x20];
-        pending.bottom_right = bp[0x21];
-        pending.scissor_offset = bp[kBpScissorOffset];
     }
-    pending.vertices.insert(pending.vertices.end(), vertices, vertices + count);
-    batched_serial = register_serial();
-    batched_epoch = g_texture_epoch;
-    batched_scale = g_scale;
+    select_batch();
+    g_pending.vertices.insert(g_pending.vertices.end(), vertices, vertices + count);
 }
 
 void take_statistics(uint32_t& batches, uint32_t& vertices, double& seconds) {
@@ -1758,12 +2407,21 @@ void finish_copies() {
     }
 }
 
+bool read_target(GLuint framebuffer, uint32_t width, uint32_t height, std::vector<uint32_t>& pixels);
+
 void copy_to_framebuffer(int x, int y, int width, int height, bool depth, const CopyFilter& filter) {
     if (!initialize()) {
         return;
     }
     flush_pending();
     complete_write_backs(false);
+    static GLsync frames_in_flight[2] = {};
+    GLsync& oldest = frames_in_flight[g_frame % 2];
+    if (oldest) {
+        gl.ClientWaitSync(oldest, GL_SYNC_FLUSH_COMMANDS_BIT, kWaitForever);
+        gl.DeleteSync(oldest);
+    }
+    oldest = gl.FenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     g_frame++;
     g_texture_epoch++;
     x = std::max(0, x);
@@ -1783,6 +2441,19 @@ void copy_to_framebuffer(int x, int y, int width, int height, bool depth, const 
         }
     }
     run_copy(g_device.frame, physical_width, physical_height, x, y, width, height, kXfbFormat, false, false, depth, filter);
+    static const char* const sequence = std::getenv("WP_DUMP_SEQUENCE");
+    if (sequence) {
+        static const uint64_t first = std::strtoull(sequence, nullptr, 10);
+        static const uint64_t frames = std::strchr(sequence, ',') ? std::strtoull(std::strchr(sequence, ',') + 1, nullptr, 10) : 30;
+        std::vector<uint32_t> pixels;
+        if (g_frame >= first && g_frame < first + frames && read_target(g_device.frame.framebuffer, physical_width, physical_height, pixels)) {
+            std::error_code created;
+            std::filesystem::create_directories("captures/seq", created);
+            char name[64];
+            std::snprintf(name, sizeof name, "captures/seq/%06llu_f.png", static_cast<unsigned long long>(g_frame));
+            video::save_png(name, pixels, physical_width, physical_height);
+        }
+    }
 }
 
 void apply_scale() {

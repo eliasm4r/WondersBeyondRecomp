@@ -768,8 +768,7 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
   48 s) for the same processor use. Measured headless in the heavy zone at 120 fps: game thread busy 98 -> 56-59 %,
   same frame rate, no sound block missing, stale or overwritten, mean start of a sound buffer 0.45 -> 0.85 ms
   late. A first version that slept a flat 1 ms without looking at these deadlines crackled. The GPU thread already sleeps on its queue and the draw helpers
-  after 4000 pauses, so nothing else spins. The OpenGL renderer (other systems) has none of the vertex-shader
-  paths: it is not built on Windows and its `transforms_vertices` returns false.
+  after 4000 pauses, so nothing else spins.
 - The NVIDIA constant-buffer cache dropped all 4096 buffers whenever it was full, about twice a second in the main
   zone, so 8000 to 9000 immutable buffers were created each second (53 ms). It now drops only those not used since
   the previous clean-up, and everything only when three quarters were in use.
@@ -784,6 +783,24 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
   alarm: its `next` pointer no longer led to the alarms behind it, among them the frame timer of the main loop
   (0x804ba548), and the main thread waited for ever on its message queue. `ios::open` now returns the lowest free
   number, as IOS does. Found from a copy of the hung game's memory taken with gdb (alarm queue head at r13-0x2e08).
+
+## OpenGL renderer (macOS and Linux)
+
+- Configuring with `-DWP_OPENGL=ON` on Windows builds the OpenGL renderer and the SDL window loop instead of
+  Direct3D 11, only to test the renderer of the other systems on a Windows PC. Releases for Windows stay Direct3D 11:
+  it has every feature and was measured faster.
+- The OpenGL renderer has the vertex shader (`kRunSource`, lighting included) and the models kept in video memory.
+  It reads the same per-run rows as Direct3D but writes ordinary depth: `(z * scale + w * offset) / 16777215`, where
+  the header holds `16777215 - offset` for the reversed depth of Direct3D. `gx::project` likewise picks the reversed
+  formula only for `_WIN32 && !WP_OPENGL`; with plain `_WIN32` the Windows OpenGL test build lost every 3D model and
+  only the sky and the map were left.
+- A hidden or occluded window does not make `SDL_GL_SwapWindow` wait, so nothing limited how many frames the GPU
+  thread queued: headless, the driver's private memory grew by about 250 MB a second up to 27 GB. A fence is placed
+  at every copy to the frame buffer and the one of two frames earlier is waited for, as Direct3D's frame latency of
+  two. Memory then stays near 1.1 GB and the drawing time fell from 708 to 120 ms a second.
+- `WP_DUMP_SEQUENCE=first,count` writes the final image of those frames to `captures/seq` (no in-between images).
+- Measured headless on an RTX 4070, frames 1500-1505 of `still.txt`: 2 % of pixels differ from Direct3D, as between
+  two Direct3D runs.
 
 ## Code notes
 

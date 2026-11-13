@@ -761,7 +761,7 @@ bool project(const float* eye, float* screen) {
     }
     screen[0] = x * p.x_scale + w * p.x_offset;
     screen[1] = y * p.y_scale + w * p.y_offset;
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(WP_OPENGL)
     screen[2] = (w * (kDepthRange - p.z_offset) - z * p.z_scale) / kDepthRange;
 #else
     screen[2] = (z * p.z_scale + w * p.z_offset) / kDepthRange;

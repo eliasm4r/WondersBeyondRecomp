@@ -270,7 +270,13 @@ int main(int argc, char** argv) {
     SetUnhandledExceptionFilter(report_crash);
     timeBeginPeriod(1);
     std::signal(SIGABRT, report_crash);
+#ifdef WP_OPENGL
+    wp::start_with_stack(size_t{512} << 20, [argc, argv] { std::exit(run(argc, argv)); });
+    wp::video::serve_main_thread();
+    return 0;
+#else
     return run(argc, argv);
+#endif
 #else
     std::signal(SIGSEGV, report_crash);
     std::signal(SIGBUS, report_crash);
