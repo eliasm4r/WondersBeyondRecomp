@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <csetjmp>
 #include <cstdint>
 #include <string>
@@ -14,6 +15,8 @@ namespace wp {
 bool decrementer_due();
 bool decrementer_imminent();
 void decrementer_fired();
+std::chrono::microseconds ticks_ahead(uint64_t tick);
+std::chrono::microseconds decrementer_wait();
 void print_call_stack();
 void start_profiler();
 void print_profile();

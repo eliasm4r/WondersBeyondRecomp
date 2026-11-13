@@ -243,9 +243,6 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
     SetUnhandledExceptionFilter(report_crash);
     timeBeginPeriod(1);
-    std::signal(SIGSEGV, report_crash);
-    std::signal(SIGILL, report_crash);
-    std::signal(SIGFPE, report_crash);
     std::signal(SIGABRT, report_crash);
     return run(argc, argv);
 #else

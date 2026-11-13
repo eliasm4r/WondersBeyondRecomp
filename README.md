@@ -65,7 +65,7 @@ Run the tests with `ctest` in `build/out`. Technical notes on the fixes so far a
 python tools/make_setup.py
 ```
 
-`build/dist/WondersBeyondRecomp-Setup.zip` is for a PC without any of the tools above. It holds the official Python with its window toolkit, the scripts of `installer/` and the sources of this repository, and nothing of the game. Unzip it and start `Setup.exe`: it asks for a disc image of the European version and a folder, downloads the build tools, translates and compiles the game on that PC and adds a shortcut. It only installs; every setting is in the game (F1). It is at the test stage and Windows only.
+`build/dist/WondersBeyondRecomp-Setup.zip` is for a PC without any of the tools above. It holds the official Python with its window toolkit, the scripts of `installer/` and the sources of this repository, and nothing of the game. Unzip it and start `Setup.exe`, or `python/Setup (if blocked).exe` when Smart App Control refuses the first one: it asks for a disc image of the European version and a folder, downloads the build tools, translates and compiles the game on that PC and adds a shortcut. It only installs; every setting is in the game (F1). It is at the test stage and Windows only.
 
 The function list in `games/pokepark2/analysis/` was produced with [decomp-toolkit](https://github.com/encounter/decomp-toolkit).
 

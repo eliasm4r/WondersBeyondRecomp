@@ -21,6 +21,7 @@ bool frame_owed();
 bool take_frame_held();
 void run_frame_task(std::function<void()> task);
 bool wait_for_token(std::chrono::milliseconds limit);
+void wait_for_interrupt(std::chrono::microseconds limit);
 double facing_area(const float a[3], const float b[3], const float c[3]);
 
 }

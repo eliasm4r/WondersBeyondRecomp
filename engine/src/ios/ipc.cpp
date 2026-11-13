@@ -10,6 +10,7 @@
 #include "wp/cpu.h"
 #include "wp/ios.h"
 #include "wp/memory.h"
+#include "wp/runtime.h"
 
 namespace wp::ipc {
 
@@ -237,6 +238,14 @@ void update() {
 
 bool interrupt_pending() {
     return (g_interrupt_flags & g_interrupt_mask) != 0;
+}
+
+std::chrono::microseconds idle_wait() {
+    std::chrono::microseconds wait = std::chrono::microseconds::max();
+    for (const Event& event : g_events) {
+        wait = std::min(wait, ticks_ahead(event.due));
+    }
+    return wait;
 }
 
 void report() {

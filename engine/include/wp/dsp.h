@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 
 namespace wp::dsp {
@@ -18,6 +19,7 @@ struct Status {
 };
 
 void update();
+std::chrono::microseconds idle_wait();
 Status status();
 uint16_t read16(uint32_t address);
 void write16(uint32_t address, uint16_t value);

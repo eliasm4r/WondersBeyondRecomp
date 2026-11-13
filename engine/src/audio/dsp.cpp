@@ -631,6 +631,21 @@ void update() {
     report(now);
 }
 
+std::chrono::microseconds idle_wait() {
+    if (!g_core) {
+        return std::chrono::microseconds::max();
+    }
+    if (!halted() && !g_core->DSPState().GetAnalyzer().IsIdleSkip(g_core->DSPState().pc)) {
+        return std::chrono::microseconds(0);
+    }
+    if (!(g_audio_dma.control & 0x8000) || g_audio_dma.remaining == 0) {
+        return std::chrono::microseconds::max();
+    }
+    uint32_t rate = (rd32(kAudioControl) & kAudioDmaRate32k) ? 32000 : 48000;
+    auto buffer = std::chrono::duration<double>(double(kFramesPerBlock) * g_audio_dma.remaining / rate);
+    return std::chrono::duration_cast<std::chrono::microseconds>(g_audio_dma.next_block + buffer - g_audio_dma.clock);
+}
+
 uint16_t read16(uint32_t address) {
     start();
     uint32_t reg = 0x5000 | (address & 0xFFE);

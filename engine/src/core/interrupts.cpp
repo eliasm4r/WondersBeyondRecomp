@@ -15,6 +15,7 @@
 #include "wp/memory.h"
 #include "wp/profile.h"
 #include "wp/runtime.h"
+#include "wp/settings.h"
 #include "wp/si.h"
 #include "wp/threads.h"
 #include "wp/video.h"
@@ -220,11 +221,23 @@ void poll_interrupts(Cpu& c) {
     if (idle && previous_idle) {
         g_idle_nanoseconds += std::chrono::duration_cast<std::chrono::nanoseconds>(now - previous_poll).count();
     }
+    bool resting = idle && previous_idle;
     previous_poll = now;
     previous_idle = idle;
     if (now < g_next_retrace) {
         if (decrementer_imminent()) {
             g_poll_counter = 1;
+            return;
+        }
+        static const settings::LiveFlag sleeps("system.idle_sleep", "WP_IDLE_SLEEP");
+        if (resting && sleeps()) {
+            constexpr std::chrono::microseconds kSpin(250);
+            constexpr std::chrono::microseconds kLongestSleep(1000);
+            auto wait = std::min({std::chrono::duration_cast<std::chrono::microseconds>(g_next_retrace - now), decrementer_wait(), dsp::idle_wait(), ipc::idle_wait(), kLongestSleep + kSpin}) - kSpin;
+            if (wait.count() > 0) {
+                gx::wait_for_interrupt(wait);
+                g_poll_counter = 1;
+            }
         }
         return;
     }

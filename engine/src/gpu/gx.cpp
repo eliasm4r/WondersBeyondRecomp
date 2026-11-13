@@ -22,9 +22,11 @@
 #include <filesystem>
 #include <mutex>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
+#include "gx_render_common.h"
 #include "wp/gx_lighting.h"
 #include "wp/gx_render.h"
 #include "wp/gx_state.h"
@@ -589,8 +591,7 @@ void begin_colors() {
     }
 }
 
-void rasterize_colors(const Vertex& vertex, const float* eye, float out[2][4]) {
-    uint8_t result[2][4];
+void color_bytes(const Vertex& vertex, const float* eye, uint8_t result[2][4]) {
     if (g_colors.lit) {
         float normal[3];
         lighting::transform_normal(g_xf, vertex.position_matrix, vertex.normal, normal);
@@ -604,6 +605,11 @@ void rasterize_colors(const Vertex& vertex, const float* eye, float out[2][4]) {
             result[k][3] = g_colors.from_vertex[k][1] ? vertex.color[k][3] : g_colors.material[k][3];
         }
     }
+}
+
+void rasterize_colors(const Vertex& vertex, const float* eye, float out[2][4]) {
+    uint8_t result[2][4];
+    color_bytes(vertex, eye, result);
     for (uint32_t k = 0; k < 2; k++) {
         for (uint32_t i = 0; i < 4; i++) {
             out[k][i] = kUnit[result[k][i]];
@@ -1182,6 +1188,116 @@ bool run_waiting() {
     return (state & 0xFFFF) < ((state >> 16) & 0xFFFF);
 }
 
+struct RunFormat {
+    uint32_t stride;
+    uint32_t inputs;
+    bool normal;
+    bool indices;
+    bool lit;
+};
+
+struct RunPlace {
+    uint32_t vertex;
+    uint32_t index;
+};
+
+RunFormat g_format;
+RunPlace g_places[kRunLimit];
+uint32_t g_pool_first = 0;
+uint8_t* g_run_vertices = nullptr;
+uint16_t* g_run_indices = nullptr;
+float g_run_rows[render::kRunMaxRows][4];
+uint64_t g_palette_serial = 1;
+bool g_pool_packs = false;
+
+uint32_t index_count(const DrawJob& job) {
+    switch ((job.command >> 3) & 7) {
+    case 0:
+    case 1:
+        return job.count / 4 * 6;
+    case 2:
+        return job.count / 3 * 3;
+    default:
+        return job.count >= 3 ? (job.count - 2) * 3 : 0;
+    }
+}
+
+void pack_draw(uint32_t at) {
+    const DrawJob& job = g_run[at];
+    const Layout& layout = *job.layout;
+    const RunFormat format = g_format;
+    const uint32_t count = job.count;
+    const uint32_t first = g_places[at].vertex;
+    uint8_t* out = g_run_vertices + static_cast<size_t>(first) * format.stride;
+    const uint8_t* stream = job.data;
+    Vertex vertex;
+    begin_vertex(vertex);
+    for (uint32_t i = 0; i < count; i++, out += format.stride) {
+        decode_vertex(layout, stream, vertex);
+        std::memcpy(out, vertex.position, 12);
+        if (format.lit) {
+            std::memcpy(out + 12, vertex.color, 8);
+        } else {
+            uint8_t colors[2][4];
+            float eye[3] = {};
+            if (g_colors.lit) {
+                transform_position(vertex, eye);
+            }
+            color_bytes(vertex, eye, colors);
+            std::memcpy(out + 12, colors, 8);
+        }
+        uint8_t* p = out + 20;
+        if (format.normal) {
+            std::memcpy(p, vertex.normal, 12);
+            p += 12;
+        }
+        if (format.indices) {
+            p[0] = static_cast<uint8_t>(vertex.position_matrix);
+            for (uint32_t k = 0; k < kTexCoordCount; k++) {
+                p[1 + k] = static_cast<uint8_t>(vertex.texture_matrix[k]);
+            }
+            p[9] = p[10] = p[11] = 0;
+            p += 12;
+        }
+        std::memcpy(p, vertex.texture, format.inputs * sizeof(float[2]));
+    }
+    uint16_t* index = g_run_indices + g_places[at].index;
+    auto triangle = [&index, first](uint32_t a, uint32_t b, uint32_t c) {
+        index[0] = static_cast<uint16_t>(first + a);
+        index[1] = static_cast<uint16_t>(first + b);
+        index[2] = static_cast<uint16_t>(first + c);
+        index += 3;
+    };
+    switch ((job.command >> 3) & 7) {
+    case 0:
+    case 1:
+        for (uint32_t i = 0; i + 3 < count; i += 4) {
+            triangle(i, i + 1, i + 2);
+            triangle(i, i + 2, i + 3);
+        }
+        break;
+    case 2:
+        for (uint32_t i = 0; i + 2 < count; i += 3) {
+            triangle(i, i + 1, i + 2);
+        }
+        break;
+    case 3:
+        for (uint32_t i = 0; i + 2 < count; i++) {
+            if (i & 1) {
+                triangle(i + 1, i, i + 2);
+            } else {
+                triangle(i, i + 1, i + 2);
+            }
+        }
+        break;
+    default:
+        for (uint32_t i = 1; i + 1 < count; i++) {
+            triangle(0, i, i + 1);
+        }
+        break;
+    }
+}
+
 bool build_some(uint32_t thread) {
     uint64_t state = g_pool.state.load();
     uint32_t index = state & 0xFFFF;
@@ -1194,7 +1310,11 @@ bool build_some(uint32_t thread) {
     }
     uint32_t end = std::min(count, index + kRunChunk);
     for (uint32_t i = index; i < end; i++) {
-        build_draw(g_run[i], g_scratch[thread], g_outputs[i]);
+        if (g_pool_packs) {
+            pack_draw(g_pool_first + i);
+        } else {
+            build_draw(g_run[i], g_scratch[thread], g_outputs[i]);
+        }
     }
     g_pool.done.fetch_add(end - index);
     return true;
@@ -1260,6 +1380,393 @@ void check_draw(uint32_t index) {
     }
 }
 
+void copy_rows(float (*to)[4], uint32_t address) {
+    std::memcpy(to, &g_xf[address], sizeof(float[3][4]));
+}
+
+uint32_t begin_packed_run() {
+    const TexGenState& texgen = g_texgen;
+    const ProjectionState& p = g_projection;
+    RunFormat format{};
+    for (uint32_t i = 0; i < texgen.count; i++) {
+        uint32_t source = texgen.unit[i].source;
+        format.normal |= source == 1;
+        if (source >= 5 && source < 13) {
+            format.inputs = std::max(format.inputs, source - 4);
+        }
+    }
+    format.indices = (g_vcd_low & 0x1FF) != 0;
+    static const bool processor_lights = std::getenv("WP_CPU_LIGHTS") != nullptr;
+    format.lit = g_colors.lit && !processor_lights;
+    format.normal |= format.lit;
+    format.stride = 20 + (format.normal ? 12 : 0) + (format.indices ? 12 : 0) + format.inputs * 8;
+    g_format = format;
+    uint32_t rows = render::kRunHeaderRows + render::kRunUnitRows * texgen.count;
+    std::memset(g_run_rows, 0, sizeof(float[4]) * rows);
+    float header[4][4] = {{p.a, p.b, p.c, p.d},
+                          {p.e, p.f, p.orthographic ? 1.0f : 0.0f, format.indices ? 0.0f : 4.0f},
+                          {p.x_scale, p.x_offset, p.y_scale, p.y_offset},
+                          {p.z_scale, kDepthRange - p.z_offset, 0.0f, static_cast<float>(texgen.count + (texgen.dual ? 16 : 0))}};
+    std::memcpy(g_run_rows, header, sizeof header);
+    if (!format.indices) {
+        copy_rows(g_run_rows + 4, (g_xf[0x1018] & 0x3F) * 4);
+    }
+    for (uint32_t i = 0; i < texgen.count; i++) {
+        const TexGenUnit& unit = texgen.unit[i];
+        uint32_t at = render::kRunHeaderRows + render::kRunUnitRows * i;
+        g_run_rows[at][0] = static_cast<float>(unit.source);
+        g_run_rows[at][1] = static_cast<float>((unit.projected ? 1 : 0) | (unit.abc1 ? 2 : 0) | (((unit.post >> 8) & 1) ? 4 : 0));
+        g_run_rows[at][2] = format.indices ? 0.0f : static_cast<float>(at + 1);
+        if (!format.indices) {
+            copy_rows(g_run_rows + at + 1, g_default_texture_matrix[i] * 4);
+        }
+        copy_rows(g_run_rows + at + 4, 0x500 + (unit.post & 0x3F) * 4);
+    }
+    if (format.lit) {
+        float (*light)[4] = g_run_rows + rows;
+        std::memset(light, 0, sizeof(float[4]) * render::kRunLightRows);
+        g_run_rows[3][3] += 32.0f;
+        uint32_t used = 0;
+        for (uint32_t k = 0; k < 2; k++) {
+            uint32_t color = g_xf[0x100E + k] & 0x7FFF;
+            uint32_t alpha = g_xf[0x1010 + k] & 0x7FFF;
+            light[0][k] = static_cast<float>(color);
+            light[0][2 + k] = static_cast<float>(alpha);
+            used |= (color & 2) ? ((color >> 2) & 15) | (((color >> 11) & 15) << 4) : 0;
+            used |= (alpha & 2) ? ((alpha >> 2) & 15) | (((alpha >> 11) & 15) << 4) : 0;
+            for (uint32_t i = 0; i < 4; i++) {
+                light[1 + k][i] = static_cast<float>((g_xf[0x100C + k] >> (24 - 8 * i)) & 0xFF);
+                light[3 + k][i] = static_cast<float>((g_xf[0x100A + k] >> (24 - 8 * i)) & 0xFF);
+            }
+        }
+        if (!format.indices) {
+            copy_rows(light + 5, render::kNormalWords + (g_xf[0x1018] & 31) * 3);
+        }
+        for (uint32_t n = 0; n < 8; n++) {
+            if (used & (1u << n)) {
+                uint32_t base = 0x600 + n * 16;
+                for (uint32_t i = 0; i < 4; i++) {
+                    light[8 + n * 4][i] = static_cast<float>((g_xf[base + 3] >> (24 - 8 * i)) & 0xFF);
+                }
+                copy_rows(light + 9 + n * 4, base + 4);
+            }
+        }
+        rows += render::kRunLightRows;
+    }
+    return rows;
+}
+
+constexpr uint32_t kKeptMinVertices = 32;
+constexpr uint32_t kKeptCheckBytes = 64;
+constexpr uint32_t kKeptChanges = 4;
+constexpr uint64_t kKeptSleepFrames = 64;
+constexpr size_t kKeptLimit = 1u << 15;
+constexpr uint32_t kKeptArrays = 12;
+
+struct KeptRange {
+    uint32_t first;
+    uint32_t last;
+    uint32_t size;
+};
+
+struct KeptList {
+    uint64_t spans = 0;
+    uint64_t content = 0;
+    uint64_t wake = 0;
+    uint64_t drawn = ~0ull;
+    uint32_t changes = 0;
+    uint32_t arrays = 0;
+    bool scanned = false;
+    bool seen = false;
+    bool placed = false;
+    bool stored = false;
+    bool lacks_color[2] = {};
+    KeptRange ranges[kKeptArrays] = {};
+    render::KeptRun kept;
+    std::vector<uint8_t> copy;
+};
+
+std::unordered_map<uint64_t, KeptList> g_kept;
+uint64_t g_kept_frame = 0;
+uint32_t g_kept_drawn = 0;
+uint32_t g_kept_decoded = 0;
+uint32_t g_kept_stored = 0;
+uint64_t g_kept_checked = 0;
+uint32_t g_kept_held = 0;
+bool g_kept_refused = false;
+uint32_t g_kept_verified = 0;
+uint32_t g_kept_different = 0;
+
+uint64_t mix(uint64_t hash, uint64_t value) {
+    hash = (hash ^ value) * 1099511628211ull;
+    return hash ^ (hash >> 29);
+}
+
+KeptList* find_kept(uint32_t first, uint32_t end, uint32_t vertices, uint32_t indices) {
+    if (vertices < kKeptMinVertices || (g_colors.lit && !g_format.lit)) {
+        return nullptr;
+    }
+    for (uint32_t i = first; i < end; i++) {
+        if (!g_run[i].in_list) {
+            return nullptr;
+        }
+    }
+    uint64_t words[8] = {static_cast<uint64_t>(reinterpret_cast<uintptr_t>(g_run[first].data)),
+                         static_cast<uint64_t>(reinterpret_cast<uintptr_t>(g_run[end - 1].data)),
+                         end - first,
+                         vertices,
+                         indices,
+                         g_format.stride | (g_format.inputs << 8) | (g_format.normal ? 1u << 16 : 0) | (g_format.indices ? 1u << 17 : 0) | (g_format.lit ? 1u << 18 : 0),
+                         g_vcd_low,
+                         g_vcd_high};
+    uint64_t key = mix(render::hash_bytes(reinterpret_cast<const uint8_t*>(words), sizeof words), render::hash_bytes(reinterpret_cast<const uint8_t*>(g_vat), sizeof g_vat));
+    KeptList& list = g_kept[key];
+    return g_kept_frame < list.wake ? nullptr : &list;
+}
+
+uint64_t hash_spans(uint32_t first, uint32_t end) {
+    uint64_t hash = 0;
+    const uint8_t* begin = g_run[first].data - 3;
+    const uint8_t* stop = begin;
+    for (uint32_t i = first; i < end; i++) {
+        const DrawJob& job = g_run[i];
+        if (job.data - 3 != stop) {
+            hash = mix(hash, render::hash_bytes(begin, static_cast<size_t>(stop - begin)));
+            begin = job.data - 3;
+        }
+        stop = job.data + static_cast<size_t>(job.count) * job.layout->size;
+    }
+    g_kept_checked += static_cast<uint64_t>(stop - begin);
+    return mix(hash, render::hash_bytes(begin, static_cast<size_t>(stop - begin)));
+}
+
+void scan_ranges(KeptList& list, uint32_t first, uint32_t end) {
+    list.arrays = 0;
+    list.lacks_color[0] = false;
+    list.lacks_color[1] = false;
+    for (KeptRange& range : list.ranges) {
+        range = {~0u, 0, 0};
+    }
+    for (uint32_t i = first; i < end; i++) {
+        const DrawJob& job = g_run[i];
+        const Layout& layout = *job.layout;
+        const Element* elements[kKeptArrays] = {&layout.position, &layout.normal, &layout.color[0], &layout.color[1]};
+        for (uint32_t k = 0; k < kTexCoordCount; k++) {
+            elements[4 + k] = &layout.texture[k];
+        }
+        list.lacks_color[0] |= layout.color[0].mode == kNone;
+        list.lacks_color[1] |= layout.color[1].mode == kNone;
+        uint32_t skip = (layout.position_matrix ? 1 : 0) + static_cast<uint32_t>(__builtin_popcount(layout.texture_matrices));
+        uint32_t steps[kKeptArrays];
+        uint32_t used = 0;
+        for (uint32_t a = 0; a < kKeptArrays; a++) {
+            const Element& element = *elements[a];
+            steps[a] = element.mode == kDirect ? element.direct_size : (element.mode == kIndex8 ? 1 : (element.mode == kIndex16 ? 2 : 0));
+            if (element.mode == kIndex8 || element.mode == kIndex16) {
+                used |= 1u << a;
+                list.ranges[a].size = std::max(list.ranges[a].size, element.direct_size);
+            }
+        }
+        list.arrays |= used;
+        const uint8_t* stream = job.data;
+        for (uint32_t v = 0; v < job.count; v++) {
+            stream += skip;
+            for (uint32_t a = 0; a < kKeptArrays; a++) {
+                if (used & (1u << a)) {
+                    uint32_t index = steps[a] == 1 ? stream[0] : be16(stream);
+                    KeptRange& range = list.ranges[a];
+                    range.first = std::min(range.first, index);
+                    range.last = std::max(range.last, index);
+                }
+                stream += steps[a];
+            }
+        }
+    }
+}
+
+bool kept_content(KeptList& list, uint32_t first, uint32_t end, uint32_t vertices, uint64_t& content) {
+    uint64_t hash = hash_spans(first, end);
+    if (!list.scanned || list.spans != hash) {
+        scan_ranges(list, first, end);
+        list.spans = hash;
+        list.scanned = true;
+    }
+    size_t budget = static_cast<size_t>(vertices) * kKeptCheckBytes;
+    for (uint32_t a = 0; a < kKeptArrays; a++) {
+        if (!(list.arrays & (1u << a))) {
+            continue;
+        }
+        const ArrayState& state = g_arrays[a];
+        const KeptRange& range = list.ranges[a];
+        size_t offset = static_cast<size_t>(range.first) * state.stride;
+        if (range.first > range.last) {
+            continue;
+        }
+        size_t bytes = static_cast<size_t>(range.last - range.first) * state.stride + range.size;
+        if (bytes > budget || static_cast<size_t>(state.address & kAddressMask) + offset + bytes + kArrayReadMargin > kPhysicalSize) {
+            return false;
+        }
+        budget -= bytes;
+        g_kept_checked += bytes;
+        hash = mix(hash, (static_cast<uint64_t>(state.stride) << 32) | state.address);
+        hash = mix(hash, render::hash_bytes(state.base + offset, bytes));
+    }
+    for (uint32_t k = 0; k < 2; k++) {
+        uint32_t controls = g_xf[0x100E + k] | g_xf[0x1010 + k];
+        uint32_t sources = (g_colors.from_vertex[k][0] ? 1u : 0u) | (g_colors.from_vertex[k][1] ? 2u : 0u);
+        bool material = g_format.lit ? list.lacks_color[k] && (controls & 0x41) != 0 : list.lacks_color[k] || sources != 3;
+        hash = mix(hash, g_format.lit ? 4 : sources);
+        hash = mix(hash, material ? (1ull << 32) | g_xf[0x100C + k] : 0);
+    }
+    if (g_format.indices) {
+        hash = mix(hash, (static_cast<uint64_t>(g_xf[0x1019]) << 32) | g_xf[0x1018]);
+    }
+    content = hash;
+    return true;
+}
+
+void forget_kept() {
+    g_kept.clear();
+    g_kept_held = 0;
+    render::reset_kept();
+}
+
+void pack_run(uint32_t count, uint32_t helpers) {
+    uint32_t cull = (g_bp[0x00] >> 14) & 3;
+    if (cull == 3) {
+        return;
+    }
+    static const settings::LiveFlag keeps("video.keep_models", "WP_KEEP_MODELS");
+    const bool keeping = keeps() && !g_kept_refused;
+    uint32_t rows = begin_packed_run();
+    uint32_t first = 0;
+    while (first < count) {
+        uint32_t end = first;
+        uint32_t vertices = 0;
+        uint32_t indices = 0;
+        while (end < count && vertices + g_run[end].count <= 0xFFFF) {
+            g_places[end] = {vertices, indices};
+            vertices += g_run[end].count;
+            indices += index_count(g_run[end]);
+            end++;
+        }
+        if (indices != 0) {
+            render::VertexRun run;
+            run.stride = g_format.stride;
+            run.texture_inputs = g_format.inputs;
+            run.normal = g_format.normal;
+            run.matrix_indices = g_format.indices;
+            run.cull = cull;
+            run.vertices = vertices;
+            run.indices = indices;
+            run.rows = g_run_rows;
+            run.row_count = rows;
+            run.palette = g_format.indices ? g_xf : nullptr;
+            run.palette_serial = g_palette_serial;
+            if (g_recording) {
+                uint64_t words[6] = {static_cast<uint64_t>(reinterpret_cast<uintptr_t>(g_run[first].data)),
+                                     end - first,
+                                     vertices,
+                                     indices,
+                                     g_format.stride | (static_cast<uint64_t>(rows) << 16) | (static_cast<uint64_t>(cull) << 32),
+                                     (static_cast<uint64_t>(g_bp[0x94]) << 32) | g_bp[0x88]};
+                run.key = render::hash_bytes(reinterpret_cast<const uint8_t*>(words), sizeof words) | 1;
+                for (uint32_t reg = 0x101A; reg <= 0x1026; reg++) {
+                    run.camera = (run.camera ^ g_xf[reg]) * 0x9E3779B1u;
+                }
+                run.matrix = g_xf[0x1018] & 0x3F;
+            }
+            KeptList* list = keeping ? find_kept(first, end, vertices, indices) : nullptr;
+            uint64_t content = 0;
+            if (list && !kept_content(*list, first, end, vertices, content)) {
+                list->wake = g_kept_frame + kKeptSleepFrames;
+                list = nullptr;
+            }
+            static const bool verify = std::getenv("WP_CHECK_KEPT") != nullptr;
+            const bool held = list && list->stored && list->content == content;
+            if (held && !verify && render::draw_kept(run, list->kept)) {
+                g_kept_drawn++;
+                list->drawn = g_kept_frame;
+                first = end;
+                continue;
+            }
+            if (!render::begin_run(run, &g_run_vertices, &g_run_indices)) {
+                return;
+            }
+            uint32_t jobs = end - first;
+            if (jobs >= kParallelRun && helpers != 0) {
+                g_pool_packs = true;
+                g_pool_first = first;
+                build_run(jobs);
+                g_pool_packs = false;
+            } else {
+                for (uint32_t i = first; i < end; i++) {
+                    pack_draw(i);
+                }
+            }
+            const size_t vertex_bytes = static_cast<size_t>(vertices) * g_format.stride;
+            const size_t index_bytes = static_cast<size_t>(indices) * sizeof(uint16_t);
+            if (held && !verify) {
+                list->stored = false;
+            } else if (held) {
+                g_kept_verified++;
+                if (list->copy.size() != vertex_bytes + index_bytes || std::memcmp(list->copy.data(), g_run_vertices, vertex_bytes) != 0 ||
+                    std::memcmp(list->copy.data() + vertex_bytes, g_run_indices, index_bytes) != 0) {
+                    g_kept_different++;
+                }
+            } else if (list) {
+                g_kept_decoded++;
+                uint64_t after = 0;
+                if (list->drawn != g_kept_frame && list->seen && list->content == content && kept_content(*list, first, end, vertices, after) && after == content) {
+                    list->changes = 0;
+                    list->stored = render::keep_run(run, g_run_vertices, g_run_indices, list->kept, list->placed);
+                    list->placed = list->stored;
+                    if (list->stored) {
+                        g_kept_stored++;
+                        g_kept_held++;
+                        if (verify) {
+                            list->copy.assign(g_run_vertices, g_run_vertices + vertex_bytes);
+                            list->copy.insert(list->copy.end(), reinterpret_cast<const uint8_t*>(g_run_indices), reinterpret_cast<const uint8_t*>(g_run_indices) + index_bytes);
+                        }
+                    } else {
+                        g_kept_refused = g_kept_held == 0;
+                    }
+                    if (!list->stored || g_kept.size() > kKeptLimit) {
+                        forget_kept();
+                    }
+                } else {
+                    if (list->seen && ++list->changes >= kKeptChanges) {
+                        list->changes = kKeptChanges - 1;
+                        list->wake = g_kept_frame + kKeptSleepFrames;
+                    }
+                    list->content = content;
+                    list->seen = true;
+                    list->stored = false;
+                }
+            }
+        }
+        first = end;
+    }
+}
+
+bool run_of_triangles() {
+    for (const DrawJob& job : g_run) {
+        if (((job.command >> 3) & 7) >= 5) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool run_in_lists() {
+    for (const DrawJob& job : g_run) {
+        if (!job.in_list) {
+            return false;
+        }
+    }
+    return true;
+}
+
 void flush_run() {
     uint32_t count = static_cast<uint32_t>(g_run.size());
     if (count == 0) {
@@ -1275,7 +1782,9 @@ void flush_run() {
     begin_projection();
     begin_colors();
     g_recording = render::interpolating();
-    if (count >= kParallelRun && helpers != 0 && !g_log_draws && !g_capture) {
+    if (!g_log_draws && !g_capture && run_of_triangles() && (!g_recording || run_in_lists()) && render::transforms_vertices()) {
+        pack_run(count, helpers);
+    } else if (count >= kParallelRun && helpers != 0 && !g_log_draws && !g_capture) {
         build_run(count);
         for (uint32_t i = 0; i < count; i++) {
             if (check) {
@@ -1397,6 +1906,7 @@ void execute_copy(uint32_t value) {
         std::fprintf(g_capture, "copy to texture at %06x, source %06x size %06x, control %06x, pixel format %06x\n", g_bp[0x4B] << 5, g_bp[0x49], g_bp[0x4A], value, g_bp[0x43]);
     }
     if (value & kCopyToFramebuffer) {
+        g_kept_frame++;
         capture_frame_boundary();
         uint32_t source = g_bp[0x49];
         uint32_t size = g_bp[0x4A];
@@ -1431,6 +1941,15 @@ void execute_copy(uint32_t value) {
                 }
                 log::write("fps", "%.1f fps, %u draw batches, %u vertices, %.0f ms drawing, %u draws with indirect texturing, %u with wrapped coordinates, %u presents skipped", g_frames / seconds, batches,
                            vertices, batch_seconds * 1000.0, g_indirect_draws, g_coordinate_draws, g_skipped_presents.exchange(0));
+                if (g_kept_drawn + g_kept_decoded + g_kept_verified != 0) {
+                    log::write("models", "%u runs drawn from video memory, %u decoded, %u stored, %u KB compared, %zu lists known, %u verified, %u differ", g_kept_drawn, g_kept_decoded,
+                               g_kept_stored, static_cast<unsigned>(g_kept_checked >> 10), g_kept.size(), g_kept_verified, g_kept_different);
+                }
+                g_kept_verified = 0;
+                g_kept_drawn = 0;
+                g_kept_decoded = 0;
+                g_kept_stored = 0;
+                g_kept_checked = 0;
                 static double previous_cpu = 0.0;
                 static double previous_gpu = 0.0;
                 double cpu = g_cpu_clock_known.load() ? thread_seconds(g_cpu_clock) : 0.0;
@@ -1486,6 +2005,21 @@ std::atomic<bool> g_token_pending{false};
 std::atomic<uint32_t> g_token{0};
 std::atomic<uint32_t> g_token_sent{0};
 std::atomic<uint32_t> g_token_done{0};
+std::mutex g_interrupt_lock;
+std::condition_variable g_interrupt_raised;
+
+#ifdef _WIN32
+const HANDLE g_interrupt_event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+#endif
+
+void raise_interrupt() {
+    g_interrupt_lock.lock();
+    g_interrupt_lock.unlock();
+    g_interrupt_raised.notify_all();
+#ifdef _WIN32
+    SetEvent(g_interrupt_event);
+#endif
+}
 
 uint64_t g_register_serial = 0;
 
@@ -1510,6 +2044,7 @@ void load_bp(uint32_t word) {
     if (reg == kBpDrawDone && (value & 2)) {
         render::finish_copies();
         g_finish_pending = true;
+        raise_interrupt();
         render::finish_frame();
     } else if (reg == kBpToken || reg == kBpTokenInterrupt) {
         render::finish_copies();
@@ -1517,6 +2052,7 @@ void load_bp(uint32_t word) {
         if (reg == kBpTokenInterrupt) {
             g_token_pending = true;
             g_token_done = value & 0xFFFF;
+            raise_interrupt();
         }
         render::finish_frame();
     } else if (reg == kBpCopyExecute) {
@@ -1552,6 +2088,8 @@ void write_xf(uint32_t address, uint32_t value) {
         if (address >= 0x1000) {
             note_register(2, address, value);
             g_register_serial++;
+        } else if (address < render::kPaletteRows * 4 || (address >= render::kNormalWords && address < render::kNormalWords + render::kNormalRows * 4)) {
+            g_palette_serial++;
         }
         g_xf[address] = value;
     }
@@ -2052,6 +2590,24 @@ void process() {
     item.bytes.swap(g_fifo);
     g_fifo.reserve(item.bytes.capacity());
     enqueue(std::move(item));
+}
+
+void wait_for_interrupt(std::chrono::microseconds limit) {
+#ifdef _WIN32
+    static const HANDLE timer = [] {
+        HANDLE precise = CreateWaitableTimerExW(nullptr, nullptr, 2, TIMER_ALL_ACCESS);
+        return precise ? precise : CreateWaitableTimerW(nullptr, FALSE, nullptr);
+    }();
+    LARGE_INTEGER due;
+    due.QuadPart = -limit.count() * 10;
+    if (timer && g_interrupt_event && SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE)) {
+        HANDLE handles[2] = {g_interrupt_event, timer};
+        WaitForMultipleObjects(2, handles, FALSE, INFINITE);
+        return;
+    }
+#endif
+    std::unique_lock<std::mutex> hold(g_interrupt_lock);
+    g_interrupt_raised.wait_for(hold, limit, [] { return g_finish_pending.load() || g_token_pending.load(); });
 }
 
 bool wait_for_token(std::chrono::milliseconds limit) {

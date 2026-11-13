@@ -14,6 +14,7 @@ TCLTK_SHA256 = "55c96ffad69b1c834aa52e11b9ce41637a178ba6ad6607e83956044834276e2a
 SOURCES = ["CMakeLists.txt", "LICENSE", "THIRD_PARTY_NOTICES.md", "engine", "recompiler", "games/pokepark2", "third_party", "tests", "tools/fetch_sdl.py"]
 UNUSED_LIBRARIES = ["site-packages", "test", "idlelib", "ensurepip", "turtledemo", "venv", "lib2to3", "__phello__"]
 NAME = "WondersBeyondRecomp-Setup"
+SIGNED = "Setup (if blocked)"
 
 root = Path(__file__).resolve().parent.parent
 work = root / "build" / "setup"
@@ -67,9 +68,20 @@ def check_signatures():
         sys.exit("programs without a valid signature in the setup:\n" + (unsigned or result.stderr))
 
 
+def add_launcher():
+    build = work / "launcher"
+    shutil.rmtree(build, ignore_errors=True)
+    build.mkdir(parents=True)
+    shutil.copyfile(root / "games" / "pokepark2" / "res" / "pokepark2.ico", build / "game.ico")
+    (build / "launcher.rc").write_text('1 ICON "game.ico"\n', encoding="ascii")
+    subprocess.run(["windres", "launcher.rc", "-O", "coff", "-o", "launcher.res"], cwd=build, check=True)
+    subprocess.run(["gcc", "-Os", "-s", "-mwindows", "-municode", str(root / "installer" / "launcher.c"), "launcher.res", "-o", str(bundle / "Setup.exe")],
+                   cwd=build, check=True)
+
+
 def add_sources():
     listed = subprocess.run(["git", "ls-files", "-z", "--"] + SOURCES, cwd=root, capture_output=True, check=True).stdout.decode("utf-8")
-    with zipfile.ZipFile(bundle / "sources.zip", "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+    with zipfile.ZipFile(bundle / "installer" / "sources.zip", "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for name in sorted(filter(None, listed.split("\0"))):
             if (root / name).is_file():
                 archive.write(root / name, name)
@@ -81,19 +93,18 @@ def main():
     shutil.rmtree(bundle, ignore_errors=True)
     bundle.mkdir(parents=True)
     add_python()
-    add_sources()
     scripts = bundle / "installer"
     scripts.mkdir()
+    add_sources()
     for file in sorted((root / "installer").glob("*.py")):
         shutil.copyfile(file, scripts / file.name)
     shutil.copyfile(root / "games" / "pokepark2" / "res" / "pokepark2.ico", scripts / "game.ico")
     for name in ("LICENSE", "THIRD_PARTY_NOTICES.md"):
         shutil.copyfile(root / name, bundle / name)
-    for name in ("python312.dll", "vcruntime140.dll", "vcruntime140_1.dll"):
-        shutil.copyfile(bundle / "python" / name, bundle / name)
-    shutil.copyfile(bundle / "python" / "pythonw.exe", bundle / "Setup.exe")
-    (bundle / "Setup._pth").write_bytes(b"python\\Lib\r\npython\\DLLs\r\ninstaller\r\nimport site\r\n")
+    shutil.copyfile(bundle / "python" / "pythonw.exe", bundle / "python" / (SIGNED + ".exe"))
+    (bundle / "python" / (SIGNED + "._pth")).write_bytes(b"Lib\r\nDLLs\r\n..\\installer\r\nimport site\r\n")
     check_signatures()
+    add_launcher()
     output = root / "build" / "dist" / (NAME + ".zip")
     output.parent.mkdir(parents=True, exist_ok=True)
     output.unlink(missing_ok=True)

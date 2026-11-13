@@ -38,6 +38,24 @@ bool interpolating() {
     return false;
 }
 
+bool transforms_vertices() {
+    return false;
+}
+
+bool begin_run(const VertexRun&, uint8_t**, uint16_t**) {
+    return false;
+}
+
+bool keep_run(const VertexRun&, const uint8_t*, const uint16_t*, KeptRun&, bool) {
+    return false;
+}
+
+bool draw_kept(const VertexRun&, const KeptRun&) {
+    return false;
+}
+
+void reset_kept() {}
+
 void finish_frame() {}
 
 bool service_presents() {

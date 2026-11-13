@@ -334,6 +334,14 @@ void decrementer_fired() {
     g_decrementer_armed = false;
 }
 
+std::chrono::microseconds ticks_ahead(uint64_t tick) {
+    return std::chrono::microseconds(static_cast<int64_t>(tick - time_base()) * 1000000 / static_cast<int64_t>(kTimeBaseHz));
+}
+
+std::chrono::microseconds decrementer_wait() {
+    return g_decrementer_armed ? ticks_ahead(g_decrementer_deadline) : std::chrono::microseconds::max();
+}
+
 uint64_t wall_clock_ticks() {
     constexpr int64_t kSecondsFrom1970To2000 = 946684800;
     std::time_t now = std::time(nullptr);

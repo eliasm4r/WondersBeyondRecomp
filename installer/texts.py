@@ -1,9 +1,9 @@
 TEXTS = {
     "window": "PokePark 2: Wonders Beyond - Setup",
     "title": "PokePark 2: Wonders Beyond",
-    "intro": "This setup builds the PC version of the game on this computer from your own disc image. "
-             "It needs an internet connection, about {size} GB of free space and 10 to 30 minutes.",
-    "disc": "Disc image (European version)",
+    "intro": "This setup builds the PC version of the game on this computer from your own disc image, the ROM file of the game. "
+             "It needs an internet connection, about {size} GB of free space and about 5 minutes.",
+    "disc": "Disc image, the ROM file of the game (European version, .iso, .rvz or .wbfs)",
     "folder": "Install folder",
     "browse": "Browse...",
     "shortcut": "Create a desktop shortcut",
@@ -13,10 +13,10 @@ TEXTS = {
     "cancel": "Cancel",
     "play": "Play",
     "disc_title": "Choose the disc image of PokePark 2: Wonders Beyond",
-    "disc_types": "Wii disc images",
+    "disc_types": "Wii disc images (ROM files)",
     "all_files": "All files",
     "folder_title": "Choose where to install the game",
-    "need_disc": "Choose your disc image of PokePark 2: Wonders Beyond first.",
+    "need_disc": "Choose your disc image, the ROM file of PokePark 2: Wonders Beyond, first.",
     "missing_disc": "This disc image does not exist:\n{path}",
     "long_folder": "This folder name is too long. Choose a shorter one, such as C:\\Games.",
     "plain_folder": "The install folder may only hold unaccented letters, digits and common signs. Choose another one, such as C:\\Games.",

@@ -239,7 +239,7 @@ class Install:
         return "\n".join(output)
 
     def copy_sources(self, move):
-        with zipfile.ZipFile(self.bundle / "sources.zip") as archive:
+        with zipfile.ZipFile(self.bundle / "installer" / "sources.zip") as archive:
             names = archive.namelist()
             for index, name in enumerate(names):
                 if self.stop.is_set():

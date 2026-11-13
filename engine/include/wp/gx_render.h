@@ -51,6 +51,44 @@ constexpr uint16_t kNoSource = 0xFFFF;
 const char* api_name();
 bool interpolating();
 void draw(const ScreenVertex* vertices, uint32_t count, const DrawSource* source = nullptr);
+
+constexpr uint32_t kRunHeaderRows = 7;
+constexpr uint32_t kRunUnitRows = 7;
+constexpr uint32_t kRunLightRows = 40;
+constexpr uint32_t kRunMaxRows = kRunHeaderRows + kRunUnitRows * 8 + kRunLightRows;
+constexpr uint32_t kPaletteRows = 66;
+constexpr uint32_t kNormalWords = 0x400;
+constexpr uint32_t kNormalRows = 26;
+
+struct VertexRun {
+    uint32_t stride = 0;
+    uint32_t texture_inputs = 0;
+    bool normal = false;
+    bool matrix_indices = false;
+    uint32_t cull = 0;
+    uint32_t vertices = 0;
+    uint32_t indices = 0;
+    const float (*rows)[4] = nullptr;
+    uint32_t row_count = 0;
+    const uint32_t* palette = nullptr;
+    uint64_t palette_serial = 0;
+    uint64_t key = 0;
+    uint32_t camera = 0;
+    uint32_t matrix = 0;
+};
+
+bool transforms_vertices();
+bool begin_run(const VertexRun& run, uint8_t** vertices, uint16_t** indices);
+
+struct KeptRun {
+    uint32_t vertex = 0;
+    uint32_t index = 0;
+    uint32_t generation = 0;
+};
+
+bool keep_run(const VertexRun& run, const uint8_t* vertices, const uint16_t* indices, KeptRun& kept, bool placed);
+bool draw_kept(const VertexRun& run, const KeptRun& kept);
+void reset_kept();
 void finish_copies();
 void finish_frame();
 void copy_to_framebuffer(int x, int y, int width, int height, bool depth, const CopyFilter& filter);

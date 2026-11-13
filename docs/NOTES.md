@@ -255,16 +255,19 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
 
 - `tools/make_setup.py` makes `build/dist/WondersBeyondRecomp-Setup.zip`: Python 3.12.10 from its NuGet package and
   the Tcl/Tk part of the python.org installer (both checked against a SHA-256), the scripts of `installer/`,
-  `sources.zip` and `Setup.exe`. `sources.zip` holds the files
+  `installer/sources.zip` and `Setup.exe`. `sources.zip` holds the files
   `git ls-files` lists for the engine, the recompiler, `games/pokepark2`, `third_party`, `tests` and
   `tools/fetch_sdl.py`. Nothing of the disc is tracked, so nothing of it is in the zip.
 - Why a zip and scripts: Smart App Control refuses an unsigned installer executable, and nothing of ours is signed.
-  Every program in the zip is signed by the Python Software Foundation; `make_setup.py` stops if one is not, which is
+  Every program in the zip but the launcher is signed by the Python Software Foundation; `make_setup.py` stops if one is not, which is
   why pip, Tix and the nmake helper are left out.
-- `Setup.exe` is `pythonw.exe` under another name, which keeps its signature, with `python312.dll` beside it.
-  `Setup._pth` gives it its module folders and turns `site` on, and `site` imports `installer/sitecustomize.py`, which
+- `python/Setup (if blocked).exe` is `pythonw.exe` under another name, which keeps its signature, in the folder of Python so that the root of the zip only shows `Setup.exe`.
+  Its `._pth` file gives it its module folders and turns `site` on, and `site` imports `installer/sitecustomize.py`, which
   opens the window when the program is not named `python*`. Its icon in the file explorer is therefore the one of
   Python; the window and the taskbar show the game icon.
+- `Setup.exe` is `installer/launcher.c`, built by `make_setup.py` with the game icon: it only starts
+  `Setup (if blocked).exe`. It is the one program in the zip without a signature, so Smart App Control may refuse it
+  on a PC that has it on; the signed program beside it is the way in there.
 - Install steps (`installer/steps.py`): unpack the sources, download the tools that are missing (nodtool, CMake, Ninja,
   MinGW, each checked against a SHA-256), verify and extract the disc, check that it is `S2LP01`,
   `tools/fetch_sdl.py`, `recompiler/recomp.py`, `recompiler/dsp/recomp_dsp.py`, configure, build, copy the game and its
@@ -689,6 +692,85 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
   vertex into the mapped buffer: that ran at 0.7 GB/s on NVIDIA. Recorded frames (in-between images) keep the full
   vertices. Cards other than NVIDIA also rewrite one dynamic constant buffer per size (`g_nvidia`,
   `WP_MAP_CONSTANTS=1` forces it), since creating immutable ones cost 40 us each there.
+- Option `video.gpu_vertices` (`WP_GPU_VERTICES=0` or the settings file to switch it off, on by default, no menu entry) moves the transform unit to the
+  graphics card for frames that are not recorded. `flush_run` (`gx.cpp`) then calls `pack_run` instead of building
+  screen vertices: each draw is decoded into compact vertices (position, two colours, then the normal, 12 bytes of
+  matrix numbers and the texture inputs only when the run needs them, 20 to 108 bytes) with 16-bit indices, and the
+  run's XF state goes into rows of four floats (`begin_packed_run`): projection and viewport, position matrix, seven
+  rows per texture coordinate and, when lighting is on, 40 rows with the channel controls, material and ambient
+  colours, normal matrix and the eight lights. Runs with matrix numbers in the vertices share a copy of XF words
+  0-0x107 and 0x400-0x467 that is sent again only after one of them is written (`g_palette_serial`). The renderer
+  (`begin_run`, `draw_runs` in `gx_render.cpp`) appends vertices, indices and rows to three buffers and issues one
+  `DrawIndexedInstanced` per run; the start instance reads the run's first row number from a fixed buffer of
+  0, 1, 2..., and `vertex_run` loads the rows from a `Buffer<float4>`. Appending to a buffer that shaders read needs
+  `MapNoOverwriteOnDynamicBufferSRV`; without it, or when the shader fails to compile, the log says "vertices stay
+  on the processor". The state must be per run and never per draw: the main zone has about 21,000 draws of 7
+  vertices in 600 runs a frame. Culling uses two rasterizer states (GX cull 1 is `CULL_BACK`, 2 is `CULL_FRONT`).
+  Lines, points, draw logging, captures and recorded frames (in-between images, unless `video.gpu_between`) keep the processor path, and every
+  pass of a multi-pass draw must take the same path or depth-equal tests fail. Shader lighting follows
+  `gx_lighting.cpp` step for step, including the integer `modulate`; `WP_CPU_LIGHTS=1` leaves lighting on the
+  processor for comparison. Main zone at 60 fps on an RTX 4070: GPU thread busy 57 to 29 %, vertices copied 1370 to
+  390 MB a second, same frame rate. Two headless runs of the same mode differ on about 2 % of the pixels (characters
+  do not move the same way), the two modes on 0.3 %, so image dumps cannot prove more than "no visible difference".
+- Option `video.keep_models` (`WP_KEEP_MODELS`, on by default, no menu entry, needs `video.gpu_vertices`) keeps the
+  packed vertices and indices of runs that come entirely from display lists in two fixed buffers of video memory
+  (64 MB and 16 MB, `keep_run` / `draw_kept` in `gx_render.cpp`), after the display-list cache of the PokéPark 1
+  recompilation. On a Ryzen 5 5600H laptop with a Radeon RX 6500M the four options together hold 60 fps in the heavy zone, where the processor path gave 25 to 42. `pack_run` looks the
+  run up in `g_kept` by its first and last draw address, draw, vertex and index counts, vertex format, VCD and VAT
+  (`find_kept`). `kept_content` hashes everything else the packed bytes depend on: the list bytes with their draw
+  headers, the range of each indexed array the list reads (`scan_ranges` walks the indices once per list content),
+  the array addresses and strides, the material colours when a vertex takes them, and the default matrix numbers.
+  The second time a run shows the same hash it is stored after decoding (and hashed again, in case the game wrote
+  meanwhile); from then on a matching hash draws it from the kept buffers without decoding or copying. A run whose
+  hash changes four times in a row, whose arrays lie outside memory or whose array ranges exceed 64 bytes per
+  vertex (hashing would cost more than decoding) is left alone for 64 frames. A changed run is stored again in its
+  old place, after flushing pending draws that still read it. When the buffers are full or 32,768 lists are known,
+  everything is forgotten (`forget_kept`, `reset_kept` bumps a generation). Runs under 32 vertices, immediate draws
+  and runs lit on the processor are never kept. The log line `models` gives the runs drawn from video memory,
+  decoded and stored each second and the KB hashed. `WP_CHECK_KEPT=1` decodes every kept run anyway and counts those
+  whose bytes differ from the stored copy ("verified", "differ"): it must report 0.
+- Option `video.gpu_between` (`WP_GPU_BETWEEN`, on by default, no menu entry, needs `video.gpu_vertices`) lets
+  display-list runs go through the vertex shader while a frame is recorded for the in-between images (90 and
+  120 fps), after `gx_frames.c` of the PokéPark 1 recompilation. Only runs whose draws all come from display lists take this path (`run_in_lists`
+  in `flush_run`); immediate draws, lines and points keep the processor path and its pairing. `draw_runs` records a
+  `kRuns` command with the rows of every run (`record_runs`); the vertices stay where they are, in the kept buffers
+  or in the 16 MB ring, which `end_record` forces to restart at each recorded frame. A ring that wraps after a run
+  was recorded, a kept run rewritten in place and `reset_kept` break the record for that frame (no images in
+  between), so the option is best used with `video.keep_models`. `pair_runs` pairs each run with one of the previous
+  frame that has the same key (first draw address, draw, vertex and index counts, format, row count, cull, first
+  texture): runs with a single candidate vote for the camera motion (`find_run_camera`, 48 samples of current times
+  inverse previous position matrix, tolerance 0.02 on rotation and 2 + 2 % on translation, at least 3 votes and a
+  third), the others take the nearest of 48 candidates once the previous position is moved by that motion.
+  `replay_runs` redraws each run with rows blended between the two frames (`blend_run`, `blend_palette`): projection,
+  position, texture and post matrices, normal matrix, light positions and directions, and for skinned runs the
+  first 21 matrices and the normal rows of the palette. A matrix whose rotation part changes by more than 0.3 of its
+  scale or whose translation moves more than half its length plus 200 is taken from the current frame
+  (`matrix_change`), and so is one where a single row changes by more than half of that row's own scale: the game
+  draws the shadows of the Pokémon as discs seen from above the player, turns that view by a quarter turn in one
+  frame when the player changes direction, and the ground's matrix into that picture has rows of very different
+  sizes, so the whole-matrix test let it through and the images in between showed shadows half as large again,
+  turned 45 degrees around the player. Post matrices go through the same test (they were blended unconditionally);
+  the `runs` log line counts the texture matrices held back this way. A copy of a model that just appeared does not
+  take the previous place of another copy that a later copy is nearer to (`later`, `taken` in `pair_runs`). When more than 8 and a third of the paired runs do that, the frame is a cut and gets no
+  images. Unpaired runs and runs whose row layout changed are drawn as in the current frame. The camera motion
+  found from the matrices is also given to the processor path (`adopt_run_camera`) when the few draws left there
+  could not fit it. The log line `runs` gives the runs redrawn, paired and moved too far per frame.
+- Option `system.idle_sleep` (`WP_IDLE_SLEEP`, on by default, no menu entry) lets the game thread sleep in
+  `poll_interrupts` while the guest runs its idle thread, on the model of PokéPark 1's `hle_wait_for_event`: it
+  sleeps until the earliest of the next retrace, the decrementer (`decrementer_wait`), the end of the sound buffer
+  being played (`dsp::idle_wait`, which also refuses to sleep while the DSP has work) and the next IPC event
+  (`ipc::idle_wait`), 1 ms at most, and is woken at once by the token and finish interrupts of the GPU thread
+  (`gx::wait_for_interrupt`, a high-resolution waitable timer on Windows because an ordinary timed wait ends on
+  the system tick). The wait ends 250 µs early and the idle loop spins for the rest; waking early only before the
+  retrace and the decrementer was measured worse (late sound buffers 4 -> 40, late in-between images 1 -> 28 in
+  48 s) for the same processor use. Measured headless in the heavy zone at 120 fps: game thread busy 98 -> 56-59 %,
+  same frame rate, no sound block missing, stale or overwritten, mean start of a sound buffer 0.45 -> 0.85 ms
+  late. A first version that slept a flat 1 ms without looking at these deadlines crackled. The GPU thread already sleeps on its queue and the draw helpers
+  after 4000 pauses, so nothing else spins. The OpenGL renderer (other systems) has none of the vertex-shader
+  paths: it is not built on Windows and its `transforms_vertices` returns false.
+- The NVIDIA constant-buffer cache dropped all 4096 buffers whenever it was full, about twice a second in the main
+  zone, so 8000 to 9000 immutable buffers were created each second (53 ms). It now drops only those not used since
+  the previous clean-up, and everything only when three quarters were in use.
 - The log file is opened in append mode like the redirected stderr. Before, the log wrote at its own position and
   overwrote whatever stderr had added, so the thread report after a `hang` line was lost as soon as another line came.
 - The "endless loading after a cutscene" (user's logs of 2026-11-11 14:24 and 2026-11-12 01:02, both stopping after

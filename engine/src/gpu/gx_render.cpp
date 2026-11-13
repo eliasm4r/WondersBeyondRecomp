@@ -735,6 +735,17 @@ struct Device {
     ID3D11InputLayout* moved_layout = nullptr;
     ID3D11Buffer* moved_buffer = nullptr;
     ID3D11Buffer* motion = nullptr;
+    ID3DBlob* run_code = nullptr;
+    ID3D11VertexShader* run_shader = nullptr;
+    ID3D11InputLayout* run_layouts[2][2][9] = {};
+    ID3D11Buffer* run_vertices = nullptr;
+    ID3D11Buffer* run_indices = nullptr;
+    ID3D11Buffer* run_rows = nullptr;
+    ID3D11ShaderResourceView* run_rows_view = nullptr;
+    ID3D11Buffer* run_numbers = nullptr;
+    ID3D11RasterizerState* run_culling[2] = {};
+    ID3D11Buffer* kept_vertices = nullptr;
+    ID3D11Buffer* kept_indices = nullptr;
     ID3D11Texture2D* target = nullptr;
     ID3D11RenderTargetView* target_view = nullptr;
     ID3D11Texture2D* depth = nullptr;
@@ -853,8 +864,31 @@ struct ClearCommand {
     int height = 0;
 };
 
+constexpr uint32_t kNoPalette = ~0u;
+
+struct RunDraw {
+    ID3D11InputLayout* layout = nullptr;
+    uint32_t stride = 0;
+    uint32_t cull = 0;
+    uint32_t vertex_offset = 0;
+    uint32_t first_index = 0;
+    uint32_t indices = 0;
+    uint32_t row = 0;
+    uint32_t rows = 0;
+    uint32_t palette = kNoPalette;
+    uint32_t matrix = 0;
+    uint32_t camera = 0;
+    uint64_t key = 0;
+    bool kept = false;
+};
+
+struct RecordedRun {
+    RunDraw draw;
+    uint32_t match = ~0u;
+};
+
 struct RecordedCommand {
-    enum Kind { kBatch, kCopy, kClear } kind = kBatch;
+    enum Kind { kBatch, kCopy, kClear, kRuns } kind = kBatch;
     BatchState batch;
     size_t begin = 0;
     size_t end = 0;
@@ -885,6 +919,8 @@ struct FrameRecord {
     std::vector<RecordedDraw> draws;
     std::vector<RecordedCommand> commands;
     std::vector<RecordedTarget> targets;
+    std::vector<RecordedRun> runs;
+    std::vector<std::array<float, 4>> rows;
 };
 
 [[gnu::used]] const char kBuildSalt[] = "SALT23076";
@@ -976,6 +1012,368 @@ double lap(std::chrono::steady_clock::time_point& from) {
 }
 
 bool g_nvidia = false;
+
+const char* kRunSource = R"(
+Buffer<float4> rows : register(t0);
+
+struct RunInput {
+    float4 position : POSITION;
+    float4 c0 : COLOR0;
+    float4 c1 : COLOR1;
+    float4 normal : NORMAL;
+    uint4 m0 : MATRIX0;
+    uint4 m1 : MATRIX1;
+    uint4 m2 : MATRIX2;
+    float4 t0 : TEXCOORD0;
+    float4 t1 : TEXCOORD1;
+    float4 t2 : TEXCOORD2;
+    float4 t3 : TEXCOORD3;
+    float4 t4 : TEXCOORD4;
+    float4 t5 : TEXCOORD5;
+    float4 t6 : TEXCOORD6;
+    float4 t7 : TEXCOORD7;
+    uint4 run : RUN;
+};
+
+struct PixelInput {
+    float4 position : SV_Position;
+    float4 c0 : COLOR0;
+    float4 c1 : COLOR1;
+    float3 uv0 : TEXCOORD0;
+    float3 uv1 : TEXCOORD1;
+    float3 uv2 : TEXCOORD2;
+    float3 uv3 : TEXCOORD3;
+    float3 uv4 : TEXCOORD4;
+    float3 uv5 : TEXCOORD5;
+    float3 uv6 : TEXCOORD6;
+    float3 uv7 : TEXCOORD7;
+};
+
+float3 transformed(int at, float3 v) {
+    float4 r0 = rows.Load(at);
+    float4 r1 = rows.Load(at + 1);
+    float4 r2 = rows.Load(at + 2);
+    precise float3 result;
+    result.x = r0.x * v.x + r0.y * v.y + r0.z * v.z + r0.w;
+    result.y = r1.x * v.x + r1.y * v.y + r1.z * v.z + r1.w;
+    result.z = r2.x * v.x + r2.y * v.y + r2.z * v.z + r2.w;
+    return result;
+}
+
+float3 unit(float3 v) {
+    float extent = sqrt(dot(v, v));
+    return extent == 0.0 ? v : v / extent;
+}
+
+float ratio(float n, float d) {
+    return d == 0.0 ? (n > 0.0 ? 1.0 : 0.0) : n / d;
+}
+
+float light_factor(int at, uint control, float3 eye, float3 normal) {
+    float4 a = rows.Load(at + 1);
+    float4 b = rows.Load(at + 2);
+    float4 c = rows.Load(at + 3);
+    float3 angle = a.xyz;
+    float3 range = float3(a.w, b.x, b.y);
+    float3 direction = c.yzw;
+    uint diffuse = (control >> 7) & 3u;
+    uint attenuation = (control >> 9) & 3u;
+    float3 toward = float3(b.z, b.w, c.x) - eye;
+    float amount = 1.0;
+    if (attenuation == 1u) {
+        toward = unit(toward);
+        amount = dot(toward, normal) >= 0.0 ? max(0.0, dot(direction, normal)) : 0.0;
+        float3 powers = float3(1.0, amount, amount * amount);
+        if (diffuse != 0u) {
+            range = unit(range);
+        }
+        amount = ratio(max(0.0, dot(powers, angle)), dot(powers, range));
+    } else if (attenuation == 3u) {
+        float square = dot(toward, toward);
+        float distance = sqrt(square);
+        toward = toward / distance;
+        amount = max(0.0, dot(toward, direction));
+        float cone = angle.x + angle.y * amount + angle.z * amount * amount;
+        float fade = range.x + range.y * distance + range.z * square;
+        amount = ratio(max(0.0, cone), fade);
+    } else {
+        toward = unit(toward);
+        if (toward.x == 0.0 && toward.y == 0.0 && toward.z == 0.0) {
+            toward = normal;
+        }
+    }
+    float facing = dot(toward, normal);
+    if (diffuse == 1u) {
+        return amount * facing;
+    }
+    if (diffuse == 2u) {
+        return amount * max(0.0, facing);
+    }
+    return amount;
+}
+
+float modulated(float material, float light) {
+    int value = clamp(int(light), 0, 255);
+    return float((int(material) * (value + (value >> 7))) >> 8) / 255.0;
+}
+
+uint light_mask(uint control) {
+    return (control & 2u) != 0u ? (((control >> 2) & 15u) | (((control >> 11) & 15u) << 4)) : 0u;
+}
+
+void light_colors(int light, int matrix_row, uint word, float3 eye, float3 raw, inout float4 c0, inout float4 c1) {
+    float4 controls = rows.Load(light);
+    int first = matrix_row + int(word >> 2);
+    float4 n0 = rows.Load(first);
+    float4 n1 = rows.Load(first + 1);
+    float4 n2 = rows.Load(first + 2);
+    float m[12] = {n0.x, n0.y, n0.z, n0.w, n1.x, n1.y, n1.z, n1.w, n2.x, n2.y, n2.z, n2.w};
+    uint k = word & 3u;
+    float3 normal = unit(float3(m[k] * raw.x + m[k + 1u] * raw.y + m[k + 2u] * raw.z,
+                                m[k + 3u] * raw.x + m[k + 4u] * raw.y + m[k + 5u] * raw.z,
+                                m[k + 6u] * raw.x + m[k + 7u] * raw.y + m[k + 8u] * raw.z));
+    float4 given[2] = {c0, c1};
+    float4 result[2];
+    for (uint channel = 0u; channel < 2u; channel++) {
+        float4 vertex = floor(given[channel] * 255.0 + 0.5);
+        float4 material = rows.Load(light + 1 + int(channel));
+        float4 ambient = rows.Load(light + 3 + int(channel));
+        uint color = uint(channel == 0u ? controls.x : controls.y);
+        uint alpha = uint(channel == 0u ? controls.z : controls.w);
+        float3 color_material = (color & 1u) != 0u ? vertex.rgb : material.rgb;
+        float alpha_material = (alpha & 1u) != 0u ? vertex.a : material.a;
+        uint color_mask = light_mask(color);
+        uint alpha_mask = light_mask(alpha);
+        float3 sum = (color & 64u) != 0u ? vertex.rgb : ambient.rgb;
+        float alpha_sum = (alpha & 64u) != 0u ? vertex.a : ambient.a;
+        for (uint i = 0u; i < 8u; i++) {
+            uint bit = 1u << i;
+            int at = light + 8 + 4 * int(i);
+            if ((color_mask & bit) != 0u) {
+                sum += rows.Load(at).rgb * light_factor(at, color, eye, normal);
+            }
+            if ((alpha_mask & bit) != 0u) {
+                alpha_sum += rows.Load(at).a * light_factor(at, alpha, eye, normal);
+            }
+        }
+        if ((color & 2u) != 0u) {
+            result[channel].rgb = float3(modulated(color_material.r, sum.r), modulated(color_material.g, sum.g), modulated(color_material.b, sum.b));
+        } else {
+            result[channel].rgb = color_material / 255.0;
+        }
+        result[channel].a = (alpha & 2u) != 0u ? modulated(alpha_material, alpha_sum) : alpha_material / 255.0;
+    }
+    c0 = result[0];
+    c1 = result[1];
+}
+
+PixelInput vertex_run(RunInput input) {
+    int run = int(input.run.x);
+    float4 p0 = rows.Load(run);
+    float4 p1 = rows.Load(run + 1);
+    float4 p2 = rows.Load(run + 2);
+    float4 p3 = rows.Load(run + 3);
+    int origin = run + int(p3.z);
+    precise float3 eye = transformed(origin + int(p1.w) + int(input.m0.x), input.position.xyz);
+    precise float x;
+    precise float y;
+    precise float z;
+    precise float w;
+    if (p1.z != 0.0) {
+        x = p0.x * eye.x + p0.y;
+        y = p0.z * eye.y + p0.w;
+        z = p1.x * eye.z + p1.y;
+        w = 1.0;
+    } else {
+        x = p0.x * eye.x + p0.y * eye.z;
+        y = p0.z * eye.y + p0.w * eye.z;
+        z = p1.x * eye.z + p1.y;
+        w = -eye.z;
+    }
+    precise float4 position;
+    position.x = x * p2.x + w * p2.y;
+    position.y = y * p2.z + w * p2.w;
+    position.z = (w * p3.y - z * p3.x) / 16777215.0;
+    position.w = w;
+    uint setup = uint(p3.w);
+    uint count = min(setup & 15u, 8u);
+    bool dual = (setup & 16u) != 0u;
+    uint indices[8] = {input.m0.y, input.m0.z, input.m0.w, input.m1.x, input.m1.y, input.m1.z, input.m1.w, input.m2.x};
+    float4 inputs[8] = {input.t0, input.t1, input.t2, input.t3, input.t4, input.t5, input.t6, input.t7};
+    float3 uv[8];
+    for (uint k = 0; k < 8; k++) {
+        uv[k] = float3(0.0, 0.0, 0.0);
+    }
+    for (uint i = 0; i < count; i++) {
+        int place = run + 7 + 7 * int(i);
+        float4 info = rows.Load(place);
+        uint source = uint(info.x);
+        uint flags = uint(info.y);
+        float3 given = float3(0.0, 0.0, 1.0);
+        if (source == 0u) {
+            given = input.position.xyz;
+        } else if (source == 1u) {
+            given = input.normal.xyz;
+        } else if (source >= 5u && source < 13u) {
+            given.xy = inputs[source - 5u].xy;
+        }
+        if ((flags & 2u) == 0u) {
+            given.z = 1.0;
+        }
+        float3 coord = transformed(origin + int(info.z) + int(indices[i]), given);
+        if ((flags & 1u) == 0u) {
+            coord.z = 1.0;
+        }
+        if (dual) {
+            if ((flags & 4u) != 0u) {
+                float extent = sqrt(coord.x * coord.x + coord.y * coord.y + coord.z * coord.z);
+                if (extent > 0.0) {
+                    coord /= extent;
+                }
+            }
+            coord = transformed(place + 4, coord);
+        }
+        if (coord.z == 0.0) {
+            coord.xy = clamp(coord.xy / 2.0, -1.0, 1.0);
+            coord.z = 1.0;
+        }
+        uv[i] = coord;
+    }
+    PixelInput output;
+    output.position = position;
+    output.c0 = input.c0;
+    output.c1 = input.c1;
+    if ((setup & 32u) != 0u) {
+        int light = run + 7 + 7 * int(count);
+        if (p1.w == 0.0) {
+            light_colors(light, origin + 66, (input.m0.x & 31u) * 3u, eye, input.normal.xyz, output.c0, output.c1);
+        } else {
+            light_colors(light, light + 5, 0u, eye, input.normal.xyz, output.c0, output.c1);
+        }
+    }
+    output.uv0 = uv[0];
+    output.uv1 = uv[1];
+    output.uv2 = uv[2];
+    output.uv3 = uv[3];
+    output.uv4 = uv[4];
+    output.uv5 = uv[5];
+    output.uv6 = uv[6];
+    output.uv7 = uv[7];
+    return output;
+}
+)";
+
+constexpr uint32_t kRunVertexBytes = 16u << 20;
+constexpr uint32_t kRunIndexBytes = 4u << 20;
+constexpr uint32_t kRunRowCapacity = 1u << 16;
+
+bool create_run_pipeline() {
+    static bool tried = false;
+    if (tried) {
+        return g_device.run_shader != nullptr;
+    }
+    tried = true;
+    ID3D11Device* device = g_device.device;
+    D3D11_FEATURE_DATA_D3D11_OPTIONS options{};
+    if (!g_device.zero_buffer || FAILED(device->CheckFeatureSupport(D3D11_FEATURE_D3D11_OPTIONS, &options, sizeof options)) || !options.MapNoOverwriteOnDynamicBufferSRV) {
+        log::write("video", "vertices stay on the processor: this Direct3D cannot append to a buffer that shaders read");
+        return false;
+    }
+    D3D11_BUFFER_DESC buffer{};
+    buffer.Usage = D3D11_USAGE_DYNAMIC;
+    buffer.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    buffer.ByteWidth = kRunVertexBytes;
+    buffer.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+    bool ok = SUCCEEDED(device->CreateBuffer(&buffer, nullptr, &g_device.run_vertices));
+    buffer.ByteWidth = kRunIndexBytes;
+    buffer.BindFlags = D3D11_BIND_INDEX_BUFFER;
+    ok = ok && SUCCEEDED(device->CreateBuffer(&buffer, nullptr, &g_device.run_indices));
+    buffer.ByteWidth = kRunRowCapacity * sizeof(float[4]);
+    buffer.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    ok = ok && SUCCEEDED(device->CreateBuffer(&buffer, nullptr, &g_device.run_rows));
+    D3D11_SHADER_RESOURCE_VIEW_DESC view{};
+    view.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+    view.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+    view.Buffer.NumElements = kRunRowCapacity;
+    ok = ok && SUCCEEDED(device->CreateShaderResourceView(g_device.run_rows, &view, &g_device.run_rows_view));
+    std::vector<uint32_t> numbers(kRunRowCapacity);
+    for (uint32_t i = 0; i < kRunRowCapacity; i++) {
+        numbers[i] = i;
+    }
+    D3D11_BUFFER_DESC fixed{};
+    fixed.ByteWidth = kRunRowCapacity * sizeof(uint32_t);
+    fixed.Usage = D3D11_USAGE_IMMUTABLE;
+    fixed.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+    D3D11_SUBRESOURCE_DATA initial{numbers.data(), 0, 0};
+    ok = ok && SUCCEEDED(device->CreateBuffer(&fixed, &initial, &g_device.run_numbers));
+    D3D11_RASTERIZER_DESC raster{};
+    raster.FillMode = D3D11_FILL_SOLID;
+    raster.ScissorEnable = TRUE;
+    raster.DepthClipEnable = FALSE;
+    raster.CullMode = D3D11_CULL_BACK;
+    ok = ok && SUCCEEDED(device->CreateRasterizerState(&raster, &g_device.run_culling[0]));
+    raster.CullMode = D3D11_CULL_FRONT;
+    ok = ok && SUCCEEDED(device->CreateRasterizerState(&raster, &g_device.run_culling[1]));
+    ok = ok && compile(kRunSource, "vertex_run", "vs_5_0", &g_device.run_code);
+    if (ok && FAILED(device->CreateVertexShader(g_device.run_code->GetBufferPointer(), g_device.run_code->GetBufferSize(), nullptr, &g_device.run_shader))) {
+        g_device.run_shader = nullptr;
+    }
+    if (!g_device.run_shader) {
+        log::write("video", "vertices stay on the processor: the graphics card refused the vertex shader or its buffers");
+    }
+    return g_device.run_shader != nullptr;
+}
+
+constexpr uint32_t kKeptVertexBytes = 64u << 20;
+constexpr uint32_t kKeptIndexBytes = 16u << 20;
+
+bool create_kept_buffers() {
+    static bool tried = false;
+    if (tried) {
+        return g_device.kept_indices != nullptr;
+    }
+    tried = true;
+    D3D11_BUFFER_DESC buffer{};
+    buffer.Usage = D3D11_USAGE_DEFAULT;
+    buffer.ByteWidth = kKeptVertexBytes;
+    buffer.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+    if (FAILED(g_device.device->CreateBuffer(&buffer, nullptr, &g_device.kept_vertices))) {
+        g_device.kept_vertices = nullptr;
+    }
+    buffer.ByteWidth = kKeptIndexBytes;
+    buffer.BindFlags = D3D11_BIND_INDEX_BUFFER;
+    if (!g_device.kept_vertices || FAILED(g_device.device->CreateBuffer(&buffer, nullptr, &g_device.kept_indices))) {
+        g_device.kept_indices = nullptr;
+        log::write("video", "models are decoded on every image: the graphics card refused the buffers that would keep them");
+    }
+    return g_device.kept_indices != nullptr;
+}
+
+ID3D11InputLayout* run_layout(bool normal, bool indices, uint32_t inputs) {
+    ID3D11InputLayout*& layout = g_device.run_layouts[normal][indices][inputs];
+    if (layout) {
+        return layout;
+    }
+    std::vector<D3D11_INPUT_ELEMENT_DESC> elements = {
+        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"COLOR", 1, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 16, D3D11_INPUT_PER_VERTEX_DATA, 0},
+    };
+    UINT offset = 20;
+    elements.push_back({"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, normal ? 0u : 1u, normal ? offset : 0u, D3D11_INPUT_PER_VERTEX_DATA, 0});
+    offset += normal ? 12 : 0;
+    for (UINT i = 0; i < 3; i++) {
+        elements.push_back({"MATRIX", i, DXGI_FORMAT_R8G8B8A8_UINT, indices ? 0u : 1u, indices ? offset + 4 * i : 0u, D3D11_INPUT_PER_VERTEX_DATA, 0});
+    }
+    offset += indices ? 12 : 0;
+    for (UINT i = 0; i < 8; i++) {
+        bool present = i < inputs;
+        elements.push_back({"TEXCOORD", i, DXGI_FORMAT_R32G32_FLOAT, present ? 0u : 1u, present ? offset + 8 * i : 0u, D3D11_INPUT_PER_VERTEX_DATA, 0});
+    }
+    elements.push_back({"RUN", 0, DXGI_FORMAT_R32_UINT, 2, 0, D3D11_INPUT_PER_INSTANCE_DATA, 1});
+    g_device.device->CreateInputLayout(elements.data(), static_cast<UINT>(elements.size()), g_device.run_code->GetBufferPointer(), g_device.run_code->GetBufferSize(), &layout);
+    return layout;
+}
 
 bool create_pipeline() {
     ID3DBlob* vertex_code = nullptr;
@@ -1651,13 +2049,28 @@ ID3D11Buffer* constant_buffer(const void* data, size_t size) {
         }
         return buffer;
     }
-    static std::map<std::string, ID3D11Buffer*> cache;
+    struct CachedConstants {
+        ID3D11Buffer* buffer = nullptr;
+        bool used = false;
+    };
+    static std::map<std::string, CachedConstants> cache;
     constexpr size_t kCachedConstants = 4096;
     if (cache.size() >= kCachedConstants) {
-        for (auto& [bytes, cached] : cache) {
-            release(cached);
+        for (auto entry = cache.begin(); entry != cache.end();) {
+            if (entry->second.used) {
+                entry->second.used = false;
+                ++entry;
+            } else {
+                release(entry->second.buffer);
+                entry = cache.erase(entry);
+            }
         }
-        cache.clear();
+        if (cache.size() >= kCachedConstants * 3 / 4) {
+            for (auto& [bytes, cached] : cache) {
+                release(cached.buffer);
+            }
+            cache.clear();
+        }
     }
     auto [found, added] = cache.try_emplace(std::string(static_cast<const char*>(data), size));
     if (added) {
@@ -1666,10 +2079,11 @@ ID3D11Buffer* constant_buffer(const void* data, size_t size) {
         description.Usage = D3D11_USAGE_IMMUTABLE;
         description.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
         D3D11_SUBRESOURCE_DATA initial{data, 0, 0};
-        g_device.device->CreateBuffer(&description, &initial, &found->second);
+        g_device.device->CreateBuffer(&description, &initial, &found->second.buffer);
         g_constants_created++;
     }
-    return found->second;
+    found->second.used = true;
+    return found->second.buffer;
 }
 
 void set_batch_state(const BatchState& pending, bool moved) {
@@ -1811,8 +2225,164 @@ uint32_t draw_batch(const BatchState& pending, const ScreenVertex* vertices, siz
     return start;
 }
 
+std::vector<RunDraw> g_run_draws;
+std::vector<uint8_t> g_run_vertex_bytes;
+std::vector<uint16_t> g_run_index_words;
+std::vector<std::array<float, 4>> g_run_row_values;
+uint32_t g_run_vertex_used = 0;
+uint32_t g_run_index_used = 0;
+uint32_t g_run_row_used = 0;
+uint32_t g_run_palette = kNoPalette;
+uint64_t g_run_palette_serial = 0;
+uint32_t g_run_vertex_cursor = kRunVertexBytes;
+uint32_t g_run_index_cursor = kRunIndexBytes;
+uint32_t g_run_row_cursor = kRunRowCapacity;
+bool g_run_ring_recorded = false;
+uint32_t g_run_kept = 0;
+uint32_t g_run_kept_indices = 0;
+uint32_t g_kept_vertex_used = 0;
+uint32_t g_kept_index_used = 0;
+uint32_t g_kept_generation = 1;
+
+bool batch_empty() {
+    return g_pending.begin == g_triangles.size() && g_run_draws.empty();
+}
+
+template <typename T>
+void reserve_run(std::vector<T>& values, size_t wanted) {
+    if (values.size() < wanted) {
+        values.resize(std::max(wanted, values.size() * 2));
+    }
+}
+
+bool upload_run(ID3D11Buffer* buffer, uint32_t& cursor, uint32_t capacity, const void* data, uint32_t size, uint32_t& start) {
+    if (size == 0) {
+        return true;
+    }
+    D3D11_MAP mode = D3D11_MAP_WRITE_NO_OVERWRITE;
+    if (cursor + size > capacity) {
+        mode = D3D11_MAP_WRITE_DISCARD;
+        cursor = 0;
+    }
+    D3D11_MAPPED_SUBRESOURCE mapped;
+    if (FAILED(g_device.context->Map(buffer, 0, mode, 0, &mapped))) {
+        return false;
+    }
+    std::memcpy(static_cast<uint8_t*>(mapped.pData) + cursor, data, size);
+    g_device.context->Unmap(buffer, 0);
+    start = cursor;
+    cursor += size;
+    g_copy_bytes += size;
+    return true;
+}
+
+void issue_runs(const RunDraw* draws, size_t count, uint32_t vertex_start, uint32_t index_start, uint32_t row_start) {
+    ID3D11DeviceContext* context = g_device.context;
+    context->VSSetShader(g_device.run_shader, nullptr, 0);
+    context->VSSetShaderResources(0, 1, &g_device.run_rows_view);
+    const RunDraw* group = nullptr;
+    ID3D11Buffer* index_buffer = nullptr;
+    uint32_t cull = 0;
+    for (size_t i = 0; i < count; i++) {
+        const RunDraw& draw = draws[i];
+        if (!group || group->layout != draw.layout || group->stride != draw.stride || group->kept != draw.kept) {
+            group = &draw;
+            ID3D11Buffer* buffers[3] = {draw.kept ? g_device.kept_vertices : g_device.run_vertices, g_device.zero_buffer, g_device.run_numbers};
+            UINT strides[3] = {draw.stride, 0, sizeof(uint32_t)};
+            UINT offsets[3] = {draw.kept ? 0 : vertex_start + draw.vertex_offset, 0, 0};
+            context->IASetInputLayout(draw.layout);
+            context->IASetVertexBuffers(0, 3, buffers, strides, offsets);
+            ID3D11Buffer* wanted = draw.kept ? g_device.kept_indices : g_device.run_indices;
+            if (index_buffer != wanted) {
+                index_buffer = wanted;
+                context->IASetIndexBuffer(wanted, DXGI_FORMAT_R16_UINT, 0);
+            }
+        }
+        if (draw.cull != cull) {
+            cull = draw.cull;
+            context->RSSetState(cull == 0 ? g_device.rasterizer : g_device.run_culling[cull - 1]);
+        }
+        UINT first_index = draw.kept ? draw.first_index : index_start + draw.first_index;
+        UINT base_vertex = draw.kept ? draw.vertex_offset / draw.stride : (draw.vertex_offset - group->vertex_offset) / draw.stride;
+        context->DrawIndexedInstanced(draw.indices, 1, first_index, static_cast<INT>(base_vertex), row_start + draw.row);
+    }
+}
+
+void record_runs(const BatchState& pending, uint32_t vertex_start, uint32_t index_start) {
+    RecordedCommand command;
+    command.kind = RecordedCommand::kRuns;
+    command.batch = pending;
+    for (ID3D11ShaderResourceView* view : command.batch.views) {
+        if (view) {
+            view->AddRef();
+        }
+    }
+    command.begin = g_record.runs.size();
+    uint32_t base = static_cast<uint32_t>(g_record.rows.size());
+    g_record.rows.insert(g_record.rows.end(), g_run_row_values.begin(), g_run_row_values.begin() + g_run_row_used);
+    for (const RunDraw& draw : g_run_draws) {
+        RecordedRun run;
+        run.draw = draw;
+        if (!draw.kept) {
+            run.draw.vertex_offset += vertex_start;
+            run.draw.first_index += index_start;
+        }
+        run.draw.row += base;
+        run.draw.matrix += base;
+        if (draw.palette != kNoPalette) {
+            run.draw.palette += base;
+        }
+        g_record.runs.push_back(run);
+    }
+    command.end = g_record.runs.size();
+    g_record.commands.push_back(command);
+}
+
+void draw_runs(const BatchState& pending) {
+    set_batch_state(pending, false);
+    auto clock = std::chrono::steady_clock::now();
+    uint32_t vertex_start = 0;
+    uint32_t index_start = 0;
+    uint32_t row_start = 0;
+    uint32_t vertex_before = g_run_vertex_cursor;
+    uint32_t index_before = g_run_index_cursor;
+    bool ok = upload_run(g_device.run_rows, g_run_row_cursor, kRunRowCapacity * sizeof(float[4]), g_run_row_values.data(), g_run_row_used * sizeof(float[4]), row_start) &&
+              upload_run(g_device.run_vertices, g_run_vertex_cursor, kRunVertexBytes, g_run_vertex_bytes.data(), g_run_vertex_used, vertex_start) &&
+              upload_run(g_device.run_indices, g_run_index_cursor, kRunIndexBytes, g_run_index_words.data(), g_run_index_used * sizeof(uint16_t), index_start);
+    g_copy_seconds += lap(clock);
+    index_start /= static_cast<uint32_t>(sizeof(uint16_t));
+    if (ok) {
+        issue_runs(g_run_draws.data(), g_run_draws.size(), vertex_start, index_start, row_start / static_cast<uint32_t>(sizeof(float[4])));
+    }
+    if (g_recording) {
+        bool wrapped = (g_run_vertex_used != 0 && g_run_vertex_cursor - g_run_vertex_used < vertex_before) ||
+                       (g_run_index_used != 0 && g_run_index_cursor - g_run_index_used * sizeof(uint16_t) < index_before);
+        if (!ok || (wrapped && g_run_ring_recorded)) {
+            g_record_broken = true;
+        }
+        g_run_ring_recorded = g_run_ring_recorded || g_run_vertex_used != 0;
+        record_runs(pending, vertex_start, index_start);
+    }
+    g_draw_seconds += lap(clock);
+    g_run_draws.clear();
+    g_run_kept = 0;
+    g_run_kept_indices = 0;
+    g_run_vertex_used = 0;
+    g_run_index_used = 0;
+    g_run_row_used = 0;
+    g_run_palette = kNoPalette;
+}
+
 void flush_pending() {
     PendingBatch& pending = g_pending;
+    if (!g_run_draws.empty()) {
+        auto started = std::chrono::steady_clock::now();
+        g_batches++;
+        g_batch_vertices += g_run_index_used + g_run_kept_indices;
+        draw_runs(pending);
+        g_batch_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+        return;
+    }
     size_t end = g_triangles.size();
     if (pending.begin == end) {
         return;
@@ -1879,29 +2449,16 @@ bool interpolating() {
     return g_recording;
 }
 
-void draw(const ScreenVertex* vertices, uint32_t count, const DrawSource* source) {
-    finish_frame();
-    if (count == 0) {
-        if (g_recording && source && source->key != 0) {
-            append(vertices, 0, source);
-        }
-        return;
-    }
-    if (!initialize()) {
-        return;
-    }
-    static uint32_t draws = 0;
-    if ((++draws & 31) == 0) {
-        service_deferred();
-    }
+namespace {
+
+void select_batch() {
     // Scenes such as the open zones send hundreds of thousands of tiny draws a second, mostly with only a new matrix in
     // between: when no register the batch depends on changed, this draw joins the pending batch without recomputing it.
     static uint64_t batched_serial = ~0ull;
     static uint64_t batched_epoch = 0;
     static int batched_scale = 0;
     PendingBatch& pending = g_pending;
-    if (pending.begin != g_triangles.size() && batched_serial == register_serial() && batched_epoch == g_texture_epoch && batched_scale == g_scale) {
-        append(vertices, count, source);
+    if (!batch_empty() && batched_serial == register_serial() && batched_epoch == g_texture_epoch && batched_scale == g_scale) {
         return;
     }
     const uint32_t* bp = bp_registers();
@@ -1925,7 +2482,7 @@ void draw(const ScreenVertex* vertices, uint32_t count, const DrawSource* source
                      (static_cast<uint32_t>(!alpha_test.can_pass) << 18);
     uint32_t depth = bp[0x40] & 0x1F;
     bool early_depth = (depth & 1) != 0 && (bp[0x43] & (1u << 6)) != 0 && alpha_test.can_pass && alpha_test.can_fail;
-    bool same = pending.begin != g_triangles.size() && pending.blend == blend && pending.depth == depth && pending.early_depth == early_depth && pending.top_left == bp[0x20] &&
+    bool same = !batch_empty() && pending.blend == blend && pending.depth == depth && pending.early_depth == early_depth && pending.top_left == bp[0x20] &&
                 pending.bottom_right == bp[0x21] && pending.scissor_offset == bp[kBpScissorOffset] && std::memcmp(&pending.constants, &constants, sizeof constants) == 0 &&
                 std::memcmp(pending.views, views, sizeof views) == 0 && std::memcmp(pending.samplers, samplers, sizeof samplers) == 0;
     if (same) {
@@ -1947,10 +2504,157 @@ void draw(const ScreenVertex* vertices, uint32_t count, const DrawSource* source
         pending.bottom_right = bp[0x21];
         pending.scissor_offset = bp[kBpScissorOffset];
     }
-    append(vertices, count, source);
     batched_serial = register_serial();
     batched_epoch = g_texture_epoch;
     batched_scale = g_scale;
+}
+
+}
+
+void draw(const ScreenVertex* vertices, uint32_t count, const DrawSource* source) {
+    finish_frame();
+    if (count == 0) {
+        if (g_recording && source && source->key != 0) {
+            append(vertices, 0, source);
+        }
+        return;
+    }
+    if (!initialize()) {
+        return;
+    }
+    static uint32_t draws = 0;
+    if ((++draws & 31) == 0) {
+        service_deferred();
+    }
+    if (!g_run_draws.empty()) {
+        flush_pending();
+    }
+    select_batch();
+    append(vertices, count, source);
+}
+
+bool transforms_vertices() {
+    static const settings::LiveFlag enabled("video.gpu_vertices", "WP_GPU_VERTICES");
+    static const settings::LiveFlag between("video.gpu_between", "WP_GPU_BETWEEN");
+    return enabled() && (!g_recording || between()) && initialize() && create_run_pipeline();
+}
+
+namespace {
+
+bool add_run(const VertexRun& run, uint32_t bytes, uint32_t index_count) {
+    finish_frame();
+    ID3D11InputLayout* layout = run_layout(run.normal, run.matrix_indices, run.texture_inputs);
+    if (!layout) {
+        return false;
+    }
+    service_deferred();
+    uint32_t rows = run.row_count + (run.palette ? kPaletteRows + kNormalRows : 0);
+    if (g_pending.begin != g_triangles.size() || g_run_vertex_used + bytes > kRunVertexBytes / 2 || (g_run_index_used + index_count) * sizeof(uint16_t) > kRunIndexBytes / 2 ||
+        g_run_row_used + rows > kRunRowCapacity / 2) {
+        flush_pending();
+    }
+    select_batch();
+    reserve_run(g_run_vertex_bytes, g_run_vertex_used + bytes);
+    reserve_run(g_run_index_words, g_run_index_used + index_count);
+    reserve_run(g_run_row_values, g_run_row_used + rows);
+    if (run.palette && (g_run_palette == kNoPalette || g_run_palette_serial != run.palette_serial)) {
+        std::memcpy(g_run_row_values.data() + g_run_row_used, run.palette, kPaletteRows * sizeof(float[4]));
+        g_run_palette = g_run_row_used;
+        g_run_palette_serial = run.palette_serial;
+        g_run_row_used += kPaletteRows;
+        std::memcpy(g_run_row_values.data() + g_run_row_used, run.palette + kNormalWords, kNormalRows * sizeof(float[4]));
+        g_run_row_used += kNormalRows;
+    }
+    std::memcpy(g_run_row_values.data() + g_run_row_used, run.rows, run.row_count * sizeof(float[4]));
+    if (run.palette) {
+        g_run_row_values[g_run_row_used + 3][2] = static_cast<float>(static_cast<int>(g_run_palette) - static_cast<int>(g_run_row_used));
+    }
+    RunDraw draw;
+    draw.layout = layout;
+    draw.stride = run.stride;
+    draw.cull = run.cull;
+    draw.vertex_offset = g_run_vertex_used;
+    draw.first_index = g_run_index_used;
+    draw.indices = run.indices;
+    draw.row = g_run_row_used;
+    draw.rows = run.row_count;
+    draw.palette = run.palette ? g_run_palette : kNoPalette;
+    draw.matrix = run.palette ? g_run_palette + run.matrix : g_run_row_used + 4;
+    draw.camera = run.camera;
+    draw.key = run.key;
+    g_run_draws.push_back(draw);
+    g_run_row_used += run.row_count;
+    return true;
+}
+
+}
+
+bool begin_run(const VertexRun& run, uint8_t** vertices, uint16_t** indices) {
+    uint32_t bytes = run.vertices * run.stride;
+    if (!add_run(run, bytes, run.indices)) {
+        return false;
+    }
+    *vertices = g_run_vertex_bytes.data() + g_run_vertex_used;
+    *indices = g_run_index_words.data() + g_run_index_used;
+    g_run_vertex_used += bytes;
+    g_run_index_used += run.indices;
+    return true;
+}
+
+bool draw_kept(const VertexRun& run, const KeptRun& kept) {
+    if (kept.generation != g_kept_generation || !add_run(run, 0, 0)) {
+        return false;
+    }
+    RunDraw& draw = g_run_draws.back();
+    draw.kept = true;
+    draw.vertex_offset = kept.vertex;
+    draw.first_index = kept.index;
+    g_run_kept++;
+    g_run_kept_indices += run.indices;
+    return true;
+}
+
+bool keep_run(const VertexRun& run, const uint8_t* vertices, const uint16_t* indices, KeptRun& kept, bool placed) {
+    if (!create_kept_buffers()) {
+        return false;
+    }
+    uint32_t bytes = run.vertices * run.stride;
+    if (placed && kept.generation == g_kept_generation) {
+        if (g_run_kept != 0) {
+            flush_pending();
+        }
+    } else {
+        uint32_t vertex = (g_kept_vertex_used + run.stride - 1) / run.stride * run.stride;
+        if (vertex + bytes > kKeptVertexBytes || (g_kept_index_used + run.indices) * sizeof(uint16_t) > kKeptIndexBytes) {
+            return false;
+        }
+        kept.vertex = vertex;
+        kept.index = g_kept_index_used;
+        kept.generation = g_kept_generation;
+        g_kept_vertex_used = vertex + bytes;
+        g_kept_index_used += run.indices;
+    }
+    auto clock = std::chrono::steady_clock::now();
+    D3D11_BOX box{kept.vertex, 0, 0, kept.vertex + bytes, 1, 1};
+    g_device.context->UpdateSubresource(g_device.kept_vertices, 0, &box, vertices, 0, 0);
+    box.left = kept.index * static_cast<UINT>(sizeof(uint16_t));
+    box.right = box.left + run.indices * static_cast<UINT>(sizeof(uint16_t));
+    g_device.context->UpdateSubresource(g_device.kept_indices, 0, &box, indices, 0, 0);
+    g_copy_bytes += bytes + run.indices * sizeof(uint16_t);
+    g_copy_seconds += lap(clock);
+    return true;
+}
+
+void reset_kept() {
+    if (g_run_kept != 0) {
+        flush_pending();
+    }
+    if (g_recording && !g_record.runs.empty()) {
+        g_record_broken = true;
+    }
+    g_kept_generation++;
+    g_kept_vertex_used = 0;
+    g_kept_index_used = 0;
 }
 
 void take_statistics(uint32_t& batches, uint32_t& vertices, double& seconds) {
@@ -2420,6 +3124,8 @@ void release_record(FrameRecord& record) {
     record.source_of.clear();
     record.positions.clear();
     record.draws.clear();
+    record.runs.clear();
+    record.rows.clear();
 }
 
 constexpr float kMaxStep = 0.5f;
@@ -2573,6 +3279,537 @@ bool moves_in_world(const RecordedDraw& draw, const RecordedDraw& before, const 
     return false;
 }
 
+using Row = std::array<float, 4>;
+
+struct RunCamera {
+    bool valid = false;
+    float move[3][4] = {};
+    bool known = false;
+    uint32_t id = 0;
+    float back[4][4] = {};
+};
+
+RunCamera g_run_camera;
+bool g_run_cut = false;
+std::array<std::string, 256> g_pair_notes;
+bool g_pair_notes_wanted = false;
+uint32_t g_run_counts[4] = {};
+std::vector<Row> g_replay_rows;
+std::vector<RunDraw> g_replay_draws;
+
+enum MatrixChange : uint8_t { kSameMatrix, kNearMatrix, kOtherMatrix };
+
+MatrixChange matrix_change(const Row* a, const Row* b) {
+    float scale = 0.0f;
+    float turn = 0.0f;
+    float step = 0.0f;
+    float length = 0.0f;
+    bool same = true;
+    bool turned = false;
+    for (int i = 0; i < 3; i++) {
+        float row_scale = 0.0f;
+        float row_turn = 0.0f;
+        for (int j = 0; j < 4; j++) {
+            float x = a[i][j];
+            float y = b[i][j];
+            if (!std::isfinite(x) || !std::isfinite(y)) {
+                return kOtherMatrix;
+            }
+            same = same && x == y;
+            if (j == 3) {
+                step += (y - x) * (y - x);
+                length += y * y;
+            } else {
+                scale = std::max(scale, std::fabs(y));
+                turn = std::max(turn, std::fabs(y - x));
+                row_scale = std::max({row_scale, std::fabs(x), std::fabs(y)});
+                row_turn = std::max(row_turn, std::fabs(y - x));
+            }
+        }
+        turned = turned || row_turn > 0.5f * row_scale;
+    }
+    if (same) {
+        return kSameMatrix;
+    }
+    return turned || turn > 0.3f * scale || std::sqrt(step) > 0.5f * std::sqrt(length) + 200.0f ? kOtherMatrix : kNearMatrix;
+}
+
+void lerp_rows(Row* out, const Row* a, const Row* b, uint32_t count, float t) {
+    for (uint32_t i = 0; i < count; i++) {
+        for (int j = 0; j < 4; j++) {
+            float x = a[i][j];
+            float y = b[i][j];
+            if (x != y && std::isfinite(x) && std::isfinite(y)) {
+                out[i][j] = x + (y - x) * t;
+            }
+        }
+    }
+}
+
+void blend_matrix(Row* out, const Row* a, const Row* b, float t) {
+    if (matrix_change(a, b) == kNearMatrix) {
+        lerp_rows(out, a, b, 3, t);
+    }
+}
+
+void blend_texture_matrix(Row* out, const Row* a, const Row* b, float t) {
+    MatrixChange change = matrix_change(a, b);
+    if (change == kNearMatrix) {
+        lerp_rows(out, a, b, 3, t);
+    }
+    g_run_counts[3] += change == kOtherMatrix;
+}
+
+bool same_shape(const RunDraw& before, const RunDraw& now, const Row* a, const Row* b) {
+    if (before.rows != now.rows || a[1][2] != b[1][2] || a[1][3] != b[1][3] || a[3][3] != b[3][3] || (before.palette == kNoPalette) != (now.palette == kNoPalette)) {
+        return false;
+    }
+    uint32_t setup = static_cast<uint32_t>(b[3][3]);
+    uint32_t units = std::min(setup & 15u, 8u);
+    bool lit = (setup & 32u) != 0;
+    uint32_t light = kRunHeaderRows + kRunUnitRows * units;
+    if (light + (lit ? kRunLightRows : 0) > now.rows) {
+        return false;
+    }
+    for (uint32_t i = 0; i < units; i++) {
+        if (a[kRunHeaderRows + kRunUnitRows * i] != b[kRunHeaderRows + kRunUnitRows * i]) {
+            return false;
+        }
+    }
+    return !lit || a[light] == b[light];
+}
+
+void blend_run(Row* out, const Row* a, const Row* b, float t) {
+    lerp_rows(out, a, b, 2, t);
+    bool own = b[1][3] != 0.0f;
+    if (own) {
+        blend_matrix(out + 4, a + 4, b + 4, t);
+    }
+    uint32_t setup = static_cast<uint32_t>(b[3][3]);
+    uint32_t units = std::min(setup & 15u, 8u);
+    for (uint32_t i = 0; i < units; i++) {
+        uint32_t at = kRunHeaderRows + kRunUnitRows * i;
+        if (b[at][2] != 0.0f) {
+            blend_texture_matrix(out + at + 1, a + at + 1, b + at + 1, t);
+        }
+        blend_texture_matrix(out + at + 4, a + at + 4, b + at + 4, t);
+    }
+    if (setup & 32u) {
+        uint32_t light = kRunHeaderRows + kRunUnitRows * units;
+        if (own) {
+            lerp_rows(out + light + 5, a + light + 5, b + light + 5, 3, t);
+        }
+        for (uint32_t n = 0; n < 8; n++) {
+            lerp_rows(out + light + 9 + n * 4, a + light + 9 + n * 4, b + light + 9 + n * 4, 3, t);
+        }
+    }
+}
+
+void blend_palette(Row* out, const Row* a, const Row* b, float t) {
+    for (uint32_t m = 0; m + 3 <= 64; m += 3) {
+        blend_matrix(out + m, a + m, b + m, t);
+    }
+    lerp_rows(out + kPaletteRows, a + kPaletteRows, b + kPaletteRows, kNormalRows, t);
+}
+
+bool run_perspective(const FrameRecord& record, const RecordedRun& run) {
+    return record.rows[run.draw.row + 1][2] == 0.0f;
+}
+
+bool load_matrix(const Row* rows, float (&out)[3][4]) {
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 4; j++) {
+            float value = rows[i][j];
+            if (!std::isfinite(value) || std::fabs(value) > 1e7f) {
+                return false;
+            }
+            out[i][j] = value;
+        }
+    }
+    return true;
+}
+
+bool invert_affine(const float (&m)[3][4], float (&out)[3][4]) {
+    float c[3][3];
+    c[0][0] = m[1][1] * m[2][2] - m[1][2] * m[2][1];
+    c[0][1] = m[0][2] * m[2][1] - m[0][1] * m[2][2];
+    c[0][2] = m[0][1] * m[1][2] - m[0][2] * m[1][1];
+    c[1][0] = m[1][2] * m[2][0] - m[1][0] * m[2][2];
+    c[1][1] = m[0][0] * m[2][2] - m[0][2] * m[2][0];
+    c[1][2] = m[0][2] * m[1][0] - m[0][0] * m[1][2];
+    c[2][0] = m[1][0] * m[2][1] - m[1][1] * m[2][0];
+    c[2][1] = m[0][1] * m[2][0] - m[0][0] * m[2][1];
+    c[2][2] = m[0][0] * m[1][1] - m[0][1] * m[1][0];
+    float det = m[0][0] * c[0][0] + m[0][1] * c[1][0] + m[0][2] * c[2][0];
+    if (std::fabs(det) < 1e-12f) {
+        return false;
+    }
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            out[i][j] = c[i][j] / det;
+        }
+        out[i][3] = -(out[i][0] * m[0][3] + out[i][1] * m[1][3] + out[i][2] * m[2][3]);
+    }
+    return true;
+}
+
+bool close_motion(const float (&a)[3][4], const float (&b)[3][4]) {
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            if (std::fabs(a[i][j] - b[i][j]) > 0.02f) {
+                return false;
+            }
+        }
+        if (std::fabs(a[i][3] - b[i][3]) > 2.0f + 0.02f * std::fabs(b[i][3])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool clip_matrix(const FrameRecord& record, const RecordedRun& run, float (&out)[4][4]) {
+    const Row* h = &record.rows[run.draw.row];
+    const Row* m = &record.rows[run.draw.matrix];
+    double x[4] = {h[0][0], 0.0, 0.0, 0.0};
+    double y[4] = {0.0, h[0][2], 0.0, 0.0};
+    double z[4] = {0.0, 0.0, h[1][0], h[1][1]};
+    double w[4] = {0.0, 0.0, 0.0, 0.0};
+    if (h[1][2] != 0.0f) {
+        x[3] = h[0][1];
+        y[3] = h[0][3];
+        w[3] = 1.0;
+    } else {
+        x[2] = h[0][1];
+        y[2] = h[0][3];
+        w[2] = -1.0;
+    }
+    double clip[4][4];
+    for (int j = 0; j < 4; j++) {
+        clip[0][j] = x[j] * h[2][0] + w[j] * h[2][1];
+        clip[1][j] = y[j] * h[2][2] + w[j] * h[2][3];
+        clip[2][j] = (w[j] * h[3][1] - z[j] * h[3][0]) / 16777215.0;
+        clip[3][j] = w[j];
+    }
+    for (int r = 0; r < 4; r++) {
+        for (int c = 0; c < 4; c++) {
+            double sum = c == 3 ? clip[r][3] : 0.0;
+            for (int k = 0; k < 3; k++) {
+                sum += clip[r][k] * m[k][c];
+            }
+            if (!std::isfinite(sum)) {
+                return false;
+            }
+            out[r][c] = static_cast<float>(sum);
+        }
+    }
+    return true;
+}
+
+void find_run_camera(const std::vector<uint32_t>& unique) {
+    constexpr size_t kSamples = 48;
+    static float moves[kSamples][3][4];
+    static uint32_t sampled[kSamples];
+    size_t total = 0;
+    for (uint32_t before : unique) {
+        total += before != kUnmatched;
+    }
+    size_t step = total / kSamples + 1;
+    size_t count = 0;
+    size_t seen = 0;
+    for (size_t i = 0; i < unique.size() && count < kSamples; i++) {
+        if (unique[i] == kUnmatched || seen++ % step != 0) {
+            continue;
+        }
+        const RecordedRun& run = g_record.runs[i];
+        const RecordedRun& before = g_previous.runs[unique[i]];
+        float now[3][4];
+        float then[3][4];
+        float back[3][4];
+        if (!run_perspective(g_record, run) || !run_perspective(g_previous, before) || !load_matrix(&g_record.rows[run.draw.matrix], now) ||
+            !load_matrix(&g_previous.rows[before.draw.matrix], then) || !invert_affine(then, back)) {
+            continue;
+        }
+        for (int r = 0; r < 3; r++) {
+            for (int c = 0; c < 4; c++) {
+                moves[count][r][c] = now[r][0] * back[0][c] + now[r][1] * back[1][c] + now[r][2] * back[2][c] + (c == 3 ? now[r][3] : 0.0f);
+            }
+        }
+        sampled[count++] = static_cast<uint32_t>(i);
+    }
+    size_t best = 0;
+    size_t best_votes = 0;
+    for (size_t i = 0; i < count; i++) {
+        size_t votes = 0;
+        for (size_t k = 0; k < count; k++) {
+            votes += close_motion(moves[i], moves[k]);
+        }
+        if (votes > best_votes) {
+            best_votes = votes;
+            best = i;
+        }
+    }
+    g_run_camera.valid = best_votes >= 3 && best_votes * 3 >= count;
+    g_run_camera.known = false;
+    if (!g_run_camera.valid) {
+        return;
+    }
+    std::memcpy(g_run_camera.move, moves[best], sizeof g_run_camera.move);
+    const RecordedRun& run = g_record.runs[sampled[best]];
+    const RecordedRun& before = g_previous.runs[unique[sampled[best]]];
+    float now[4][4];
+    float then[4][4];
+    double inverse[4][4];
+    if (run.draw.camera == before.draw.camera && clip_matrix(g_record, run, now) && clip_matrix(g_previous, before, then) && invert(now, inverse)) {
+        g_run_camera.known = true;
+        g_run_camera.id = run.draw.camera;
+        for (int r = 0; r < 4; r++) {
+            for (int c = 0; c < 4; c++) {
+                double sum = 0.0;
+                for (int k = 0; k < 4; k++) {
+                    sum += then[r][k] * inverse[k][c];
+                }
+                g_run_camera.back[r][c] = static_cast<float>(sum);
+                g_run_camera.known = g_run_camera.known && std::isfinite(sum);
+            }
+        }
+    }
+}
+
+float run_distance(const RecordedRun& before, const RecordedRun& run) {
+    const Row* a = &g_previous.rows[before.draw.matrix];
+    const Row* b = &g_record.rows[run.draw.matrix];
+    float distance = 0.0f;
+    if (g_run_camera.valid && run_perspective(g_previous, before) && run_perspective(g_record, run)) {
+        for (int i = 0; i < 3; i++) {
+            const float* r = g_run_camera.move[i];
+            distance += std::fabs(r[0] * a[0][3] + r[1] * a[1][3] + r[2] * a[2][3] + r[3] - b[i][3]);
+        }
+    } else {
+        for (int i = 0; i < 3; i++) {
+            distance += std::fabs(b[i][3] - a[i][3]);
+        }
+    }
+    return std::isfinite(distance) ? distance : 1e30f;
+}
+
+void pair_runs() {
+    auto started = std::chrono::steady_clock::now();
+    std::vector<RecordedRun>& runs = g_record.runs;
+    const std::vector<RecordedRun>& before = g_previous.runs;
+    g_run_cut = false;
+    g_run_camera.valid = false;
+    g_run_camera.known = false;
+    for (RecordedRun& run : runs) {
+        run.match = kUnmatched;
+    }
+    if (runs.empty() || before.empty()) {
+        return;
+    }
+    constexpr uint32_t kCandidates = 48;
+    static std::vector<uint64_t> keys;
+    static std::vector<uint32_t> head;
+    static std::vector<uint32_t> next;
+    static std::vector<uint32_t> unique;
+    size_t size = 64;
+    while (size < before.size() * 2) {
+        size *= 2;
+    }
+    keys.assign(size, 0);
+    head.assign(size, kUnmatched);
+    next.assign(before.size(), kUnmatched);
+    auto slot_of = [size](uint64_t key) {
+        size_t slot = static_cast<size_t>(key ^ (key >> 29)) & (size - 1);
+        while (keys[slot] != 0 && keys[slot] != key) {
+            slot = (slot + 1) & (size - 1);
+        }
+        return slot;
+    };
+    for (size_t i = before.size(); i-- > 0;) {
+        uint64_t key = before[i].draw.key;
+        if (key == 0) {
+            continue;
+        }
+        size_t slot = slot_of(key);
+        keys[slot] = key;
+        next[i] = head[slot];
+        head[slot] = static_cast<uint32_t>(i);
+    }
+    unique.assign(runs.size(), kUnmatched);
+    static std::vector<uint32_t> last;
+    static std::vector<uint32_t> later;
+    last.assign(size, kUnmatched);
+    later.assign(runs.size(), kUnmatched);
+    for (size_t i = runs.size(); i-- > 0;) {
+        uint64_t key = runs[i].draw.key;
+        size_t slot = key != 0 ? slot_of(key) : 0;
+        if (key != 0 && keys[slot] == key) {
+            later[i] = last[slot];
+            last[slot] = static_cast<uint32_t>(i);
+        }
+    }
+    for (size_t i = 0; i < runs.size(); i++) {
+        uint64_t key = runs[i].draw.key;
+        size_t slot = key != 0 ? slot_of(key) : 0;
+        if (key != 0 && keys[slot] == key && head[slot] != kUnmatched && next[head[slot]] == kUnmatched) {
+            unique[i] = head[slot];
+        }
+    }
+    find_run_camera(unique);
+    uint32_t paired = 0;
+    uint32_t rejected = 0;
+    for (size_t i = 0; i < runs.size(); i++) {
+        RecordedRun& run = runs[i];
+        uint64_t key = run.draw.key;
+        if (key == 0) {
+            continue;
+        }
+        size_t slot = slot_of(key);
+        if (keys[slot] != key || head[slot] == kUnmatched) {
+            continue;
+        }
+        uint32_t* link = &head[slot];
+        uint32_t* best = link;
+        float best_distance = next[*link] == kUnmatched && later[i] == kUnmatched ? 0.0f : run_distance(before[*link], run);
+        link = &next[*link];
+        for (uint32_t n = 1; n < kCandidates && *link != kUnmatched && best_distance > 0.0f; n++, link = &next[*link]) {
+            float distance = run_distance(before[*link], run);
+            if (distance < best_distance) {
+                best_distance = distance;
+                best = link;
+            }
+        }
+        bool taken = false;
+        for (uint32_t n = 0, other = later[i]; n < kCandidates && other != kUnmatched && !taken && best_distance > 0.0f; n++, other = later[other]) {
+            taken = run_distance(before[*best], runs[other]) < best_distance;
+        }
+        if (taken) {
+            continue;
+        }
+        run.match = *best;
+        *best = next[*best];
+        paired++;
+        rejected += matrix_change(&g_previous.rows[before[run.match].draw.matrix], &g_record.rows[run.draw.matrix]) == kOtherMatrix;
+    }
+    g_run_cut = rejected > 8 && rejected * 3 > paired;
+    if (g_pair_notes_wanted) {
+        std::string& note = g_pair_notes[g_frame % g_pair_notes.size()];
+        char part[160];
+        std::snprintf(part, sizeof part, "frame %llu runs %zu paired %u far %u cut %d:", static_cast<unsigned long long>(g_frame), runs.size(), paired, rejected, g_run_cut);
+        note = part;
+        for (size_t i = 0; i < runs.size() && note.size() < 6000; i++) {
+            uint64_t key = runs[i].draw.key;
+            size_t slot = key != 0 ? slot_of(key) : 0;
+            uint32_t copies = 0;
+            for (uint32_t other = key != 0 && keys[slot] == key ? last[slot] : kUnmatched; other != kUnmatched && copies < 4; other = later[other]) {
+                copies++;
+            }
+            if (copies < 4) {
+                continue;
+            }
+            const Row* b = &g_record.rows[runs[i].draw.matrix];
+            float size = std::max({std::fabs(b[0][0]), std::fabs(b[0][1]), std::fabs(b[0][2])});
+            if (runs[i].match == kUnmatched) {
+                std::snprintf(part, sizeof part, " | %zu new %04x at %.1f %.1f %.1f size %.2f", i, static_cast<unsigned>(key & 0xFFFF), b[0][3], b[1][3], b[2][3], size);
+            } else {
+                const Row* a = &g_previous.rows[before[runs[i].match].draw.matrix];
+                std::snprintf(part, sizeof part, " | %zu<-%u %04x kind %d from %.1f %.1f %.1f to %.1f %.1f %.1f size %.2f<-%.2f", i, runs[i].match, static_cast<unsigned>(key & 0xFFFF),
+                              static_cast<int>(matrix_change(a, b)), a[0][3], a[1][3], a[2][3], b[0][3], b[1][3], b[2][3], size,
+                              std::max({std::fabs(a[0][0]), std::fabs(a[0][1]), std::fabs(a[0][2])}));
+            }
+            note += part;
+        }
+    }
+    g_run_counts[0] += static_cast<uint32_t>(runs.size());
+    g_run_counts[1] += paired;
+    g_run_counts[2] += rejected;
+    g_time_pairing += std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+}
+
+void adopt_run_camera() {
+    if (!g_run_camera.known) {
+        return;
+    }
+    CameraMotion* chosen = nullptr;
+    for (CameraMotion& camera : g_cameras) {
+        if (camera.claimed && camera.id == g_run_camera.id && !camera.is_second) {
+            chosen = camera.known ? nullptr : &camera;
+            break;
+        }
+        if (!camera.claimed && !chosen) {
+            chosen = &camera;
+        }
+    }
+    if (chosen) {
+        chosen->claimed = true;
+        chosen->known = true;
+        chosen->id = g_run_camera.id;
+        std::memcpy(chosen->back, g_run_camera.back, sizeof chosen->back);
+    }
+}
+
+bool send_replayed() {
+    if (g_replay_draws.empty()) {
+        return true;
+    }
+    uint32_t start = 0;
+    bool ok = upload_run(g_device.run_rows, g_run_row_cursor, kRunRowCapacity * sizeof(float[4]), g_replay_rows.data(),
+                         static_cast<uint32_t>(g_replay_rows.size() * sizeof(float[4])), start);
+    if (ok) {
+        g_device.context->RSSetState(g_device.rasterizer);
+        issue_runs(g_replay_draws.data(), g_replay_draws.size(), 0, 0, start / static_cast<uint32_t>(sizeof(float[4])));
+    }
+    g_replay_draws.clear();
+    g_replay_rows.clear();
+    return ok;
+}
+
+bool replay_runs(const RecordedCommand& command, float t) {
+    uint32_t palette_at = kNoPalette;
+    uint32_t palette_now = kNoPalette;
+    uint32_t palette_before = kNoPalette;
+    for (size_t i = command.begin; i < command.end; i++) {
+        const RecordedRun& run = g_record.runs[i];
+        const Row* now = &g_record.rows[run.draw.row];
+        const RecordedRun* before = run.match != kUnmatched ? &g_previous.runs[run.match] : nullptr;
+        const Row* then = before ? &g_previous.rows[before->draw.row] : nullptr;
+        if (before && !same_shape(before->draw, run.draw, then, now)) {
+            before = nullptr;
+        }
+        if (g_replay_rows.size() + run.draw.rows + kPaletteRows + kNormalRows > kRunRowCapacity / 2) {
+            if (!send_replayed()) {
+                return false;
+            }
+            palette_at = kNoPalette;
+        }
+        if (run.draw.palette != kNoPalette) {
+            uint32_t other = before ? before->draw.palette : kNoPalette;
+            if (palette_at == kNoPalette || palette_now != run.draw.palette || palette_before != other) {
+                palette_at = static_cast<uint32_t>(g_replay_rows.size());
+                palette_now = run.draw.palette;
+                palette_before = other;
+                const Row* palette = &g_record.rows[run.draw.palette];
+                g_replay_rows.insert(g_replay_rows.end(), palette, palette + kPaletteRows + kNormalRows);
+                if (other != kNoPalette) {
+                    blend_palette(&g_replay_rows[palette_at], &g_previous.rows[other], palette, t);
+                }
+            }
+        }
+        uint32_t at = static_cast<uint32_t>(g_replay_rows.size());
+        g_replay_rows.insert(g_replay_rows.end(), now, now + run.draw.rows);
+        Row* out = &g_replay_rows[at];
+        if (before) {
+            blend_run(out, then, now, t);
+        }
+        if (run.draw.palette != kNoPalette) {
+            out[3][2] = static_cast<float>(static_cast<int>(palette_at) - static_cast<int>(at));
+        }
+        RunDraw draw = run.draw;
+        draw.row = at;
+        g_replay_draws.push_back(draw);
+    }
+    return send_replayed();
+}
+
 bool replay_between(const std::vector<std::pair<uint32_t, uint32_t>>& matches, float t, ID3D11RenderTargetView* target, int x, int y, int width,
                     int height, bool depth, const CopyFilter& filter) {
     auto started = std::chrono::steady_clock::now();
@@ -2683,7 +3920,8 @@ bool replay_between(const std::vector<std::pair<uint32_t, uint32_t>>& matches, f
     BatchState swapped;
     for (const RecordedCommand& command : g_record.commands) {
         switch (command.kind) {
-        case RecordedCommand::kBatch: {
+        case RecordedCommand::kBatch:
+        case RecordedCommand::kRuns: {
             const BatchState* state = &command.batch;
             for (size_t map = 0; map < kTextureMaps; map++) {
                 for (const auto& [recorded, twin] : twins) {
@@ -2695,6 +3933,13 @@ bool replay_between(const std::vector<std::pair<uint32_t, uint32_t>>& matches, f
                         swapped.views[map] = twin->view;
                     }
                 }
+            }
+            if (command.kind == RecordedCommand::kRuns) {
+                set_batch_state(*state, false);
+                if (!replay_runs(command, t)) {
+                    return false;
+                }
+                break;
             }
             set_batch_state(*state, true);
             context->Draw(static_cast<UINT>(command.end - command.begin), static_cast<UINT>(command.begin));
@@ -3102,6 +4347,7 @@ void pair_frame() {
     match_by(&RecordedDraw::exact, true, partner, taken, kind, moved_too_far);
     match_by(&RecordedDraw::key, false, partner, taken, kind, moved_too_far);
     find_cameras(partner, kind);
+    adopt_run_camera();
     static bool forward[kMaxCameras];
     for (size_t k = 0; k < kMaxCameras; k++) {
         forward[k] = g_cameras[k].known && invert(g_cameras[k].back, g_forward[k]);
@@ -3158,7 +4404,7 @@ void pair_frame() {
 bool g_paired = false;
 
 bool can_pair() {
-    return g_recording && !g_record_broken && !g_previous.draws.empty() && !g_record.draws.empty();
+    return g_recording && !g_record_broken && ((!g_previous.draws.empty() && !g_record.draws.empty()) || (!g_previous.runs.empty() && !g_record.runs.empty()));
 }
 
 uint32_t run_interpolated(int x, int y, int width, int height, bool depth, const CopyFilter& filter, const pacing::FramePlan& plan) {
@@ -3166,10 +4412,16 @@ uint32_t run_interpolated(int x, int y, int width, int height, bool depth, const
         return 0;
     }
     if (!g_paired) {
-        pair_frame();
+        pair_runs();
+        if (!g_previous.draws.empty() && !g_record.draws.empty()) {
+            pair_frame();
+        } else {
+            g_matches.clear();
+            g_camera_cut = false;
+        }
         g_paired = true;
     }
-    if (g_camera_cut) {
+    if (g_camera_cut || g_run_cut) {
         return 0;
     }
     uint32_t count = std::min<uint32_t>(plan.images, kMaxBetween);
@@ -3192,9 +4444,13 @@ void end_record() {
     if (g_recording && !g_record_broken) {
         g_previous.positions.swap(g_record.positions);
         g_previous.draws.swap(g_record.draws);
+        g_previous.runs.swap(g_record.runs);
+        g_previous.rows.swap(g_record.rows);
     } else {
         g_previous.positions.clear();
         g_previous.draws.clear();
+        g_previous.runs.clear();
+        g_previous.rows.clear();
     }
     release_record(g_record);
     g_paired = false;
@@ -3210,7 +4466,10 @@ void end_record() {
     if (g_recording) {
         g_vertex_cursor = kVertexCapacity;
         g_trimmed_cursor = kVertexBytes;
+        g_run_vertex_cursor = kRunVertexBytes;
+        g_run_index_cursor = kRunIndexBytes;
     }
+    g_run_ring_recorded = false;
 }
 
 double g_period = 1.0 / 60.0;
@@ -3331,7 +4590,11 @@ void finish_frame() {
             log::write("replay", "%u frames, %u with images, %u late, %.2f ms per frame for the images (pairing %.2f, positions %.2f, commands %.2f), %u draws per frame: %u sure pairs, %u by order, %u rejected, %u unpaired, %u unpaired inline, %u with the camera (%u cameras)",
                        frames, with_images, late_frames, seconds * 1000.0 / frames, g_time_pairing * 1000.0 / frames, g_time_filling * 1000.0 / frames, g_time_sending * 1000.0 / frames, draws / frames, g_match[0] / n, g_match[1] / n, g_match[2] / n, g_match[3] / n, g_match[4] / n,
                        g_match[5] / n, static_cast<uint32_t>(std::count_if(std::begin(g_cameras), std::end(g_cameras), [](const CameraMotion& c) { return c.known; })));
+            if (g_run_counts[0] != 0) {
+                log::write("runs", "%u models per frame redrawn for the images: %u paired, %u moved too far, %u texture matrices turned in all", g_run_counts[0] / n, g_run_counts[1] / n, g_run_counts[2] / n, g_run_counts[3]);
+            }
             std::fill(std::begin(g_match), std::end(g_match), 0u);
+            std::fill(std::begin(g_run_counts), std::end(g_run_counts), 0u);
             report = now;
             frames = with_images = late_frames = draws = 0;
             seconds = 0.0;
@@ -3804,6 +5067,7 @@ void record_shown(ID3D11Texture2D* source, bool between) {
             g_recent.failed = true;
         }
     }
+    g_pair_notes_wanted = !g_recent.failed && !g_recent.images.empty();
     if (g_recent.failed || g_recent.images.empty()) {
         return;
     }
@@ -3918,6 +5182,12 @@ bool service_presents() {
 
 bool read_recent(std::vector<RecentImage>& images) {
     images.clear();
+    for (size_t i = 1; i <= g_pair_notes.size(); i++) {
+        const std::string& note = g_pair_notes[(g_frame + i) % g_pair_notes.size()];
+        for (size_t at = 0; at < note.size(); at += 400) {
+            log::write("runs", "%s", note.substr(at, 400).c_str());
+        }
+    }
     size_t size = g_recent.images.size();
     for (size_t i = 0; i < g_recent.count; i++) {
         size_t slot = (g_recent.next + size - g_recent.count + i) % size;
