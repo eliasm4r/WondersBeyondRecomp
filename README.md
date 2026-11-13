@@ -110,18 +110,6 @@ The defaults below can all be changed in the **Controls** tab of the options men
 
 <br>
 
-## Performance
-
-The game spends most of its time drawing, so the graphics card does the heavy part: it places the vertices, keeps the models that do not change in its own memory and redraws the scene for the images in between at 90 and 120 fps.
-
-| PC | Before | Now |
-|---|:---:|:---:|
-| Laptop, Ryzen 5 5600H and Radeon RX 6500M, heaviest zone | 25 to 42 fps | **steady 60 fps** |
-
-Press **F2** at any time to see the frame rate and the load on the processor and the graphics card.
-
-<br>
-
 ## FAQ
 
 <details>
