@@ -6,6 +6,7 @@
 namespace wp::video {
 
 void start();
+void serve_main_thread();
 void present();
 void update_statistics(double fps);
 void save_next_frame(const char* path);

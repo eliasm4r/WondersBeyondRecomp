@@ -1,0 +1,22 @@
+name: macOS
+
+on:
+  push:
+    branches: [main, macos]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  engine:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Ninja
+        run: brew install ninja
+      - name: Configure
+        run: cmake -S . -B build/out -G Ninja -DCMAKE_BUILD_TYPE=Release -DWP_REQUIRE_SDL3=ON
+      - name: Build
+        run: cmake --build build/out --target runtime_tests translator_tests
+      - name: Test
+        working-directory: build/out
+        run: ctest --output-on-failure

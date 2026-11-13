@@ -130,14 +130,16 @@ void report_terminate() {
 }
 
 void use_default_log() {
-#ifdef _WIN32
     if (std::getenv("WP_LOG_FILE") || std::getenv("WP_HEADLESS")) {
         return;
     }
     std::error_code error;
     std::filesystem::create_directories("logs", error);
     std::filesystem::rename("logs/pokepark2.log", "logs/pokepark2.previous.log", error);
+#ifdef _WIN32
     _putenv_s("WP_LOG_FILE", "logs/pokepark2.log");
+#else
+    setenv("WP_LOG_FILE", "logs/pokepark2.log", 1);
 #endif
 }
 
@@ -251,8 +253,8 @@ int main(int argc, char** argv) {
     std::signal(SIGILL, report_crash);
     std::signal(SIGFPE, report_crash);
     std::signal(SIGABRT, report_crash);
-    int result = 0;
-    wp::run_with_stack(size_t{512} << 20, [&] { result = run(argc, argv); });
-    return result;
+    wp::start_with_stack(size_t{512} << 20, [argc, argv] { std::exit(run(argc, argv)); });
+    wp::video::serve_main_thread();
+    return 0;
 #endif
 }

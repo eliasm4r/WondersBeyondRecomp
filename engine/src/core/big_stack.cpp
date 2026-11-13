@@ -40,4 +40,19 @@ void run_with_stack(size_t stack_size, const std::function<void()>& work) {
 #endif
 }
 
+void start_with_stack(size_t stack_size, std::function<void()> work) {
+    auto* owned = new std::function<void()>(std::move(work));
+#ifdef _WIN32
+    CloseHandle(CreateThread(nullptr, stack_size, run, owned, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr));
+#else
+    pthread_attr_t attributes;
+    pthread_attr_init(&attributes);
+    pthread_attr_setstacksize(&attributes, stack_size);
+    pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED);
+    pthread_t thread;
+    pthread_create(&thread, &attributes, run, owned);
+    pthread_attr_destroy(&attributes);
+#endif
+}
+
 }

@@ -332,6 +332,15 @@ void drain_events(SDL_Window* window) {
     }
 }
 
+struct MainRequest {
+    std::mutex lock;
+    std::condition_variable changed;
+    bool requested = false;
+    bool visible = false;
+};
+
+MainRequest g_main;
+
 void finish_start(SDL_Window* window, SDL_GLContext context) {
     std::lock_guard<std::mutex> hold(g_state.lock);
     g_state.window = window;
@@ -511,8 +520,23 @@ void start() {
     log::write("video", "build %s", WP_BUILD);
     g_aspect = nand::widescreen() ? kWideAspect : kStandardAspect;
     apply_interface_language();
-    bool visible = std::getenv("WP_HEADLESS") == nullptr;
-    std::thread(window_thread, visible).detach();
+    std::lock_guard<std::mutex> hold(g_main.lock);
+    g_main.visible = std::getenv("WP_HEADLESS") == nullptr;
+    g_main.requested = true;
+    g_main.changed.notify_all();
+}
+
+void serve_main_thread() {
+    bool visible = false;
+    {
+        std::unique_lock<std::mutex> hold(g_main.lock);
+        g_main.changed.wait(hold, [] { return g_main.requested; });
+        visible = g_main.visible;
+    }
+    window_thread(visible);
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::hours(1));
+    }
 }
 
 void* window_handle() {

@@ -1178,6 +1178,8 @@ RunPool g_pool;
 void relax() {
 #if defined(__x86_64__) || defined(__i386__)
     __builtin_ia32_pause();
+#elif defined(__aarch64__)
+    asm volatile("yield");
 #else
     std::this_thread::yield();
 #endif
