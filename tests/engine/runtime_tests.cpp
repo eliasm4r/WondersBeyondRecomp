@@ -1655,7 +1655,7 @@ void test_options_menu() {
     CHECK(wp::options::kind("pad.a") == wp::options::Kind::Pad);
     CHECK(wp::options::kind("audio.mute") == wp::options::Kind::Toggle);
     CHECK(wp::options::kind("keys.reset") == wp::options::Kind::Button);
-    CHECK(wp::options::step_value("audio.volume", "100", 1) == "100");
+    CHECK(wp::options::step_value("audio.volume", "300", 1) == "300");
     CHECK(wp::options::step_value("audio.volume", "0", -1) == "0");
     CHECK(wp::options::step_value("audio.volume", "52", 1) == "55");
     wp::ui::set_language(wp::ui::Language::Spanish);
@@ -1762,7 +1762,7 @@ void test_options_menu() {
     CHECK(menu.handle(wp::options::Action::Previous) == "audio.volume");
     CHECK(wp::settings::number("audio.volume", nullptr) == 95);
     CHECK(menu.set_fraction(0, 0.5) == "audio.volume");
-    CHECK(wp::settings::number("audio.volume", nullptr) == 50);
+    CHECK(wp::settings::number("audio.volume", nullptr) == 150);
     CHECK(menu.rows()[0].fraction == 0.5);
     CHECK(menu.set_fraction(1, 0.5).empty());
     menu.select(1);

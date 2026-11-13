@@ -54,7 +54,7 @@ struct Slider {
     int step;
 };
 
-constexpr Slider kSliders[] = {{"audio.volume", 0, 100, 5},
+constexpr Slider kSliders[] = {{"audio.volume", 0, 300, 5},
                                {"input.stick_deadzone", 10, 90, 5},
                                {"camera.mouse_speed", 10, 300, 10},
                                {"camera.stick_speed", 10, 300, 10},

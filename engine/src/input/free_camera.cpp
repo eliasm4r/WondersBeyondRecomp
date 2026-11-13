@@ -14,7 +14,7 @@ namespace wp::free_camera {
 namespace {
 
 constexpr float kPi = 3.14159265358979f;
-constexpr float kMouseRadians = 0.004f;
+constexpr float kMouseRadians = 0.0016f;
 constexpr float kStickYawSpeed = 2.6f;
 constexpr float kStickPitchSpeed = 1.6f;
 constexpr float kStickDeadZone = 0.2f;

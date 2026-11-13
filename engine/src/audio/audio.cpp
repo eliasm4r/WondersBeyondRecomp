@@ -182,7 +182,7 @@ public:
             write_wav_header(dump_, dump_frames_, static_cast<uint32_t>(device_rate_));
         }
         static const settings::LiveNumber volume("audio.volume", "WP_VOLUME");
-        float level = muted() ? 0.0f : std::clamp(volume(), 0, 100) / 100.0f;
+        float level = muted() ? 0.0f : std::clamp(volume(), 0, 300) / 300.0f;
         if (level != 1.0f) {
             for (uint32_t i = 0; i < available; i++) {
                 mixed[i] = {mixed[i].left * level, mixed[i].right * level};

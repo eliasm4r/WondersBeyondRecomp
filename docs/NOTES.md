@@ -316,9 +316,11 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
   half a second without updates or when the target jumps more than 40 units. Wii B eases it back to the game's yaw.
 - Mouse: raw input on Windows, relative mode with SDL. The cursor is held at the window's center while the free camera
   drives the view and the window has focus, the F1 menu is closed and neither Ctrl (`keys.pointer`) nor the mouse
-  motion key is held. 0.004 rad per count at 100 %; the stick turns 2.6 rad/s sideways and 1.6 rad/s up and down at
+  motion key is held. 0.0016 rad per count at 100 % (0.004 was found too fast); the stick turns 2.6 rad/s sideways and 1.6 rad/s up and down at
   100 %, with a 0.2 dead zone. Settings: `camera.free`, `camera.mouse_speed`, `camera.stick_speed` (10 to 300 %),
   `camera.invert_y`.
+- `audio.volume` goes from 0 to 300 % and the output is multiplied by a 300th of it: 100 % is a third of the game's
+  own level, which was found too loud, and 300 % is that level, so no value can clip.
 - The game aims about 4.1 units above Pikachu, but its target trails him by up to 8 units; seen from another angle that
   lag puts him off center. The free camera asks for the followed position the same way the update does (`0x8001A610`
   for the handle, `0x800C6710` for "none", `0x800C5D80` for the position, `0x800C64C0` to release it, called from the
