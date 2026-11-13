@@ -253,7 +253,7 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
 
 ## Installer
 
-- `tools/make_setup.py` makes `build/dist/WondersBeyondRecomp-Setup.zip`: Python 3.12.10 from its NuGet package and
+- `tools/make_setup.py` makes `build/dist/WondersBeyondRecomp-Setup-Windows.zip`: Python 3.12.10 from its NuGet package and
   the Tcl/Tk part of the python.org installer (both checked against a SHA-256), the scripts of `installer/`,
   `installer/sources.zip` and `Setup.exe`. `sources.zip` holds the files
   `git ls-files` lists for the engine, the recompiler, `game`, `third_party`, `tests` and
@@ -662,12 +662,6 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
   not an aligned address inside guest memory and logs the first such link once (`memory ... links to`). Our hooks had
   not acted before either crash (no wait, no full free list). Whether that link is a real corruption is unknown: if
   the game later crashes inside 0x8037D4A0, the log line gives the heap, the block and the value.
-- It is a real corruption: in an OpenGL run with the frame wait still at the copy (late tokens, about 12
-  write-backs a second) the log said `free block 1 after 814f9950 links to ffffffff`, heap 4 shrank to 0 KB and the
-  game crashed inside 0x8037D4A0 itself 18 ms later. Not found: a build that walked heap 4 before and after every
-  write-back and compared each written range with the free blocks never saw it break in seven runs (63 to 1003
-  write-backs each). Every sighting came with a renderer late on its tokens (OpenGL waiting at the copy, the friend's
-  Direct3D at 120 fps), so that is the condition to recreate when looking further.
 - It is a real corruption: in an OpenGL run with the frame wait still at the copy (late tokens, about 12
   write-backs a second) the log said `free block 1 after 814f9950 links to ffffffff`, heap 4 shrank to 0 KB and the
   game crashed inside 0x8037D4A0 itself 18 ms later. Not found: a build that walked heap 4 before and after every
