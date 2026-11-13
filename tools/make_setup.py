@@ -11,7 +11,7 @@ PYTHON_URL = "https://api.nuget.org/v3-flatcontainer/python/3.12.10/python.3.12.
 PYTHON_SHA256 = "0eb85c2dfccccf1b17352de4c397f69194035b7d37149eacc16f1147d93de3b8"
 TCLTK_URL = "https://www.python.org/ftp/python/3.12.10/amd64/tcltk.msi"
 TCLTK_SHA256 = "55c96ffad69b1c834aa52e11b9ce41637a178ba6ad6607e83956044834276e2a"
-SOURCES = ["CMakeLists.txt", "LICENSE", "THIRD_PARTY_NOTICES.md", "engine", "recompiler", "games/pokepark2", "third_party", "tests", "tools/fetch_sdl.py"]
+SOURCES = ["CMakeLists.txt", "LICENSE", "THIRD_PARTY_NOTICES.md", "engine", "recompiler", "game", "third_party", "tests", "tools/fetch_sdl.py"]
 UNUSED_LIBRARIES = ["site-packages", "test", "idlelib", "ensurepip", "turtledemo", "venv", "lib2to3", "__phello__"]
 NAME = "WondersBeyondRecomp-Setup"
 SIGNED = "Setup (if blocked)"
@@ -72,7 +72,7 @@ def add_launcher():
     build = work / "launcher"
     shutil.rmtree(build, ignore_errors=True)
     build.mkdir(parents=True)
-    shutil.copyfile(root / "games" / "pokepark2" / "res" / "pokepark2.ico", build / "game.ico")
+    shutil.copyfile(root / "game" / "res" / "pokepark2.ico", build / "game.ico")
     (build / "launcher.rc").write_text('1 ICON "game.ico"\n', encoding="ascii")
     subprocess.run(["windres", "launcher.rc", "-O", "coff", "-o", "launcher.res"], cwd=build, check=True)
     subprocess.run(["gcc", "-Os", "-s", "-mwindows", "-municode", str(root / "installer" / "launcher.c"), "launcher.res", "-o", str(bundle / "Setup.exe")],
@@ -98,7 +98,7 @@ def main():
     add_sources()
     for file in sorted((root / "installer").glob("*.py")):
         shutil.copyfile(file, scripts / file.name)
-    shutil.copyfile(root / "games" / "pokepark2" / "res" / "pokepark2.ico", scripts / "game.ico")
+    shutil.copyfile(root / "game" / "res" / "pokepark2.ico", scripts / "game.ico")
     for name in ("LICENSE", "THIRD_PARTY_NOTICES.md"):
         shutil.copyfile(root / name, bundle / name)
     shutil.copyfile(bundle / "python" / "pythonw.exe", bundle / "python" / (SIGNED + ".exe"))

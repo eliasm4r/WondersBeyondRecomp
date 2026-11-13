@@ -6,7 +6,7 @@ Thank you for helping improve the project! This document outlines the guidelines
 
 ## Intellectual Property & Asset Protection
 - **No Copyrighted Material:** Never upload, commit, or link to any copyrighted Nintendo data. This includes `main.dol`, `.rel` files, ISO/WBFS/RVZ images, textures, models, audio, fonts, videos, or memory dumps. This rule strictly applies to commits, issues, and pull requests.
-- **Git Boundaries:** The directories `games/pokepark2/disc/`, `games/pokepark2/extracted/`, and `reference/` are explicitly ignored by Git. Never alter these exclusions.
+- **Git Boundaries:** The directories `game/disc/`, `game/extracted/`, and `reference/` are explicitly ignored by Git. Never alter these exclusions.
 - **Legal Source:** You must use your own legally obtained copy of PokePark 2 to develop, test, or verify code.
 
 ---

@@ -1,10 +1,10 @@
-/games/*/disc/
-/games/*/extracted/
-/games/*/nand/
-/games/*/backups/
-/games/*/settings.ini
-/games/*/stats.ini
-/games/*/textures/
+/game/disc/
+/game/extracted/
+/game/nand/
+/game/backups/
+/game/settings.ini
+/game/stats.ini
+/game/textures/
 /reference/
 *.iso
 *.wbfs

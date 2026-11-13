@@ -34,7 +34,7 @@ jobs:
         run: |
           mkdir -p bundle/installer
           cp installer/*.py bundle/installer/
-          git ls-files -z -- CMakeLists.txt LICENSE THIRD_PARTY_NOTICES.md engine recompiler games/pokepark2 third_party tests tools/fetch_sdl.py | xargs -0 zip -q bundle/installer/sources.zip
+          git ls-files -z -- CMakeLists.txt LICENSE THIRD_PARTY_NOTICES.md engine recompiler game third_party tests tools/fetch_sdl.py | xargs -0 zip -q bundle/installer/sources.zip
           curl -fsSL -o python.tar.gz "$(sed -n 's/^PYTHON_URL="\(.*\)"$/\1/p' installer/Setup.command)"
           echo "$(sed -n 's/^PYTHON_SHA256="\(.*\)"$/\1/p' installer/Setup.command)  python.tar.gz" | shasum -a 256 -c
           tar -xzf python.tar.gz -C bundle
