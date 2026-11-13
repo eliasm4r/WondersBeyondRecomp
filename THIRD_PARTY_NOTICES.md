@@ -12,6 +12,12 @@ This document establishes a rigorous provenance tracking system for all external
 
 ---
 
+## Base Project (GPL-3.0-or-later)
+
+This repository started as a fork of [Wii Party Recomp](https://github.com/arelkair/wiiparty-recomp) by arelkair, whose recompiler and Wii runtime it keeps and extends.
+
+---
+
 ## Ingested Third-Party Components (GPL-2.0-or-later)
 
 All components adapted from the **Dolphin Emulator** originate from a source snapshot of **version 2606** (stored locally under the untracked path `reference/dolphin-source/`). 

@@ -34,61 +34,24 @@ No emulator, up to 120 fps, high resolutions, keyboard, mouse and modern control
 
 ## Highlights
 
-<table>
-<tr>
-<td width="50%" valign="top">
-
-### Smooth
-- **30, 45 or 60 fps** gameplay, 60 by default
-- **90 or 120 fps** with images drawn between the game's own frames
-- Movies and cutscenes kept at their native 30 fps
-- Most of the work done by the graphics card, so laptops hold 60 fps too
-
-</td>
-<td width="50%" valign="top">
-
-### Sharp
-- **Internal resolution up to 6x**, in 16:9 or 4:3
-- Supersampled smoothing and anisotropic filtering
-- Brightness, contrast, saturation and gamma
-- **Custom texture packs**
-
-</td>
-</tr>
-<tr>
-<td valign="top">
-
-### Played your way
-- **Keyboard and mouse** with every key rebindable
-- **Xbox, PlayStation and Switch controllers**, with their own button names in the menus
-- **Real Wii Remotes** and their speaker
-- **Free camera**: turn the view around Pikachu with the mouse or the right stick
-
-</td>
-<td valign="top">
-
-### Made for PC
-- **Options menu on F1**, drawn as the game's own dialog bubble, without pausing
-- **Performance overlay on F2**
-- Automatic save backups and a play time counter
-- **Discord Rich Presence**
-- Menu in English, French, Spanish and Galician
-
-</td>
-</tr>
-</table>
+- **Up to 120 fps**: 30, 45 or 60 fps gameplay (60 by default), and 90 or 120 fps with images drawn between the game's own frames. Movies and cutscenes keep their native 30 fps.
+- **Light on your PC**: the graphics card does most of the work, so laptops hold 60 fps too.
+- **Sharper picture**: internal resolution up to 6x in 16:9 or 4:3, smoothing, anisotropic filtering, color settings and custom texture packs.
+- **Keyboard and mouse**, with every key rebindable and a **free camera** that turns around Pikachu.
+- **Xbox, PlayStation and Switch controllers**, named as they are in the menus, and **real Wii Remotes**.
+- **Options menu on F1**, drawn as the game's own dialog bubble, and a **performance overlay on F2**.
+- **Automatic save backups**, a play time counter and **Discord Rich Presence**.
+- Menu in **English, French, Spanish and Galician**.
 
 <br>
 
 ## Install
 
-| | |
-|:---:|---|
-| **1** | Download **`WondersBeyondRecomp-Setup.zip`** from the [latest release](https://github.com/eliasm4r/WondersBeyondRecomp/releases/latest) and unzip it anywhere. |
-| **2** | Start **`Setup.exe`**. |
-| **3** | Pick your **disc image**: the ROM file of the **European** version (`S2LP01`), `.iso`, `.rvz` or `.wbfs`. |
-| **4** | Pick an install folder and press **Install**. |
-| **5** | Wait about **5 minutes** while the setup builds the game, then press **Play**. |
+1. Download **`WondersBeyondRecomp-Setup.zip`** from the [latest release](https://github.com/eliasm4r/WondersBeyondRecomp/releases/latest) and unzip it anywhere.
+2. Start **`Setup.exe`**.
+3. Pick your **disc image**: the ROM file of the **European** version (`S2LP01`), `.iso`, `.rvz` or `.wbfs`.
+4. Pick an install folder and press **Install**.
+5. Wait about **5 minutes** while the setup builds the game, then press **Play**.
 
 The setup downloads the build tools, translates the game code from your disc image, compiles it for your PC and adds a desktop shortcut. You only run it once: every setting lives in the game itself.
 
@@ -104,13 +67,11 @@ Download the new setup and point it at the same folder. It sees the game already
 
 ### Requirements
 
-| | |
-|---|---|
-| **System** | Windows 10 or 11, 64-bit |
-| **Graphics** | A Direct3D 11 graphics card |
-| **Disk space** | About 4 GB during the install |
-| **Internet** | Needed by the setup to download the build tools |
-| **Game** | Your own disc image of the **European** version (`S2LP01`) |
+- **System**: Windows 10 or 11, 64-bit
+- **Graphics**: a Direct3D 11 graphics card
+- **Disk space**: about 4 GB during the install
+- **Internet**: needed by the setup to download the build tools
+- **Game**: your own disc image of the **European** version (`S2LP01`)
 
 Other regions, Linux and macOS are planned.
 
@@ -140,7 +101,7 @@ The defaults below can all be changed in the **Controls** tab of the options men
 <tr><td>Tilt</td><td><kbd>I</kbd> <kbd>J</kbd> <kbd>K</kbd> <kbd>L</kbd></td><td><kbd>LB</kbd> + right stick</td></tr>
 </table>
 
-| Key | |
+| Key | Action |
 |---|---|
 | <kbd>F1</kbd> | Options menu |
 | <kbd>F2</kbd> | Performance overlay |
@@ -229,7 +190,6 @@ To make the setup zip, run `python tools/make_setup.py`. It writes `build/dist/W
 
 ## Credits
 
-- Built on **[Wii Party Recomp](https://github.com/arelkair/wiiparty-recomp)** by arelkair, whose recompiler and Wii runtime do most of the heavy lifting.
 - Function list made with **[decomp-toolkit](https://github.com/encounter/decomp-toolkit)**, disc reading by **[nod](https://github.com/encounter/nod)**.
 - Third-party code and libraries are listed in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 - Developed with the help of [Claude](https://claude.com/claude-code), Anthropic's AI assistant.
