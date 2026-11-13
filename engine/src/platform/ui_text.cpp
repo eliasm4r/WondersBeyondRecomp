@@ -400,7 +400,7 @@ constexpr Label kFrenchLabels[] = {
     {"help.video.saturation", "0% donne du noir et blanc, 200% des couleurs très vives."},
     {"help.video.gamma", "Éclaircit ou assombrit les zones sombres sans brûler les zones claires."},
     {"help.video.colors_reset", "Remet la luminosité, le contraste, la saturation et le gamma à 100%."},
-    {"help.video.fps", "Images par seconde maximales : 30 ou 60 comme sur la Wii (60 fonctionne parfaitement), 45 entre les deux. 90 et 120 ajoutent des images intermédiaires sur un écran rapide ; encore expérimentaux, ils peuvent ne pas fonctionner parfaitement."},
+    {"help.video.fps", "Images par seconde maximales : 30 ou 60 comme sur la Wii (60 fonctionne parfaitement), 45 entre les deux. 90 et 120 ajoutent des images sur un écran rapide ; expérimentaux, ils peuvent avoir des défauts."},
     {"help.stats.play_time", "Temps total pendant lequel le jeu a tourné sur cet ordinateur."},
     {"help.saves.backups", "Nombre de copies de ta sauvegarde gardées ; une est faite à chaque lancement du jeu."},
     {"help.system.discord", "Indique sur ton profil Discord que tu joues à PokéPark 2."},
