@@ -10,19 +10,12 @@ Every change to WondersBeyondRecomp, newest first.
 
 <br>
 
-## v0.1.1-alpha · 2026-11-13
-
-> **RecompLauncher support.** The game can now be installed, started and set up from [RecompLauncher](https://recomplauncher.com). [Download it here.](https://github.com/eliasm4r/WondersBeyondRecomp/releases/tag/v0.1.1-alpha)
-
-### Added
-- **RecompLauncher support.** RecompLauncher can now install the game from your disc image without the setup window, start it and change its main settings (resolution, frame rate, window, picture shape, V-Sync, smoothing, texture filtering, volume, game language).
-
-### Changed
-- Each section of `settings.ini` is now written once.
-
 ## v0.1.0-alpha · 2026-11-13
 
 > **First public release.** PokéPark 2: Wonders Beyond on Windows at up to 120 fps, installed by a setup that builds the game from your own disc image in about 5 minutes. [Download it here.](https://github.com/eliasm4r/WondersBeyondRecomp/releases/tag/v0.1.0-alpha)
+
+### Added
+- **RecompLauncher support.** RecompLauncher can now install the game from your disc image without the setup window, start it and change its main settings (resolution, frame rate, window, picture shape, V-Sync, smoothing, texture filtering, volume, game language).
 
 ### Changed
 - **Much faster on laptops and slower processors.** The graphics card now places the vertices, keeps the models that do not change in its own memory and redraws the images in between at 90 and 120 fps, and the game thread rests while the game waits. A Ryzen 5 5600H laptop went from 25 to 42 fps to a **steady 60 fps** in the heaviest zone.
@@ -32,6 +25,7 @@ Every change to WondersBeyondRecomp, newest first.
 - **Pikachu icon** for the game and the setup.
 - **Game files in a `game` folder.** The saves, settings and extracted disc now sit in `game` next to the program. Installs from the test builds move them there by themselves on the next start or update.
 - **Setup zip renamed** `WondersBeyondRecomp-Setup-Windows.zip`, since a macOS version is on its way.
+- Each section of `settings.ini` is now written once.
 
 ### Fixed
 - At 90 and 120 fps, the shadows of the Pokémon grew and turned for one image whenever the player changed direction.
