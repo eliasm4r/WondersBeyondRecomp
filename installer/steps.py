@@ -2,6 +2,7 @@ import collections
 import ctypes
 import hashlib
 import os
+import plistlib
 import re
 import shutil
 import subprocess
@@ -12,11 +13,13 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+MAC = sys.platform == "darwin"
 GAME = "pokepark2"
 DISC_ID = "S2LP01"
 FOLDER_NAME = "WondersBeyondRecomp"
-EXECUTABLE = "pokepark2.exe"
+EXECUTABLE = "pokepark2" if MAC else "pokepark2.exe"
 SHORTCUT_NAME = "PokePark 2 Wonders Beyond"
+APP_IDENTIFIER = "io.github.eliasm4r.wondersbeyondrecomp"
 NEEDED_GIGABYTES = 4
 LONGEST_FOLDER = 100
 
@@ -35,6 +38,19 @@ TOOLS = [
      "path": "mingw/MinGW/bin", "megabytes": 110},
 ]
 
+if MAC:
+    TOOLS = [
+        {"name": "nodtool 1.4.4", "url": "https://github.com/encounter/nod/releases/download/v1.4.4/nodtool-macos-arm64",
+         "sha256": "141bc6dfeef6e88197fd75fcb85ee3c5ca64a8b9dcda895af44fbbda29726b78", "file": "nodtool", "folder": "nodtool", "kind": "single",
+         "path": "nodtool", "megabytes": 4},
+        {"name": "CMake 4.4.3", "url": "https://github.com/Kitware/CMake/releases/download/v4.4.3/cmake-4.4.3-macos-universal.tar.gz",
+         "sha256": "0c5d65251c14cc884bfa16bdbed3c263ce5bffe2e21c0d0d00962cb0610464fa", "file": "cmake-4.4.3-macos-universal.tar.gz", "folder": "cmake",
+         "kind": "tar", "path": "cmake/cmake-4.4.3-macos-universal/CMake.app/Contents/bin", "megabytes": 86},
+        {"name": "Ninja 1.13.2", "url": "https://github.com/ninja-build/ninja/releases/download/v1.13.2/ninja-mac.zip",
+         "sha256": "c99048673aa765960a99cf10c6ddb9f1fad506099ff0a0e137ad8960a88f321b", "file": "ninja-mac.zip", "folder": "ninja", "kind": "zip",
+         "path": "ninja", "megabytes": 1},
+    ]
+
 HIDDEN = 0x08000000
 
 
@@ -47,6 +63,8 @@ class Failure(Exception):
 
 
 def default_folder():
+    if MAC:
+        return str(Path.home() / FOLDER_NAME)
     local = os.environ.get("LOCALAPPDATA", "")
     if local and local.isascii():
         return str(Path(local) / FOLDER_NAME)
@@ -69,6 +87,12 @@ def free_gigabytes(folder):
 
 def compile_jobs():
     cores = os.cpu_count() or 1
+    if MAC:
+        try:
+            megabytes = int(subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True).stdout) >> 20
+        except ValueError:
+            return cores
+        return max(1, min(cores, (megabytes - 1536) // 640))
 
     class Memory(ctypes.Structure):
         _fields_ = [("length", ctypes.c_ulong), ("load", ctypes.c_ulong), ("total", ctypes.c_ulonglong), ("free", ctypes.c_ulonglong),
@@ -134,7 +158,8 @@ class Install:
         self.stop = threading.Event()
         self.process = None
         self.log = None
-        self.python = str(self.bundle / "python" / "python.exe")
+        self.python = str(self.bundle / "python" / "bin" / "python3") if MAC else str(self.bundle / "python" / "python.exe")
+        self.launch = str(Path.home() / "Applications" / (SHORTCUT_NAME + ".app")) if MAC else str(self.root / EXECUTABLE)
         self.tools = self.root / "toolchain"
         self.environment = dict(os.environ)
         folders = [str(self.tools / Path(tool["path"])) for tool in TOOLS] + [str(Path(self.python).parent)]
@@ -186,7 +211,7 @@ class Install:
                 action(lambda part, done=done, weight=weight: self.report("progress", (done + weight * min(1.0, part)) / total))
                 done += weight
             self.report("progress", 1.0)
-            self.report("done", str(self.root / EXECUTABLE))
+            self.report("done", self.launch)
         except Stopped:
             self.report("stopped", "")
         except Failure as failure:
@@ -209,7 +234,7 @@ class Install:
 
     def program(self, name):
         for tool in TOOLS:
-            candidate = self.tools / Path(tool["path"]) / (name + ".exe")
+            candidate = self.tools / Path(tool["path"]) / (name if MAC else name + ".exe")
             if candidate.is_file():
                 return str(candidate)
         return name
@@ -217,7 +242,7 @@ class Install:
     def run(self, arguments, line_seen=None):
         self.note("> " + " ".join(arguments))
         process = subprocess.Popen(arguments, cwd=self.root, env=self.environment, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                   stderr=subprocess.STDOUT, creationflags=HIDDEN, encoding="utf-8", errors="replace")
+                                   stderr=subprocess.STDOUT, creationflags=0 if MAC else HIDDEN, encoding="utf-8", errors="replace")
         self.process = process
         tail = collections.deque(maxlen=8)
         output = []
@@ -305,11 +330,17 @@ class Install:
         elif tool["kind"] == "zip":
             with zipfile.ZipFile(archive) as content:
                 content.extractall(folder)
+        elif MAC:
+            self.run(["/usr/bin/tar", "-xzf", str(archive), "-C", str(folder)])
         else:
             tar = Path(os.environ.get("SystemRoot", "C:\\Windows")) / "System32" / "tar.exe"
             self.run([str(tar), "-xf", str(archive), "-C", str(folder)])
         if self.stop.is_set():
             raise Stopped()
+        if MAC and tool["kind"] != "tar":
+            for file in folder.rglob("*"):
+                if file.is_file():
+                    file.chmod(0o755)
         (folder / ".ready").write_text(tool["sha256"])
         archive.unlink(missing_ok=True)
 
@@ -358,6 +389,8 @@ class Install:
         for file in [built / EXECUTABLE] + sorted(built.glob("*.dll")):
             shutil.copyfile(file, self.root / file.name)
         shutil.rmtree(self.root / "downloads", ignore_errors=True)
+        if MAC:
+            return self.make_app()
         links = [shell_folder(0x02)]
         if self.shortcut:
             links.append(shell_folder(0x10))
@@ -366,3 +399,53 @@ class Install:
                 create_shortcut(folder / (SHORTCUT_NAME + ".lnk"), self.root / EXECUTABLE, self.root)
             except OSError as error:
                 self.note(f"shortcut in {folder}: {error}")
+
+    def make_app(self):
+        app = Path(self.launch)
+        shutil.rmtree(app, ignore_errors=True)
+        contents = app / "Contents"
+        (contents / "MacOS").mkdir(parents=True)
+        (contents / "Resources").mkdir()
+        executable = contents / "MacOS" / GAME
+        shutil.copyfile(self.root / EXECUTABLE, executable)
+        executable.chmod(0o755)
+        self.make_icon(contents / "Resources" / "icon.icns")
+        (contents / "Info.plist").write_bytes(plistlib.dumps({
+            "CFBundleExecutable": GAME,
+            "CFBundleIdentifier": APP_IDENTIFIER,
+            "CFBundleName": SHORTCUT_NAME,
+            "CFBundleDisplayName": SHORTCUT_NAME,
+            "CFBundlePackageType": "APPL",
+            "CFBundleShortVersionString": "1.0",
+            "CFBundleIconFile": "icon",
+            "LSMinimumSystemVersion": "11.0",
+            "NSHighResolutionCapable": True,
+            "LSEnvironment": {"WP_ROOT": str(self.root)},
+        }))
+        register = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+        for arguments in (["codesign", "--force", "--sign", "-", str(app)], [register, "-f", str(app)]):
+            try:
+                self.run(arguments)
+            except (Failure, OSError) as error:
+                self.note(f"{arguments[0]}: {error}")
+        if self.shortcut:
+            link = Path.home() / "Desktop" / app.name
+            try:
+                if link.is_symlink() or link.exists():
+                    link.unlink()
+                link.symlink_to(app)
+            except OSError as error:
+                self.note(f"desktop link: {error}")
+
+    def make_icon(self, target):
+        source = self.root / "games" / GAME / "res" / (GAME + ".png")
+        icons = self.root / "build" / "app.iconset"
+        shutil.rmtree(icons, ignore_errors=True)
+        icons.mkdir(parents=True)
+        sizes = [(16, "16x16"), (32, "16x16@2x"), (32, "32x32"), (64, "32x32@2x"), (128, "128x128"), (256, "128x128@2x"), (256, "256x256")]
+        try:
+            for size, name in sizes:
+                self.run(["sips", "-z", str(size), str(size), str(source), "--out", str(icons / f"icon_{name}.png")])
+            self.run(["iconutil", "-c", "icns", str(icons), "-o", str(target)])
+        except (Failure, OSError) as error:
+            self.note(f"icon: {error}")

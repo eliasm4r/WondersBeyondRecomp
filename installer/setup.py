@@ -22,8 +22,9 @@ class Window:
         self.events = queue.Queue()
         self.executable = ""
         t = self.texts
-        for name, folder in (("TCL_LIBRARY", "tcl8.6"), ("TK_LIBRARY", "tk8.6")):
-            os.environ[name] = str(HERE.parent / "python" / "tcl" / folder)
+        if sys.platform == "win32":
+            for name, folder in (("TCL_LIBRARY", "tcl8.6"), ("TK_LIBRARY", "tk8.6")):
+                os.environ[name] = str(HERE.parent / "python" / "tcl" / folder)
         self.root = tkinter.Tk()
         self.root.title(t["window"])
         self.root.resizable(False, False)
@@ -154,7 +155,10 @@ class Window:
         self.root.after(100, self.poll)
 
     def play(self):
-        subprocess.Popen([self.executable], cwd=str(Path(self.executable).parent))
+        if steps.MAC:
+            subprocess.Popen(["open", self.executable])
+        else:
+            subprocess.Popen([self.executable], cwd=str(Path(self.executable).parent))
         self.root.destroy()
 
     def close(self):
@@ -181,7 +185,10 @@ def main():
             (HERE.parent / "setup-error.txt").write_text(report, encoding="utf-8")
         except OSError:
             pass
-        ctypes.windll.user32.MessageBoxW(None, report[-1500:], "Setup", 0x10)
+        if steps.MAC:
+            print(report, file=sys.stderr)
+        else:
+            ctypes.windll.user32.MessageBoxW(None, report[-1500:], "Setup", 0x10)
         return 1
     return 0
 

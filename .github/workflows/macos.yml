@@ -25,3 +25,43 @@ jobs:
       - name: Test
         working-directory: build/out
         run: ctest --output-on-failure
+
+  setup:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the setup steps that need no disc
+        run: |
+          mkdir -p bundle/installer
+          cp installer/*.py bundle/installer/
+          git ls-files -z -- CMakeLists.txt LICENSE THIRD_PARTY_NOTICES.md engine recompiler games/pokepark2 third_party tests tools/fetch_sdl.py | xargs -0 zip -q bundle/installer/sources.zip
+          curl -fsSL -o python.tar.gz "$(sed -n 's/^PYTHON_URL="\(.*\)"$/\1/p' installer/Setup.command)"
+          echo "$(sed -n 's/^PYTHON_SHA256="\(.*\)"$/\1/p' installer/Setup.command)  python.tar.gz" | shasum -a 256 -c
+          tar -xzf python.tar.gz -C bundle
+          bundle/python/bin/python3 -c "import tkinter; print('Tk', tkinter.TkVersion)"
+          bundle/python/bin/python3 - <<'PY'
+          import shutil, sys
+          from pathlib import Path
+          sys.path.insert(0, "bundle/installer")
+          import steps, texts
+          root = Path.home() / "WondersBeyondRecomp"
+          install = steps.Install(root, "", Path("bundle").resolve(), True, texts.TEXTS, lambda kind, value: print(kind, value, flush=True))
+          install.python = str(Path("bundle/python/bin/python3").resolve())
+          install.log = sys.stdout
+          move = lambda part: None
+          install.copy_sources(move)
+          for tool in steps.TOOLS:
+              install.download(tool, move)
+              install.unpack(tool)
+          print(install.program("cmake"), install.program("ninja"), install.program("nodtool"))
+          install.run([install.program("nodtool"), "--version"])
+          install.run([install.python, "tools/fetch_sdl.py"])
+          install.configure(move)
+          install.run([install.program("cmake"), "--build", "build/out", "--parallel", str(steps.compile_jobs()), "--target", "runtime_tests"])
+          shutil.copyfile(root / "build" / "out" / "runtime_tests", root / steps.EXECUTABLE)
+          install.make_app()
+          PY
+          app="$HOME/Applications/PokePark 2 Wonders Beyond.app"
+          ls -la "$app/Contents" "$app/Contents/MacOS" "$app/Contents/Resources" "$HOME/Desktop"
+          plutil -p "$app/Contents/Info.plist"
+          codesign --verify --verbose "$app"
