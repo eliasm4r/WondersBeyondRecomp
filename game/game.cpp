@@ -415,11 +415,25 @@ bool frees_pending(uint32_t pool) {
     return rd32(pool + kFreePending) != kNoSlot;
 }
 
+bool heap_block(uint32_t block) {
+    return (block & 3) == 0 && !slow_address(block) && (block & kAddressMask) + kBlockNext + 4 <= kPhysicalSize;
+}
+
 uint32_t largest_free(uint32_t heap) {
     uint32_t largest = 0;
     uint32_t blocks = 0;
+    uint32_t previous = heap;
     for (uint32_t block = rd32(heap + kHeapFreeList); block != 0 && blocks < kMaxHeapBlocks; block = rd32(block + kBlockNext)) {
+        if (!heap_block(block)) {
+            static bool logged = false;
+            if (!logged) {
+                logged = true;
+                log::write("memory", "temporary heap at %08x: free block %u after %08x links to %08x, the rest of the list is skipped", heap, blocks, previous, block);
+            }
+            break;
+        }
         largest = std::max(largest, rd32(block));
+        previous = block;
         blocks++;
     }
     return largest;

@@ -655,6 +655,13 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
   pending waits for the GPU thread to reach the last token sent (`gx::wait_for_token`, 500 ms at most) and polls the
   interrupts so the token callback frees the buffers, then runs. Same stall with the fix: 0 failed allocations, heap 4
   back to its 4 MB after each release, four waits of about 190 ms logged as `memory`.
+- Crash in `largest_free` (seen on a friend's Ryzen + RX 9070 XT at 283 s, then once here in an OpenGL run under
+  load, both from the call at 0x80070fc0 into heap 4): the walk read a free block link outside guest memory
+  (`mmio::read32` of an address near 0xFFFFFFFF). The game's allocator (0x8037D4A0) stops at the first block that
+  fits, so it never reaches that part of the list there; our walk goes to the end. It now stops at any link that is
+  not an aligned address inside guest memory and logs the first such link once (`memory ... links to`). Our hooks had
+  not acted before either crash (no wait, no full free list). Whether that link is a real corruption is unknown: if
+  the game later crashes inside 0x8037D4A0, the log line gives the heap, the block and the value.
 - Looked at and ruled out for the gray lines between polygons of moving models: the game changing vertex arrays or
   indexed matrices while the GPU thread still draws from them (0 changes before the frame end over 600,000 samples a
   second, even with the thread stalled 150 ms), and face culling in single precision (wrong for 10,000 to 17,000
