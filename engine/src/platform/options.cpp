@@ -190,6 +190,9 @@ std::vector<std::string> choices(const std::string& key) {
         return scales;
     }
     if (key == "video.fps") {
+        if (!pacing::kInBetweenImages) {
+            return {"30", "45", "60"};
+        }
         return {"30", "45", "60", "90", "120"};
     }
     if (key == "video.anisotropy") {
@@ -381,7 +384,7 @@ std::vector<Row> Menu::rows() const {
         row.key = key;
         row.kind = kind(key);
         row.live = live(key);
-        std::string help_key = "help." + key;
+        std::string help_key = key == "video.fps" && !pacing::kInBetweenImages ? "help.video.fps_without_between" : "help." + key;
         if (capturing_ && result.size() == selection_ && (row.kind == Kind::Key || row.kind == Kind::Pad)) {
             help_key = row.kind == Kind::Key ? "help.keys" : "help.pad.capture";
         } else if (row.kind == Kind::Pad) {

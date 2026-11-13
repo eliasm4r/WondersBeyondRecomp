@@ -2065,7 +2065,15 @@ void test_frame_pacing() {
     alarm = frame_alarm(0, input, input * 2, 45, false);
     CHECK(alarm.period == input && alarm.pending == input * 2);
 
-    CHECK((wp::options::choices("video.fps") == std::vector<std::string>{"30", "45", "60", "90", "120"}));
+    if (wp::pacing::kInBetweenImages) {
+        CHECK((wp::options::choices("video.fps") == std::vector<std::string>{"30", "45", "60", "90", "120"}));
+    } else {
+        CHECK((wp::options::choices("video.fps") == std::vector<std::string>{"30", "45", "60"}));
+    }
+    for (auto language : {wp::ui::Language::English, wp::ui::Language::French, wp::ui::Language::Spanish, wp::ui::Language::Galician}) {
+        std::string help = wp::ui::label("help.video.fps_without_between", language);
+        CHECK(help.find("45") != std::string::npos && help.find("90") == std::string::npos);
+    }
     CHECK(std::string(wp::ui::label("help.video.fps")).find("45") != std::string::npos);
     CHECK(std::string(wp::ui::label("help.video.fps", wp::ui::Language::French)).find("90") != std::string::npos);
     const std::pair<wp::ui::Language, const char*> experimental[] = {
