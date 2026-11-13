@@ -10,6 +10,14 @@ Every change to WondersBeyondRecomp, newest first.
 
 <br>
 
+## Unreleased
+
+### Added
+- **RecompLauncher support.** RecompLauncher can now install the game from your disc image without the setup window, start it and change its main settings (resolution, frame rate, window, picture shape, V-Sync, smoothing, texture filtering, volume, game language).
+
+### Changed
+- Each section of `settings.ini` is now written once.
+
 ## v0.1.0-alpha · 2026-11-13
 
 > **First public release.** PokéPark 2: Wonders Beyond on Windows at up to 120 fps, installed by a setup that builds the game from your own disc image in about 5 minutes. [Download it here.](https://github.com/eliasm4r/WondersBeyondRecomp/releases/tag/v0.1.0-alpha)

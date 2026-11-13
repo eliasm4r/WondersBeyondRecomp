@@ -99,7 +99,7 @@ def main():
     for file in sorted((root / "installer").glob("*.py")):
         shutil.copyfile(file, scripts / file.name)
     shutil.copyfile(root / "game" / "res" / "pokepark2.ico", scripts / "game.ico")
-    for name in ("LICENSE", "THIRD_PARTY_NOTICES.md"):
+    for name in ("LICENSE", "THIRD_PARTY_NOTICES.md", "recomplauncher.json"):
         shutil.copyfile(root / name, bundle / name)
     shutil.copyfile(bundle / "python" / "pythonw.exe", bundle / "python" / (SIGNED + ".exe"))
     (bundle / "python" / (SIGNED + "._pth")).write_bytes(b"Lib\r\nDLLs\r\n..\\installer\r\nimport site\r\n")

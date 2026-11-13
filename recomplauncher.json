@@ -1,0 +1,148 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "name": "WondersBeyondRecomp",
+  "repo": "eliasm4r/WondersBeyondRecomp",
+  "game": {
+    "kind": "iso",
+    "label": "Your disc image of PokéPark 2: Wonders Beyond, the European Wii release (S2LP01): .iso, .rvz, .wbfs, .wia, .ciso, .gcz or .nfs. The USA and Japanese releases don't work.",
+    "check": { "ids": ["S2LP01"] },
+    "dumps": [
+      { "name": "Europe", "crc32": "a9bf13d3" }
+    ]
+  },
+  "prepare": {
+    "program": ["python/pythonw.exe"],
+    "args": ["{install}/installer/setup.py", "--prepare", "--game", "{game}"],
+    "label": "Builds the game from your disc: downloads the build tools, then translates and compiles the game code. About 5 minutes.",
+    "timeout": 3600
+  },
+  "start": {
+    "program": ["pokepark2.exe"],
+    "env": { "WP_ROOT": "{install}" }
+  },
+  "config": [
+    {
+      "id": "main",
+      "format": "ini",
+      "file": [{ "path": "{install}/game/settings.ini" }]
+    }
+  ],
+  "saves": [
+    "{install}/game/nand/title/00010000/53324c50/data",
+    "{install}/game/settings.ini",
+    "{install}/game/stats.ini"
+  ],
+  "folders": {
+    "saves": [{ "path": "{install}/game/nand/title/00010000/53324c50/data" }],
+    "backups": [{ "path": "{install}/game/backups" }],
+    "logs": [{ "path": "{install}/logs" }]
+  },
+  "settings": [
+    {
+      "id": "resolution", "label": "Resolution",
+      "help": "Draws the game at a multiple of the Wii's resolution: sharper, but heavier on the graphics card.",
+      "choices": [
+        { "label": "Native", "set": { "video/scale": "1" } },
+        { "label": "2x", "set": { "video/scale": "2" } },
+        { "label": "3x", "set": { "video/scale": "3" } },
+        { "label": "4x", "set": { "video/scale": "4" } },
+        { "label": "5x", "set": { "video/scale": "5" } },
+        { "label": "6x", "set": { "video/scale": "6" } }
+      ],
+      "defaults": { "video/scale": "1" }
+    },
+    {
+      "id": "frame_rate", "label": "Frame rate",
+      "help": "30 or 60 as on the Wii (60 works perfectly), 45 in between. 90 and 120 add images between the game's own frames on a fast screen; experimental. Movies and cutscenes stay at 30.",
+      "choices": [
+        { "label": "30", "set": { "video/fps": "30" } },
+        { "label": "45", "set": { "video/fps": "45" } },
+        { "label": "60", "set": { "video/fps": "60" } },
+        { "label": "90", "set": { "video/fps": "90" } },
+        { "label": "120", "set": { "video/fps": "120" } }
+      ],
+      "defaults": { "video/fps": "60" }
+    },
+    {
+      "id": "window", "label": "Window",
+      "help": "Full screen fills the whole screen. F11 switches it at any time.",
+      "choices": [
+        { "label": "Windowed", "set": { "video/fullscreen": "0" } },
+        { "label": "Full screen", "set": { "video/fullscreen": "1" } }
+      ],
+      "defaults": { "video/fullscreen": "0" }
+    },
+    {
+      "id": "shape", "label": "Picture shape",
+      "help": "Shows the game in 16:9, or in 4:3 as on an old TV.",
+      "choices": [
+        { "label": "16:9", "set": { "system/widescreen": "1" } },
+        { "label": "4:3", "set": { "system/widescreen": "0" } }
+      ],
+      "defaults": { "system/widescreen": "1" }
+    },
+    {
+      "id": "vsync", "label": "V-Sync",
+      "help": "Waits for the screen's refresh to avoid tearing, at the cost of a little latency.",
+      "choices": [
+        { "label": "Off", "set": { "video/vsync": "0" } },
+        { "label": "On", "set": { "video/vsync": "1" } }
+      ],
+      "defaults": { "video/vsync": "0" }
+    },
+    {
+      "id": "smoothing", "label": "Smoothing",
+      "help": "Smooths jagged edges.",
+      "choices": [
+        { "label": "Off", "set": { "video/smooth": "0" } },
+        { "label": "On", "set": { "video/smooth": "1" } }
+      ],
+      "defaults": { "video/smooth": "1" }
+    },
+    {
+      "id": "filtering", "label": "Texture filtering",
+      "help": "Keeps textures sharp when seen at an angle, such as the ground in the distance.",
+      "choices": [
+        { "label": "Off", "set": { "video/anisotropy": "1" } },
+        { "label": "2x", "set": { "video/anisotropy": "2" } },
+        { "label": "4x", "set": { "video/anisotropy": "4" } },
+        { "label": "8x", "set": { "video/anisotropy": "8" } },
+        { "label": "16x", "set": { "video/anisotropy": "16" } }
+      ],
+      "defaults": { "video/anisotropy": "1" }
+    },
+    {
+      "id": "show_fps", "label": "Show FPS",
+      "help": "Adds the frame rate to the window's title bar.",
+      "choices": [
+        { "label": "Off", "set": { "video/show_fps": "0" } },
+        { "label": "On", "set": { "video/show_fps": "1" } }
+      ],
+      "defaults": { "video/show_fps": "1" }
+    },
+    {
+      "id": "volume", "label": "Volume",
+      "help": "Volume of the game's sound and music, in percent.",
+      "slider": { "key": "audio/volume", "min": 0, "max": 300, "step": 5, "format": "%d" },
+      "defaults": { "audio/volume": "100" }
+    },
+    {
+      "id": "language", "label": "Game language",
+      "help": "Language of the game's text. System follows your computer's language.",
+      "choices": [
+        { "label": "System", "set": { "system/language": "auto" } },
+        { "label": "English", "set": { "system/language": "en" } },
+        { "label": "Deutsch", "set": { "system/language": "de" } },
+        { "label": "Français", "set": { "system/language": "fr" } },
+        { "label": "Español", "set": { "system/language": "es" } },
+        { "label": "Italiano", "set": { "system/language": "it" } },
+        { "label": "Nederlands", "set": { "system/language": "nl" } }
+      ],
+      "defaults": { "system/language": "auto" }
+    }
+  ],
+  "actions": [
+    { "id": "backups", "label": "Save backups", "help": "The copies of your save the game keeps. One is made each time the game starts.", "open": "backups" }
+  ]
+}

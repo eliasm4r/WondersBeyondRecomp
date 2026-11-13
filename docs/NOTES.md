@@ -288,6 +288,25 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
 - The previous installer (`launcher/`, a single executable with settings pages, with `tools/make_appimage.py` and
   `tools/make_offline_pack.py`) was removed on 2026-11-12; it is in the history up to commit 547ea1e.
 
+## RecompLauncher
+
+- `recomplauncher.json` (repository root) is copied by `make_setup.py` to the top of the setup zip. RecompLauncher
+  unpacks the release into its own folder, so the setup bundle is also the install folder there.
+- Setup step (`prepare`): `python/pythonw.exe installer/setup.py --prepare --game <disc>` runs the same
+  `steps.Install` as the window, into the bundle's folder, with no shortcut (`menu=False`), and prints
+  `progress <0 to 1> <step>` lines; it exits with 0 once the game is built, else 1 after printing the reason and the
+  log path. `pythonw` opens no console window and its output still reaches the launcher through the pipe. The script
+  path comes first: `Setup (if blocked).exe --prepare` would read `--prepare` as an option of Python itself.
+- Start: `pokepark2.exe` with `WP_ROOT` set to the install folder; the game makes it the working folder before
+  reading anything (`main.cpp`), since every path it uses is relative.
+- Settings: the launcher edits `game/settings.ini` key by key (`video/scale`). The game now writes each section once:
+  `system.idle_sleep` and `video.custom_textures` sat apart in the option list and made a second `[system]` and
+  `[video]`. Reading is unchanged.
+- `dumps`: CRC32 a9bf13d3 is the Redump entry "PokePark 2 - Wonders Beyond (Europe) (En,Fr,De,Es,It)" as nodtool
+  1.4.4 matched it on the user's disc (redump.org did not answer); the size is left out, not checked against Redump.
+- Open: the launcher runs the setup step after the first install and when the player picks another copy. An update
+  unpacks the new sources over the folder, and nothing says it runs the step again: until it does, the old build stays.
+
 ## Color settings
 
 - Screen tab: brightness, contrast and gamma from 50 to 150 %, saturation from 0 to 200 %, in steps of 5, 100 % being
