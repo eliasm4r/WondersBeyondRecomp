@@ -544,6 +544,20 @@ Status on 2026-11-10, not committed yet. 60 fps is fine. 120 fps works in the ti
   (w row `10393 z + 0.65 w`), right for the background and wrong at any other depth: Pikachu counted as moved and
   went through an inverse with elements near 1e7. `fit_motion` now fits the difference from no motion, so a
   direction the samples do not settle stays the identity.
+- `WP_PROFILE_CPU=<file>` (Windows) samples the game thread the same way, six exe frames per sample. Heavy zone of the
+  user's save at 60 fps (2026-11-14): asleep in `gx::wait_for_interrupt` 43 %, translated code 22 %, quantized loads
+  and stores, `madd_single` and `wp::call` about 11 %, clock reads 8 % (`steady_clock::now` is `gettimeofday` in
+  this MinGW: `audio::update` 3.2 %, `time_base` from `decrementer_imminent` 2.3 %, DSP 1.2 %, all from
+  `poll_interrupts`), DSP 4.7 %, FIFO push 4.5 %.
+- `wp::FastClock` (`fast_clock.cpp`) reads the performance counter, and after one second of it, where the TSC is
+  invariant, the TSC scaled by the rate measured over that second, carrying on from that reading (as PokePark 2
+  Wiicompiled's `ppc_timebase`). Used by the time base, audio, DSP, interrupts, log and Wii Remote timers.
+  `load_quantized` / `store_quantized` are forced inline with only the plain float case (GQR type bit 2 clear),
+  the scaled integer types going to `load_dequantized` / `store_requantized`.
+- Measured, heavy zone, two runs each: game thread busy 58.7/59.2 % -> 49.9/50.4 % at 60 fps, guest idle
+  48.7/51.5 -> 58.3/57.5 %; at 120 fps no clear change (55.4/59.5 -> 56.5/56.8 %), no in-between image lost.
+- Tried and dropped: guest registers kept in C locals per function (Wiicompiled's `regcache.py`): no measurable
+  change, +19 s compile, +13 MB exe. Game code at `-O2`: 2 to 3 points at most, compile 51 s -> 2 min 24.
 - `WP_PROFILE_GPU=<file>` (Windows) samples the GPU thread every millisecond after a warm-up and writes, every five
   seconds, how often each call chain (three return addresses inside the exe) was seen. First zone at 120 fps, scale
   4: flat. `draw_primitive` 43 % by itself and 70 % with what it calls (17,000 draws of about 9 vertices a frame,

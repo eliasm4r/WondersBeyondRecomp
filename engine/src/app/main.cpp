@@ -242,6 +242,7 @@ int run(int argc, char** argv) {
     }
     wp::Cpu cpu{};
     wp::init_threads(cpu);
+    wp::gx::profile_current_thread(std::getenv("WP_PROFILE_CPU"));
     wp::call(cpu, entry);
     std::puts("entry returned");
     return 0;

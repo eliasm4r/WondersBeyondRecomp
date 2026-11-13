@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include "wp/fast_clock.h"
 #include "wp/audio.h"
 #include "wp/cpu.h"
 #include "wp/dsp.h"
@@ -44,7 +45,7 @@ constexpr uint16_t kFormatPal = 0x0100;
 constexpr std::chrono::microseconds kPalPeriod(20000);
 constexpr std::chrono::microseconds kNtscPeriod(16683);
 
-using Clock = std::chrono::steady_clock;
+using Clock = wp::FastClock;
 constexpr uint32_t kCurrentThread = 0x800000E4;
 std::atomic<int64_t> g_idle_nanoseconds{0};
 
