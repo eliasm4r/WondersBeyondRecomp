@@ -295,7 +295,7 @@ Snapshot read(Pad& pad, float dt) {
     pad.aiming = aiming;
     pad.pointer_active = aiming;
     bool motion_mode = snapshot.buttons[SDL_GAMEPAD_BUTTON_LEFT_SHOULDER];
-    if (aiming && !motion_mode && (std::fabs(right_x) > kStickDeadZone || std::fabs(right_y) > kStickDeadZone)) {
+    if (aiming && !free_aim && !motion_mode && (std::fabs(right_x) > kStickDeadZone || std::fabs(right_y) > kStickDeadZone)) {
         pad.pointer_x += right_x * kStickPointerSpeed * dt;
         pad.pointer_y += right_y * kStickPointerSpeed * dt;
     }
@@ -320,7 +320,7 @@ Snapshot read(Pad& pad, float dt) {
         if (snapshot.has_accel) {
             calibrate(pad, gyro, snapshot.accel, dt);
         }
-        if (aiming) {
+        if (aiming && !free_aim) {
             pad.pointer_x -= (gyro[1] - pad.bias[1]) * dt * kPointerPerRadian;
             pad.pointer_y -= (gyro[0] - pad.bias[0]) * dt * kPointerPerRadian;
         }

@@ -37,6 +37,7 @@ std::atomic<bool> g_blocked{false};
 std::atomic<bool> g_auto_confirm{false};
 std::atomic<bool> g_gamepad_in_use{false};
 constexpr float kPadAimMove = 0.03f;
+constexpr float kStickAim = 0.2f;
 constexpr int64_t kConfirmPeriod = 500;
 constexpr int64_t kConfirmLength = 100;
 std::atomic<bool> g_release_wait[4] = {};
@@ -388,7 +389,10 @@ Sample device_sample(uint32_t channel) {
     static float pad_anchor_x = 0.0f;
     static float pad_anchor_y = 0.0f;
     static bool pad_aims = false;
-    if (cursor_x != last_cursor_x || cursor_y != last_cursor_y || !pad.pointer_valid) {
+    bool stick_aims = std::fabs(pad.stick_x) > kStickAim || std::fabs(pad.stick_y) > kStickAim;
+    if (free_aim && pad.pointer_valid && stick_aims) {
+        pad_aims = true;
+    } else if (cursor_x != last_cursor_x || cursor_y != last_cursor_y || !pad.pointer_valid) {
         pad_aims = false;
         pad_anchor_x = pad.pointer_x;
         pad_anchor_y = pad.pointer_y;
