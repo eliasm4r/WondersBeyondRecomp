@@ -113,6 +113,17 @@ Draw done and tokens wait for pending copies to reach RAM, like the console. Not
 a late write can land in memory the game has already reused. Dolphin needs RAM copies for this game only for the
 snapshot feature. All pending copies share one staging atlas, so a frame costs two GPU synchronisations instead of
 about forty. 
+## EFB clears
+
+The game clears the picture (640x456, not the whole 640x528 EFB, so `ClearRenderTargetView` cannot be used) about
+four times a frame, usually color and depth. The clear wrote its depth from the pixel shader (`SV_Depth`), which on
+the RTX 4070 cost about 0.24 ms per clear at 6x and left the depth buffer uncompressed for the draws after it. The
+clear's vertex shader now puts the depth in the triangle's z (constant over the screen, so the same value is
+stored) and the pixel shader writes only the color. Measured with temporary GPU timestamps, 240 fps at 6x on the
+first beach: the GPU went from 80% busy to 66%; an in-between image took 3.4 ms of GPU time before. The other large
+costs there are the game's full picture copies (0.07 to 0.3 ms each at 6x) and its full screen blurred layers
+(about 0.14 ms each).
+
 ## Specialised pixel shaders
 
 The generic pixel shader interprets the TEV stages for every pixel. At 6x that took about 8 ms of GPU time per frame

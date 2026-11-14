@@ -116,16 +116,13 @@ cbuffer ClearConstants : register(b0) {
     float4 depth;
 };
 
-struct Output {
-    float4 color : SV_Target;
-    float depth : SV_Depth;
-};
+float4 vertex_main(uint id : SV_VertexID) : SV_Position {
+    float2 uv = float2((id << 1) & 2, id & 2);
+    return float4(uv * float2(2, -2) + float2(-1, 1), depth.x, 1);
+}
 
-Output pixel_main(float4 position : SV_Position, float2 uv : TEXCOORD0) {
-    Output output;
-    output.color = color;
-    output.depth = depth.x;
-    return output;
+float4 pixel_main(float4 position : SV_Position) : SV_Target {
+    return color;
 }
 )HLSL";
 
@@ -783,6 +780,7 @@ struct Device {
     ID3D11PixelShader* copy_pixel = nullptr;
     ID3D11Buffer* present_constants = nullptr;
     ID3D11PixelShader* clear_pixel = nullptr;
+    ID3D11VertexShader* clear_vertex = nullptr;
     ID3D11Buffer* clear_constants = nullptr;
     ID3D11BlendState* clear_blend[16] = {};
     ID3D11DepthStencilState* clear_depth[2] = {};
@@ -4887,9 +4885,12 @@ bool create_present_pipeline() {
         ok = false;
     }
     ID3DBlob* clear_code = nullptr;
-    if (ok && compile(kClearShaderSource, "pixel_main", "ps_5_0", &clear_code)) {
-        ok = SUCCEEDED(g_device.device->CreatePixelShader(clear_code->GetBufferPointer(), clear_code->GetBufferSize(), nullptr, &g_device.clear_pixel));
+    ID3DBlob* clear_vertex_code = nullptr;
+    if (ok && compile(kClearShaderSource, "pixel_main", "ps_5_0", &clear_code) && compile(kClearShaderSource, "vertex_main", "vs_5_0", &clear_vertex_code)) {
+        ok = SUCCEEDED(g_device.device->CreatePixelShader(clear_code->GetBufferPointer(), clear_code->GetBufferSize(), nullptr, &g_device.clear_pixel)) &&
+             SUCCEEDED(g_device.device->CreateVertexShader(clear_vertex_code->GetBufferPointer(), clear_vertex_code->GetBufferSize(), nullptr, &g_device.clear_vertex));
         release(clear_code);
+        release(clear_vertex_code);
         D3D11_BUFFER_DESC constants{};
         constants.ByteWidth = 32;
         constants.Usage = D3D11_USAGE_DEFAULT;
@@ -5711,10 +5712,13 @@ void run_clear(const ClearCommand& command) {
     context->OMSetDepthStencilState(g_device.clear_depth[depth_enable], 0);
     context->IASetInputLayout(nullptr);
     context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    context->VSSetShader(g_device.present_vertex, nullptr, 0);
+    context->VSSetShader(g_device.clear_vertex, nullptr, 0);
+    context->VSSetConstantBuffers(0, 1, &g_device.clear_constants);
     context->PSSetShader(g_device.clear_pixel, nullptr, 0);
     context->PSSetConstantBuffers(0, 1, &g_device.clear_constants);
     context->Draw(3, 0);
+    ID3D11Buffer* none = nullptr;
+    context->VSSetConstantBuffers(0, 1, &none);
 }
 
 }
