@@ -131,7 +131,6 @@ struct State {
     double climb = 0.0;
     KeyPair steer_keys;
     KeyPair climb_keys;
-    int shake_side = 0;
     int shake_sign = 1;
     uint32_t shake_end = 0;
     std::array<uint16_t, 3> accel{};
@@ -426,12 +425,9 @@ void dance_motion(State& state, const input::Sample& sample, double accel[3]) {
     }
 }
 
-void shake_by_turns(State& state, uint32_t pressed, double accel[3]) {
-    uint32_t keys = pressed & (input::kMotionShakeLeft | input::kMotionShakeRight);
-    int side = keys == input::kMotionShakeLeft ? 1 : keys == input::kMotionShakeRight ? 2 : 0;
-    if (side != 0 && side != state.shake_side) {
-        state.shake_side = side;
-        state.shake_sign = side == 1 ? 1 : -1;
+void shake_on_press(State& state, uint32_t pressed, double accel[3]) {
+    if (pressed & (input::kMotionShakeLeft | input::kMotionShakeRight | input::kMotionShake)) {
+        state.shake_sign = -state.shake_sign;
         state.shake_end = state.reports + kAttractionSwingReports;
     }
     if (static_cast<int32_t>(state.shake_end - state.reports) > 0) {
@@ -478,13 +474,13 @@ void update_motion(State& state, const input::Sample& sample) {
         accel[0] = std::sin(state.roll) * std::cos(state.pitch);
         accel[1] = std::sin(state.pitch);
         accel[2] = std::cos(state.roll) * std::cos(state.pitch);
-        if (sample.motion_valid && mode != attraction::Mode::Aim) {
+        if (sample.motion_valid && mode != attraction::Mode::Aim && mode != attraction::Mode::Shake) {
             for (int i = 0; i < 3; i++) {
                 accel[i] = sample.accel[i];
             }
         }
         if (mode == attraction::Mode::Shake) {
-            shake_by_turns(state, pressed, accel);
+            shake_on_press(state, pressed, accel);
         }
     }
     if (pressed & (input::kMotionSwingUp | input::kMotionSwingDown)) {
@@ -496,7 +492,7 @@ void update_motion(State& state, const input::Sample& sample) {
         accel[2] += sign * state.swing_direction * kSwingAcceleration;
         state.swing_time += kReportSeconds;
     }
-    if (held & input::kMotionShake) {
+    if ((held & input::kMotionShake) && mode != attraction::Mode::Shake) {
         double omega = 2.0 * kPi * kShakeFrequency;
         double amplitude = omega * omega * (kShakeTravel / 2.0) / kGravity;
         double value = amplitude * std::sin(state.shake_phase);

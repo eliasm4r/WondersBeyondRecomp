@@ -383,8 +383,11 @@ PokePark-2-Wiicompiled (CC0, USA disc), mapped to PAL by function size patterns.
   the half screen) since the cursor last moved; the mouse takes it back as soon as the cursor moves.
   The pad's motion sensors are not passed on there: the game ignores the pointer unless the remote lies flat toward
   the screen, so the remote is kept level whatever way the pad is held.
-- Power Bash: `keys.shake_left` / `keys.shake_right` (Q/E, LB/RB) shake by turns: each press after the other key's
-  gives a 30 ms burst of 2.5 g on all three axes, so the faster, the stronger. 2 (Space, pad south) is A, the bomb.
+- Power Bash: each press of `keys.shake_left`, `keys.shake_right` (Q/E, LB/RB) or `keys.shake`, and each jolt of the
+  pad (`kMotionShake` rising), gives a 30 ms burst of 2.5 g on all three axes, its sign alternating, so the faster,
+  the stronger. The player found alternating keys awkward. The pad's raw motion and the generic shake wave are not
+  passed on there: the game recognised a real shake late, so a jolt is turned into a burst at once. 2 (Space, pad
+  south) is A, the bomb.
   The shake actions are left out of the key conflict check (`keymap::attraction_only`).
 - Flight of Fancy: the remote is held sideways; the movement keys or the left stick steer up to 90 degrees and climb
   or dive up to 50, eased by 0.15 a report; the gyroscope adds its tilt from where the pad was on entry.
