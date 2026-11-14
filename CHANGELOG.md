@@ -12,6 +12,9 @@ Every change to WondersBeyondRecomp, newest first.
 
 ## Unreleased
 
+### Changed
+- Faster on the graphics card at high internal resolutions: the screen clears no longer write depth from the pixel shader. At 6x and 240 fps the GPU load on the first beach went from 80% to 66%.
+
 ### Added
 - Picture shape option (Options > Screen): 16:10, 21:9, 32:9 or the window's own shape. The world fills the wider screen and shows more on the sides; menus, text and the map stay in the middle, and screens with no world (title video, menus, loading) keep their 16:9 shape. Objects past the old edges are drawn too, so nothing pops in at the sides.
 - Text speed option (Options > Game): dialogue written as in the game, 2 or 3 times faster, or a whole page at once.
