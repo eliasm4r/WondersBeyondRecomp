@@ -2514,6 +2514,25 @@ void profile_current_thread(const char* path) {
 
 namespace {
 
+constexpr int64_t kShortestPresentWait = 100;
+constexpr int64_t kLongestPresentWait = 1000;
+
+void sleep_precisely(std::chrono::microseconds span) {
+#ifdef _WIN32
+    static thread_local HANDLE timer = [] {
+        HANDLE precise = CreateWaitableTimerExW(nullptr, nullptr, 2, TIMER_ALL_ACCESS);
+        return precise ? precise : CreateWaitableTimerW(nullptr, FALSE, nullptr);
+    }();
+    LARGE_INTEGER due;
+    due.QuadPart = -span.count() * 10;
+    if (timer && SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE)) {
+        WaitForSingleObject(timer, INFINITE);
+        return;
+    }
+#endif
+    std::this_thread::sleep_for(span);
+}
+
 void gpu_thread() {
     profile_current_thread(std::getenv("WP_PROFILE_GPU"));
     std::vector<uint8_t> buffer;
@@ -2527,11 +2546,13 @@ void gpu_thread() {
         }
         while (g_gpu.items.empty()) {
             hold.unlock();
-            bool waiting = render::service_presents();
+            int64_t due_in = render::service_presents();
             hold.lock();
             auto asleep = std::chrono::steady_clock::now();
-            if (waiting) {
-                g_gpu.work.wait_for(hold, std::chrono::milliseconds(1), [] { return !g_gpu.items.empty(); });
+            if (due_in >= 0) {
+                hold.unlock();
+                sleep_precisely(std::chrono::microseconds(std::clamp<int64_t>(due_in, kShortestPresentWait, kLongestPresentWait)));
+                hold.lock();
             } else {
                 g_gpu.work.wait(hold, [] { return !g_gpu.items.empty(); });
             }

@@ -215,6 +215,16 @@ Measured with the hidden window on the user's 240 Hz screen, `switch.txt` at the
 164.8-164.9 fps and 239.8 fps, every frame with its images, 1.9, 2.0 and 2.2-2.3 ms per real frame for the images
 (1.1 ms at 120), GPU thread 37-44 % busy.
 
+The user got 210-216 fps at 240 in dialogues, and `pause.txt` with the hidden window gave the same. Every real
+frame had its three images (`replay` line: 60 frames, 60 with images, 0 late), but about 27 images a second were
+dropped by `service_deferred`, which shows only the newest of more than two images already due. The GPU thread
+looks at the queue of images between parsing commands, and when it has nothing to parse it waited on its condition
+variable for 1 ms: that wait lasted up to 11 ms, about 75 times a second (MinGW's timed wait is not precise), so in
+light scenes, where few commands wake it, the images piled up. The wait is now a high-resolution waitable timer up
+to the next image's time (0.1 to 1 ms), as PokePark 2 Wiicompiled's `wait_until` (`gx_frames.c`, which shows its
+images from a thread of their own). Same scene: 239.6-239.8 fps, images 2.8 to 5.5 ms apart instead of 0.1 to 14;
+144 fps 6 to 8 ms apart, 120 fps 7.6 to 9 ms, 60 fps unchanged.
+
 ## 45 and 90 fps
 
 - 45 fps (`video.fps=45`): the frame alarm gets 4/3 of the input period. The main loop skips a render when a frame
@@ -943,7 +953,11 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
   frame when the player changes direction, and the ground's matrix into that picture has rows of very different
   sizes, so the whole-matrix test let it through and the images in between showed shadows half as large again,
   turned 45 degrees around the player. Post matrices go through the same test (they were blended unconditionally);
-  the `runs` log line counts the texture matrices held back this way. A copy of a model that just appeared does not
+  the `runs` log line counts the texture matrices held back this way. A texture matrix of a unit that reads texture
+  coordinates is also held back when its translation moves more than 0.05: the game changes a Pokémon's expression
+  (eyes, mouth) by moving the coordinates into another part of the face texture, and blending that move slid the eyes
+  and mouth across the face on the images in between (user's bug recorder capture, Oshawott). A texture that scrolls
+  and wraps from 1 back to 0 is held back the same way instead of running back over the whole texture. A copy of a model that just appeared does not
   take the previous place of another copy that a later copy is nearer to (`later`, `taken` in `pair_runs`). When more than 8 and a third of the paired runs do that, the frame is a cut and gets no
   images. Unpaired runs and runs whose row layout changed are drawn as in the current frame. The camera motion
   found from the matrices is also given to the processor path (`adopt_run_camera`) when the few draws left there

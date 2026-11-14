@@ -3510,8 +3510,21 @@ void blend_matrix(Row* out, const Row* a, const Row* b, float t) {
     }
 }
 
-void blend_texture_matrix(Row* out, const Row* a, const Row* b, float t) {
-    MatrixChange change = matrix_change(a, b);
+constexpr float kFirstTexCoordSource = 5.0f;
+constexpr float kLastTexCoordSource = 12.0f;
+constexpr float kTextureJump = 0.05f;
+
+bool texture_jumped(const Row* a, const Row* b) {
+    for (int i = 0; i < 2; i++) {
+        if (std::fabs(b[i][3] - a[i][3]) > kTextureJump) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void blend_texture_matrix(Row* out, const Row* a, const Row* b, float t, bool from_coordinates) {
+    MatrixChange change = from_coordinates && texture_jumped(a, b) ? kOtherMatrix : matrix_change(a, b);
     if (change == kNearMatrix) {
         lerp_rows(out, a, b, 3, t);
     }
@@ -3547,10 +3560,11 @@ void blend_run(Row* out, const Row* a, const Row* b, float t) {
     uint32_t units = std::min(setup & 15u, 8u);
     for (uint32_t i = 0; i < units; i++) {
         uint32_t at = kRunHeaderRows + kRunUnitRows * i;
+        bool from_coordinates = b[at][0] >= kFirstTexCoordSource && b[at][0] <= kLastTexCoordSource;
         if (b[at][2] != 0.0f) {
-            blend_texture_matrix(out + at + 1, a + at + 1, b + at + 1, t);
+            blend_texture_matrix(out + at + 1, a + at + 1, b + at + 1, t, from_coordinates);
         }
-        blend_texture_matrix(out + at + 4, a + at + 4, b + at + 4, t);
+        blend_texture_matrix(out + at + 4, a + at + 4, b + at + 4, t, from_coordinates);
     }
     if (setup & 32u) {
         uint32_t light = kRunHeaderRows + kRunUnitRows * units;
@@ -5333,9 +5347,13 @@ bool present_frame(void* window_handle, double aspect) {
     return presented;
 }
 
-bool service_presents() {
+int64_t service_presents() {
     service_deferred();
-    return !g_show_queue.empty();
+    if (g_show_queue.empty()) {
+        return -1;
+    }
+    auto left = g_shown[g_show_queue.front()].due - std::chrono::steady_clock::now();
+    return std::max<int64_t>(0, std::chrono::duration_cast<std::chrono::microseconds>(left).count());
 }
 
 bool read_recent(std::vector<RecentImage>& images) {

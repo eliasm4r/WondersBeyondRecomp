@@ -93,7 +93,7 @@ void finish_copies();
 void finish_frame();
 void copy_to_framebuffer(int x, int y, int width, int height, bool depth, const CopyFilter& filter);
 bool present_frame(void* window, double aspect);
-bool service_presents();
+int64_t service_presents();
 uint32_t take_interpolated_frames();
 uint32_t take_late_frames();
 

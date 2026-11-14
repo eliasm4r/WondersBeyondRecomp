@@ -29,6 +29,10 @@ Every change to WondersBeyondRecomp, newest first.
 - **Compressed textures.** The game's compressed textures stay compressed on the graphics card (8 times less memory and upload), which halves the stutter when a zone appears.
 - **The mouse cursor is hidden over the game by default.** Turn it back on with **Hide the mouse cursor** in the options. Settings saved by an earlier build keep their choice.
 
+### Fixed
+- Above 60 fps, the images in between were sometimes shown in bunches and some were dropped, mostly in dialogues and other light scenes: 240 fps fell to about 210 there. They now come at an even pace.
+- Above 60 fps, a Pokémon's eyes and mouth slid across its face for a few images when its expression changed, as when it blinks.
+
 ## v0.1.0-alpha · 2026-11-13
 
 > **First public release.** PokéPark 2: Wonders Beyond on Windows at up to 120 fps, installed by a setup that builds the game from your own disc image in about 5 minutes. [Download it here.](https://github.com/eliasm4r/WondersBeyondRecomp/releases/tag/v0.1.0-alpha)
