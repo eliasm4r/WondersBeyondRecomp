@@ -390,6 +390,10 @@ PokePark-2-Wiicompiled (CC0, USA disc), mapped to PAL by function size patterns.
   33 for presses every 350 ms). While the pad is being shaken (`kMotionShake`, set by a jolt and held 250 ms) the
   same shake goes on without a break, from the first jolt; the pad's raw motion and the generic shake wave are not
   passed on there, since the game recognised a real shake late. 2 (Space, pad south) is A, the bomb.
+- The A drawn by the bombs is `AtAButton00.tpl` (CI8 57x56, layout `MnAtBomAButton`, in the same `MenuAttraction`
+  archive). While Power Bash runs (checked from the `SceneManager` run begin hook), the 33x33 middle of its disc is
+  repainted row by row with the disc's colour near its edge, then the bomb key is drawn in the letter's colour: the
+  key's name, a PlayStation shape, or a space bar symbol for Space (used on the dance icons too).
   The shake actions are left out of the key conflict check (`keymap::attraction_only`).
 - Flight of Fancy: the remote is held sideways; the movement keys or the left stick steer up to 90 degrees and climb
   or dive up to 50, eased by 0.15 a report; the gyroscope adds its tilt from where the pad was on entry.
