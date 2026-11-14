@@ -459,6 +459,7 @@ constexpr uint32_t kHeapFreeList = 0xc;
 constexpr uint32_t kBlockNext = 0x8;
 constexpr uint32_t kMaxHeapBlocks = 10000;
 constexpr auto kTokenWait = std::chrono::milliseconds(500);
+constexpr uint32_t kExternalInterrupts = 0x8000;
 
 struct LateFree {
     uint32_t pool;
@@ -535,6 +536,13 @@ void release_deferred_frees(Cpu& c, HleFunction original) {
     g_late_frees.resize(kept);
 }
 
+void without_interrupts(Cpu& c, HleFunction original) {
+    uint32_t enabled = c.msr & kExternalInterrupts;
+    c.msr &= ~kExternalInterrupts;
+    original(c);
+    c.msr |= enabled;
+}
+
 void temp_pool_alloc(Cpu& c, HleFunction original) {
     uint32_t pool = c.r[3];
     uint32_t index = c.r[4];
@@ -555,7 +563,7 @@ void temp_pool_alloc(Cpu& c, HleFunction original) {
         c.r[5] = size;
         c.r[6] = alignment;
     }
-    original(c);
+    without_interrupts(c, original);
 }
 
 }
@@ -564,7 +572,7 @@ HookFunction hook(const char* name) {
     static const struct {
         const char* name;
         HookFunction function;
-    } kHooks[] = {{"FieldCameraUpdate", field_camera}, {"DeferredFree", deferred_free}, {"ReleaseDeferredFrees", release_deferred_frees}, {"TempPoolAlloc", temp_pool_alloc},
+    } kHooks[] = {{"FieldCameraUpdate", field_camera}, {"DeferredFree", deferred_free}, {"ReleaseDeferredFrees", release_deferred_frees}, {"TempPoolAlloc", temp_pool_alloc}, {"TempPoolFree", without_interrupts},
                    {"FindResourceByName", find_resource_by_name},
                    {"FindResourceByNameOther", find_resource_by_name},
                    {"FindResourceByNumber", find_resource_by_number},

@@ -3,6 +3,7 @@ address,name
 0x8000e0b0,DeferredFree
 0x8000e270,ReleaseDeferredFrees
 0x8000df50,TempPoolAlloc
+0x8000df70,TempPoolFree
 0x80233a10,FindResourceByName
 0x80233ca0,FindResourceByNameOther
 0x80233ad0,FindResourceByNumber

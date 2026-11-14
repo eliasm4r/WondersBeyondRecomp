@@ -856,6 +856,17 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
   not an aligned address inside guest memory and logs the first such link once (`memory ... links to`). Our hooks had
   not acted before either crash (no wait, no full free list). Whether that link is a real corruption is unknown: if
   the game later crashes inside 0x8037D4A0, the log line gives the heap, the block and the value.
+- It was a real corruption, and the cause of the crash in 0x8037D4A0 that followed it (2 runs in 8 at 240 fps from
+  `switch.txt`, at 20 to 61 s, and once in `pause.txt`; every time block 0x814f9950 of heap 4 linking to
+  0xFFFFFFFF). A hardware write breakpoint on 0x814f9958 (`WP_WATCH` in a debug build, Dr0 set on every thread, a
+  vectored handler mapping the host return addresses to guest functions) caught the allocator itself writing
+  0xFFFFFFFF there: it fills the alignment gap of the block it hands out with 0xFFFFFFFF, and that block was still
+  in the free list. The release of the frees waiting for a token (0x8000E270, which calls the heap's free
+  0x8037D280) runs in the token interrupt, and our interrupts arrive at `WP_POLL` points, which include the loops of
+  0x8037D4A0: a release could land while the allocator walked or split the list. `TempPoolAlloc` (0x8000DF50) and
+  the pool's free (0x8000DF70) call the heap without disabling interrupts, unlike `DeferredFree` (0x8000E0B0,
+  `OSDisableInterrupts`). Both now run with external interrupts masked in the MSR (`without_interrupts`, hook
+  `TempPoolFree` added); a pending interrupt is taken at the next poll after they return.
 - Looked at and ruled out for the gray lines between polygons of moving models: the game changing vertex arrays or
   indexed matrices while the GPU thread still draws from them (0 changes before the frame end over 600,000 samples a
   second, even with the thread stalled 150 ms), and face culling in single precision (wrong for 10,000 to 17,000

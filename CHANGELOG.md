@@ -32,6 +32,7 @@ Every change to WondersBeyondRecomp, newest first.
 ### Fixed
 - Above 60 fps, the images in between were sometimes shown in bunches and some were dropped, mostly in dialogues and other light scenes: 240 fps fell to about 210 there. They now come at an even pace.
 - Above 60 fps, a Pokémon's eyes and mouth slid across its face for a few images when its expression changed, as when it blinks.
+- A crash in the game's memory allocator, about once in eight starts at 240 fps: the release of the graphics buffers could land in the middle of an allocation.
 
 ## v0.1.0-alpha · 2026-11-13
 
