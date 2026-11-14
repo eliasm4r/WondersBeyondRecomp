@@ -150,6 +150,14 @@ constexpr uint32_t kArrayAddressMask = 0x1FFFFFFF;
 constexpr float kViewportOffset = 342.0f;
 constexpr float kEfbWidth = 640.0f;
 constexpr float kEfbHeight = 528.0f;
+constexpr float kPictureHeight = 456.0f;
+constexpr float kWorldFar = 2000.0f;
+constexpr float kLayoutScale = 2.4142136f;
+constexpr float kLayoutNear = -580.5f;
+constexpr float kLayoutFar = -578.3f;
+constexpr float kFlatDepth = 0.001f;
+constexpr uint32_t kSmallDraw = 4;
+constexpr uint32_t kMeasuredVertices = 64;
 constexpr float kDepthRange = 16777215.0f;
 constexpr int kMaxLoggedCopies = 60;
 constexpr uint32_t kTexCoordCount = 8;
@@ -724,6 +732,8 @@ struct ProjectionState {
 };
 
 ProjectionState g_projection;
+float g_canvas_width = kEfbWidth;
+float g_canvas_height = kEfbHeight;
 
 void begin_projection() {
     g_projection.a = xf_float(0x1020);
@@ -931,14 +941,14 @@ void emit_line(DrawOutput& out, const Prepared& a, const Prepared& b) {
     float width = static_cast<float>(g_bp[0x22] & 0xFF) / 6.0f;
     float sx = b.vertex.x / b.vertex.w - a.vertex.x / a.vertex.w;
     float sy = b.vertex.y / b.vertex.w - a.vertex.y / a.vertex.w;
-    float dx = std::fabs(sx) * kEfbWidth;
-    float dy = std::fabs(sy) * kEfbHeight;
+    float dx = std::fabs(sx) * g_canvas_width;
+    float dy = std::fabs(sy) * g_canvas_height;
     float ox = 0.0f;
     float oy = 0.0f;
     if (dy > dx) {
-        ox = width / kEfbWidth;
+        ox = width / g_canvas_width;
     } else {
-        oy = width / kEfbHeight;
+        oy = width / g_canvas_height;
     }
     ScreenVertex a0 = shifted(a.vertex, -ox, -oy);
     ScreenVertex a1 = shifted(a.vertex, ox, oy);
@@ -959,8 +969,8 @@ void emit_point(DrawOutput& out, const Prepared& a) {
         return;
     }
     float size = static_cast<float>((g_bp[0x22] >> 8) & 0xFF) / 6.0f;
-    float ox = size / kEfbWidth;
-    float oy = size / kEfbHeight;
+    float ox = size / g_canvas_width;
+    float oy = size / g_canvas_height;
     ScreenVertex v0 = shifted(a.vertex, -ox, -oy);
     ScreenVertex v1 = shifted(a.vertex, ox, -oy);
     ScreenVertex v2 = shifted(a.vertex, ox, oy);
@@ -1767,6 +1777,113 @@ bool run_in_lists() {
     return true;
 }
 
+bool covers_picture(float left, float top, float right, float bottom) {
+    return left <= 1.0f && top <= 1.0f && right >= kEfbWidth - 1.0f && bottom >= kPictureHeight - 1.0f;
+}
+
+int canvas_kind(uint32_t count) {
+    const ProjectionState& p = g_projection;
+    float half_width = xf_float(0x101A);
+    float half_height = xf_float(0x101B);
+    float center_x = xf_float(0x101D) - kViewportOffset;
+    float center_y = xf_float(0x101E) - kViewportOffset;
+    if (!covers_picture(center_x - std::fabs(half_width), center_y - std::fabs(half_height), center_x + std::fabs(half_width), center_y + std::fabs(half_height))) {
+        return render::kInPicture;
+    }
+    bool perspective = !p.orthographic;
+    bool world = perspective && p.e != 0.0f && p.f / p.e > kWorldFar;
+    bool layout = world && std::fabs(p.c - kLayoutScale) < 1e-3f;
+    uint32_t largest = 0;
+    uint32_t total = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        largest = std::max(largest, g_run[i].count);
+        total += g_run[i].count;
+    }
+    if (world && !layout && largest > kSmallDraw) {
+        return render::kWorld;
+    }
+    int outside = world ? render::kWorld : render::kInPicture;
+    if (total == 0 || total > kMeasuredVertices) {
+        return outside;
+    }
+    float left = 1e9f;
+    float top = 1e9f;
+    float right = -1e9f;
+    float bottom = -1e9f;
+    float nearest = 1e9f;
+    float farthest = -1e9f;
+    Vertex vertex;
+    for (uint32_t i = 0; i < count; i++) {
+        const DrawJob& job = g_run[i];
+        const uint8_t* stream = job.data;
+        begin_vertex(vertex);
+        for (uint32_t k = 0; k < job.count; k++) {
+            decode_vertex(*job.layout, stream, vertex);
+            float eye[3];
+            transform_position(vertex, eye);
+            nearest = std::min(nearest, eye[2]);
+            farthest = std::max(farthest, eye[2]);
+            float x;
+            float y;
+            if (perspective) {
+                if (eye[2] >= 0.0f) {
+                    return outside;
+                }
+                x = (p.a * eye[0] + p.b * eye[2]) / -eye[2];
+                y = (p.c * eye[1] + p.d * eye[2]) / -eye[2];
+            } else {
+                x = p.a * eye[0] + p.b;
+                y = p.c * eye[1] + p.d;
+            }
+            x = center_x + x * half_width;
+            y = center_y + y * half_height;
+            left = std::min(left, x);
+            right = std::max(right, x);
+            top = std::min(top, y);
+            bottom = std::max(bottom, y);
+        }
+    }
+    bool whole = covers_picture(left, top, right, bottom);
+    if (layout && nearest > kLayoutNear && farthest < kLayoutFar) {
+        return whole ? render::kStretched : render::kInPicture;
+    }
+    if (world && largest > kSmallDraw) {
+        return render::kWorld;
+    }
+    if (world) {
+        return whole && farthest - nearest <= -farthest * kFlatDepth ? render::kStretched : render::kWorld;
+    }
+    return whole ? render::kStretched : render::kInPicture;
+}
+
+void fit_canvas(uint32_t count) {
+    render::Canvas canvas = render::canvas();
+    g_canvas_width = kEfbWidth + 2.0f * canvas.margin_x;
+    g_canvas_height = kEfbHeight + 2.0f * canvas.margin_y;
+    if (canvas.margin_x == 0 && canvas.margin_y == 0) {
+        render::set_canvas_kind(render::kInPicture);
+        return;
+    }
+    int kind = canvas_kind(count);
+    if (kind == render::kStretched && !canvas.world) {
+        kind = render::kInPicture;
+    }
+    render::set_canvas_kind(kind);
+    float scale_x = kEfbWidth / g_canvas_width;
+    float scale_y = kEfbHeight / g_canvas_height;
+    float offset_y = 0.0f;
+    if (kind == render::kStretched) {
+        scale_x = 1.0f;
+        scale_y = (kPictureHeight + 2.0f * canvas.margin_y) / kPictureHeight * kEfbHeight / g_canvas_height;
+        offset_y = 1.0f - scale_y;
+    }
+    ProjectionState& p = g_projection;
+    p.x_offset *= scale_x;
+    p.x_scale *= scale_x;
+    p.y_offset = p.y_offset * scale_y + offset_y;
+    p.y_scale *= scale_y;
+}
+
 void flush_run() {
     uint32_t count = static_cast<uint32_t>(g_run.size());
     if (count == 0) {
@@ -1780,6 +1897,7 @@ void flush_run() {
     lighting::begin(g_xf);
     begin_texture_coordinates();
     begin_projection();
+    fit_canvas(count);
     begin_colors();
     g_recording = render::interpolating();
     if (!g_log_draws && !g_capture && run_of_triangles() && (!g_recording || run_in_lists()) && render::transforms_vertices()) {

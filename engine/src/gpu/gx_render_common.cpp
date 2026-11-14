@@ -3,9 +3,12 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
+#include <string>
 
 #include "wp/memory.h"
+#include "wp/settings.h"
 
 namespace wp::gx::render {
 
@@ -336,7 +339,7 @@ uint32_t used_maps(const Constants& constants) {
     return maps;
 }
 
-void fill_constants(Constants& constants, int scale) {
+void fill_constants(Constants& constants, int scale, int margin_x) {
     const uint32_t* bp = bp_registers();
     std::memset(&constants, 0, sizeof constants);
     for (uint32_t i = 0; i < 4; i++) {
@@ -416,7 +419,7 @@ void fill_constants(Constants& constants, int scale) {
         const uint32_t* xf = xf_registers();
         float width = 0.0f;
         std::memcpy(&width, &xf[0x101A], sizeof width);
-        int center = static_cast<int>(bp[0xE8] & 0x3FF) - 342;
+        int center = static_cast<int>(bp[0xE8] & 0x3FF) - 342 + margin_x;
         constants.fog[2] = (center / (2.0f * width)) * 2.0f - 1.0f;
         constants.fog[3] = 2.0f * width * static_cast<float>(scale);
         for (uint32_t i = 0; i < 5; i++) {
@@ -748,6 +751,59 @@ bool fit_motion(const float (*from)[4], const float (*to)[4], size_t count, floa
         }
     }
     return true;
+}
+
+namespace render {
+
+namespace {
+
+constexpr double kWidePicture = 16.0 / 9.0;
+constexpr double kNarrowestCanvas = 4.0 / 3.0;
+constexpr double kWidestCanvas = 32.0 / 9.0;
+constexpr double kUltrawide = 64.0 / 27.0;
+
+double chosen_aspect(double window_aspect) {
+    static uint32_t seen = ~0u;
+    static std::string choice;
+    if (settings::revision() != seen) {
+        seen = settings::revision();
+        choice = settings::text("video.aspect", "WP_ASPECT");
+    }
+    if (choice == "21:9") {
+        return kUltrawide;
+    }
+    if (choice == "auto") {
+        return window_aspect > 0.0 ? std::clamp(window_aspect, kNarrowestCanvas, kWidestCanvas) : kWidePicture;
+    }
+    size_t colon = choice.find(':');
+    double width = std::atof(choice.c_str());
+    double height = colon == std::string::npos ? 0.0 : std::atof(choice.c_str() + colon + 1);
+    if (width <= 0.0 || height <= 0.0) {
+        return kWidePicture;
+    }
+    return std::clamp(width / height, kNarrowestCanvas, kWidestCanvas);
+}
+
+}
+
+Canvas wanted_canvas(double picture_aspect, double window_aspect) {
+    Canvas canvas;
+    if (picture_aspect < kWidePicture - 0.01) {
+        return canvas;
+    }
+    double aspect = chosen_aspect(window_aspect);
+    if (aspect > kWidePicture + 0.01) {
+        canvas.margin_x = static_cast<int>(std::lround(kEfbWidth / 2.0 * (aspect / kWidePicture - 1.0)));
+    } else if (aspect < kWidePicture - 0.01) {
+        canvas.margin_y = static_cast<int>(std::lround(kPictureHeight / 2.0 * (kWidePicture / aspect - 1.0)));
+    }
+    return canvas;
+}
+
+bool covers_picture(int x, int y, int width, int height) {
+    return x <= 1 && y <= 1 && x + width >= kEfbWidth - 1 && y + height >= kPictureHeight - 1;
+}
+
 }
 
 }

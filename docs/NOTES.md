@@ -877,6 +877,32 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
   second, even with the thread stalled 150 ms), and face culling in single precision (wrong for 10,000 to 17,000
   triangles a second, all under 0.03 pixel of area; now computed in double precision by `gx::facing_area`).
 
+## Picture shape (16:10, 21:9, 32:9)
+
+- `video.aspect` (Screen tab, live): `16:9` (default), `16:10`, `21:9` (taken as 64:27, 2560x1080), `32:9` or `auto`
+  (the window's shape, kept between 4:3 and 32:9). Only with the game's 16:9 mode (`system.widescreen`); Direct3D 11
+  only, the OpenGL renderer keeps 16:9. Idea and draw sorting from the rival PP2 recomp (`gx_canvas`, `canvas_kind`).
+- The EFB grows into a canvas with margins: `wanted_canvas` gives them in EFB pixels (21:9: 107 a side, 854x456;
+  16:10: 25 above and below, 640x506), `apply_scale` makes the target again when they change, and logs
+  `picture WxH at scale N`.
+- Each run of draws is sorted in `gx.cpp` (`canvas_kind`, `fit_canvas`), from the projection and, for runs of up to
+  64 vertices, their place on the picture: the world (perspective with a far plane past 2000) is moved by the margins
+  and its clip space shrunk, so it stays where it was and more shows around it; a draw over the whole picture (a fade,
+  a flat quad of the world) is stretched over the canvas; everything else (2D, the HUD's layouts drawn on the plane
+  z -579.4 with their own 45 degree camera) stays in the 16:9 middle, its scissor cut to it. Only the projection's
+  four viewport terms change, so the processor and GPU vertex paths and the in-between images need nothing more.
+- Frames with no world are shown at 16:9: the title is a THP video (three I8 maps, 640x448 and 320x224), and
+  stretched it widened the logo by a third; the menus' background was stretched while the strip at its bottom was
+  not. `set_canvas_kind` notes whether a frame drew the world; after 8 frames the other way the frame copy takes the
+  whole canvas or only the picture, and stretched draws stay in the picture while the world is away. `present_view`
+  shows each image at the shape of its own size.
+- Copies of the whole picture take the margins; others, and what is written back to memory (photos), are the
+  picture's part. Clears too. Range fog moves its center by the side margin.
+- The game picks what to draw with a frustum made for 16:9 (`FrustumForCamera` 0x8001A390, same address as the US
+  game, builds it with 0x8027DCD0: fovy in degrees, aspect, near, far). `CullingFrustum` widens it for cameras that
+  see past 2000 by the canvas's shape: 21:9 at 240 fps x3 drew 21.9 million vertices a second instead of 21.3, still
+  at 239.8 fps.
+
 ## Bug recorder and hang report
 
 - `video.bug_recorder` (Advanced tab, off by default, Direct3D 11): every image shown, real or interpolated, is copied

@@ -823,6 +823,7 @@ struct BatchState {
     uint32_t top_left = 0;
     uint32_t bottom_right = 0;
     uint32_t scissor_offset = 0;
+    int canvas_kind = kInPicture;
 };
 
 struct PendingBatch : BatchState {
@@ -946,6 +947,15 @@ uint64_t g_frame = 0;
 constexpr uint64_t kWriteBackFrames = 2;
 uint64_t g_texture_epoch = 0;
 int g_scale = 1;
+Canvas g_canvas;
+int g_canvas_kind = kInPicture;
+std::atomic<uint32_t> g_shared_margins{0};
+bool g_world_drawn = false;
+bool g_world_shown = false;
+int g_world_change_frames = 0;
+constexpr int kSteadyFrames = 8;
+double g_window_aspect = 0.0;
+double g_picture_aspect = 4.0 / 3.0;
 uint32_t g_vertex_cursor = kVertexCapacity;
 uint32_t g_trimmed_cursor = kVertexBytes;
 uint32_t g_batches = 0;
@@ -956,6 +966,30 @@ double g_write_back_seconds = 0.0;
 
 int scaled(int value) {
     return value * g_scale;
+}
+
+int canvas_width() {
+    return kEfbWidth + 2 * g_canvas.margin_x;
+}
+
+int canvas_height() {
+    return kEfbHeight + 2 * g_canvas.margin_y;
+}
+
+bool canvas_grown() {
+    return g_canvas.margin_x != 0 || g_canvas.margin_y != 0;
+}
+
+void place_on_canvas(int& x, int& y, int& width, int& height, bool grow = true) {
+    if (grow && canvas_grown() && covers_picture(x, y, width, height)) {
+        width += x + 2 * g_canvas.margin_x;
+        height += y + 2 * g_canvas.margin_y;
+        x = 0;
+        y = 0;
+        return;
+    }
+    x += g_canvas.margin_x;
+    y += g_canvas.margin_y;
 }
 
 struct ShaderCache {
@@ -1019,8 +1053,8 @@ bool compile(const char* source, const char* entry, const char* profile, ID3DBlo
 
 bool create_target() {
     D3D11_TEXTURE2D_DESC description{};
-    description.Width = scaled(kEfbWidth);
-    description.Height = scaled(kEfbHeight);
+    description.Width = scaled(canvas_width());
+    description.Height = scaled(canvas_height());
     description.MipLevels = 1;
     description.ArraySize = 1;
     description.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -2242,17 +2276,35 @@ void set_batch_state(const BatchState& pending, bool moved) {
     context->OMSetRenderTargets(1, &g_device.target_view, g_device.depth_view);
     context->PSSetShaderResources(0, kTextureMaps, pending.views);
     context->PSSetSamplers(0, kTextureMaps, pending.samplers);
-    D3D11_VIEWPORT viewport{0, 0, static_cast<float>(scaled(kEfbWidth)), static_cast<float>(scaled(kEfbHeight)), 0.0f, 1.0f};
+    D3D11_VIEWPORT viewport{0, 0, static_cast<float>(scaled(canvas_width())), static_cast<float>(scaled(canvas_height())), 0.0f, 1.0f};
     context->RSSetViewports(1, &viewport);
     D3D11_RECT scissor;
     scissor.left = static_cast<LONG>(((pending.top_left >> 12) & 0x7FF) - scissor_offset_x(pending.scissor_offset));
     scissor.top = static_cast<LONG>((pending.top_left & 0x7FF) - scissor_offset_y(pending.scissor_offset));
     scissor.right = static_cast<LONG>(((pending.bottom_right >> 12) & 0x7FF) - scissor_offset_x(pending.scissor_offset) + 1);
     scissor.bottom = static_cast<LONG>((pending.bottom_right & 0x7FF) - scissor_offset_y(pending.scissor_offset) + 1);
+    if (canvas_grown() && covers_picture(scissor.left, scissor.top, scissor.right - scissor.left, scissor.bottom - scissor.top)) {
+        if (pending.canvas_kind != kInPicture) {
+            scissor.right += 2 * g_canvas.margin_x;
+            scissor.bottom += 2 * g_canvas.margin_y;
+            scissor.left = 0;
+            scissor.top = 0;
+        } else {
+            scissor.left = g_canvas.margin_x;
+            scissor.top = g_canvas.margin_y;
+            scissor.right = kEfbWidth + g_canvas.margin_x;
+            scissor.bottom = kPictureHeight + g_canvas.margin_y;
+        }
+    } else {
+        scissor.left += g_canvas.margin_x;
+        scissor.top += g_canvas.margin_y;
+        scissor.right += g_canvas.margin_x;
+        scissor.bottom += g_canvas.margin_y;
+    }
     scissor.left = std::max<LONG>(scissor.left, 0);
     scissor.top = std::max<LONG>(scissor.top, 0);
-    scissor.right = std::min<LONG>(scissor.right, kEfbWidth);
-    scissor.bottom = std::min<LONG>(scissor.bottom, kEfbHeight);
+    scissor.right = std::min<LONG>(scissor.right, canvas_width());
+    scissor.bottom = std::min<LONG>(scissor.bottom, canvas_height());
     scissor.left *= g_scale;
     scissor.top *= g_scale;
     scissor.right *= g_scale;
@@ -2607,13 +2659,14 @@ void select_batch() {
     static uint64_t batched_serial = ~0ull;
     static uint64_t batched_epoch = 0;
     static int batched_scale = 0;
+    static int batched_canvas = kInPicture;
     PendingBatch& pending = g_pending;
-    if (!batch_empty() && batched_serial == register_serial() && batched_epoch == g_texture_epoch && batched_scale == g_scale) {
+    if (!batch_empty() && batched_serial == register_serial() && batched_epoch == g_texture_epoch && batched_scale == g_scale && batched_canvas == g_canvas_kind) {
         return;
     }
     const uint32_t* bp = bp_registers();
     Constants constants;
-    fill_constants(constants, g_scale);
+    fill_constants(constants, g_scale, g_canvas.margin_x);
     ID3D11ShaderResourceView* views[kTextureMaps] = {};
     ID3D11SamplerState* samplers[kTextureMaps] = {};
     uint32_t used = used_maps(constants);
@@ -2633,7 +2686,7 @@ void select_batch() {
     uint32_t depth = bp[0x40] & 0x1F;
     bool early_depth = (depth & 1) != 0 && (bp[0x43] & (1u << 6)) != 0 && alpha_test.can_pass && alpha_test.can_fail;
     bool same = !batch_empty() && pending.blend == blend && pending.depth == depth && pending.early_depth == early_depth && pending.top_left == bp[0x20] &&
-                pending.bottom_right == bp[0x21] && pending.scissor_offset == bp[kBpScissorOffset] && std::memcmp(&pending.constants, &constants, sizeof constants) == 0 &&
+                pending.bottom_right == bp[0x21] && pending.scissor_offset == bp[kBpScissorOffset] && pending.canvas_kind == g_canvas_kind && std::memcmp(&pending.constants, &constants, sizeof constants) == 0 &&
                 std::memcmp(pending.views, views, sizeof views) == 0 && std::memcmp(pending.samplers, samplers, sizeof samplers) == 0;
     if (same) {
         for (ID3D11ShaderResourceView*& view : views) {
@@ -2653,10 +2706,12 @@ void select_batch() {
         pending.top_left = bp[0x20];
         pending.bottom_right = bp[0x21];
         pending.scissor_offset = bp[kBpScissorOffset];
+        pending.canvas_kind = g_canvas_kind;
     }
     batched_serial = register_serial();
     batched_epoch = g_texture_epoch;
     batched_scale = g_scale;
+    batched_canvas = g_canvas_kind;
 }
 
 }
@@ -2879,7 +2934,7 @@ bool run_copy(ID3D11RenderTargetView* target, uint32_t target_width, uint32_t ta
         float extent[4];
     } constants{};
     uint32_t sum = filter.coefficients[0] + filter.coefficients[1] + filter.coefficients[2];
-    int efb_height = scaled(kEfbHeight);
+    int efb_height = scaled(canvas_height());
     int top = filter.clamp_top ? scaled(y) : 0;
     int bottom = (filter.clamp_bottom ? scaled(y + height) : efb_height) - 1;
     constants.params[0] = format;
@@ -2897,7 +2952,7 @@ bool run_copy(ID3D11RenderTargetView* target, uint32_t target_width, uint32_t ta
     constants.rows[0] = 1.0f / filter.gamma;
     constants.rows[1] = static_cast<float>(top) + 0.5f;
     constants.rows[2] = static_cast<float>(bottom) + 0.5f;
-    constants.extent[0] = static_cast<float>(scaled(kEfbWidth));
+    constants.extent[0] = static_cast<float>(scaled(canvas_width()));
     constants.extent[1] = static_cast<float>(efb_height);
     ID3D11DeviceContext* context = g_device.context;
     ID3D11Buffer* buffer = constant_buffer(&constants, sizeof constants);
@@ -3170,6 +3225,11 @@ void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width,
     }
     finish_frame();
     flush_pending();
+    int canvas_x = x;
+    int canvas_y = y;
+    int canvas_w = width;
+    int canvas_h = height;
+    place_on_canvas(canvas_x, canvas_y, canvas_w, canvas_h);
     CopiedTexture& entry = g_device.copies[address];
     // A buffer copied again every frame is a render target of an effect, and the game only samples it: it stays on the
     // GPU, as in Dolphin's default. Reading dozens of them back each frame held the cave at 42 fps instead of 60.
@@ -3186,8 +3246,10 @@ void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width,
     entry.copied_format = format;
     entry.logical_width = logical_width;
     entry.logical_height = logical_height;
-    uint32_t target_width = std::max(1u, entry.logical_width * g_scale);
-    uint32_t target_height = std::max(1u, entry.logical_height * g_scale);
+    uint32_t copy_width = half ? std::max(1u, static_cast<uint32_t>(canvas_w) / 2) : static_cast<uint32_t>(canvas_w);
+    uint32_t copy_height = half ? std::max(1u, static_cast<uint32_t>(canvas_h) / 2) : static_cast<uint32_t>(canvas_h);
+    uint32_t target_width = std::max(1u, copy_width * g_scale);
+    uint32_t target_height = std::max(1u, copy_height * g_scale);
     if (!entry.converted || entry.converted_width != target_width || entry.converted_height != target_height) {
         release_copy(entry);
         if (!create_copy_texture(entry.converted, entry.converted_view, entry.converted_target, target_width, target_height)) {
@@ -3201,7 +3263,7 @@ void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width,
     if (g_recording) {
         note_copy_target(entry.converted, entry.converted_view, entry.converted_target, target_width, target_height);
     }
-    if (!run_copy(entry.converted_target, target_width, target_height, x, y, width, height, format, intensity, alpha || depth, depth, filter)) {
+    if (!run_copy(entry.converted_target, target_width, target_height, canvas_x, canvas_y, canvas_w, canvas_h, format, intensity, alpha || depth, depth, filter)) {
         release_copy(entry);
         g_device.copies.erase(address);
         return;
@@ -3209,13 +3271,13 @@ void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width,
     if (g_recording) {
         RecordedCommand command;
         command.kind = RecordedCommand::kCopy;
-        command.copy = {entry.converted_target, target_width, target_height, x, y, width, height, format, intensity, alpha || depth, depth, filter};
+        command.copy = {entry.converted_target, target_width, target_height, canvas_x, canvas_y, canvas_w, canvas_h, format, intensity, alpha || depth, depth, filter};
         entry.converted_target->AddRef();
         g_record.commands.push_back(command);
     }
     entry.view = entry.converted_view;
     entry.bytes = entry.logical_width * entry.logical_height * copy_bits(format) / 8;
-    if (!recurring && queue_write_back(address, stride, x, y, width, height, entry.logical_width, entry.logical_height, format, intensity, alpha || depth, depth, filter)) {
+    if (!recurring && queue_write_back(address, stride, x + g_canvas.margin_x, y + g_canvas.margin_y, width, height, entry.logical_width, entry.logical_height, format, intensity, alpha || depth, depth, filter)) {
         entry.pending_writes++;
     } else if (entry.pending_writes == 0) {
         entry.guest_hash = guest_range_valid(address, entry.bytes) ? sample_hash(host(address), entry.bytes) : 0;
@@ -3247,6 +3309,13 @@ bool copy_frame(int& x, int& y, int& width, int& height, bool depth, const CopyF
     if (width <= 0 || height <= 0) {
         return false;
     }
+    g_world_change_frames = g_world_drawn == g_world_shown ? 0 : g_world_change_frames + 1;
+    if (g_world_change_frames >= kSteadyFrames) {
+        g_world_shown = g_world_drawn;
+        g_world_change_frames = 0;
+    }
+    g_world_drawn = false;
+    place_on_canvas(x, y, width, height, g_world_shown);
     uint32_t physical_width = static_cast<uint32_t>(scaled(width));
     uint32_t physical_height = static_cast<uint32_t>(scaled(height));
     if (!g_device.frame || g_device.frame_width != physical_width || g_device.frame_height != physical_height) {
@@ -4917,7 +4986,8 @@ void apply_anisotropy() {
 
 void apply_scale() {
     int scale = requested_scale();
-    if (scale == g_scale) {
+    Canvas wanted = wanted_canvas(g_picture_aspect, g_window_aspect);
+    if (scale == g_scale && wanted.margin_x == g_canvas.margin_x && wanted.margin_y == g_canvas.margin_y) {
         return;
     }
     flush_pending();
@@ -4927,11 +4997,14 @@ void apply_scale() {
     ID3D11ShaderResourceView* none[2] = {};
     context->PSSetShaderResources(0, 2, none);
     int previous = g_scale;
+    Canvas previous_canvas = g_canvas;
     release_target();
     g_scale = scale;
+    g_canvas = wanted;
     if (!create_target()) {
         release_target();
         g_scale = previous;
+        g_canvas = previous_canvas;
         if (!create_target()) {
             std::fputs("cannot recreate the EFB after a scale change\n", stderr);
             release_target();
@@ -4943,6 +5016,8 @@ void apply_scale() {
     float black[4] = {0, 0, 0, 0};
     context->ClearRenderTargetView(g_device.target_view, black);
     context->ClearDepthStencilView(g_device.depth_view, D3D11_CLEAR_DEPTH, 0.0f, 0);
+    g_shared_margins.store(static_cast<uint32_t>(g_canvas.margin_x) << 16 | static_cast<uint32_t>(g_canvas.margin_y), std::memory_order_release);
+    log::write("video", "picture %dx%d at scale %d", canvas_width(), kPictureHeight + 2 * g_canvas.margin_y, g_scale);
 }
 
 bool create_overlay_pipeline() {
@@ -5054,6 +5129,17 @@ bool present_view(HWND window, double aspect, ID3D11ShaderResourceView* view) {
     float black[4] = {0, 0, 0, 1};
     context->OMSetRenderTargets(1, &g_device.backbuffer_view, nullptr);
     context->ClearRenderTargetView(g_device.backbuffer_view, black);
+    g_window_aspect = static_cast<double>(client.right) / client.bottom;
+    ID3D11Resource* resource = nullptr;
+    view->GetResource(&resource);
+    D3D11_TEXTURE2D_DESC image{};
+    if (resource) {
+        static_cast<ID3D11Texture2D*>(resource)->GetDesc(&image);
+        resource->Release();
+    }
+    if (canvas_grown() && image.Width > 0 && image.Height > 0) {
+        aspect *= static_cast<double>(image.Width) / image.Height * kPictureHeight / kEfbWidth;
+    }
     double width = client.right;
     double height = width / aspect;
     if (height > client.bottom) {
@@ -5280,6 +5366,25 @@ void service_deferred() {
 
 }
 
+Canvas canvas() {
+    Canvas current = g_canvas;
+    current.world = g_world_shown;
+    return current;
+}
+
+Canvas shared_canvas() {
+    uint32_t margins = g_shared_margins.load(std::memory_order_acquire);
+    Canvas shared;
+    shared.margin_x = static_cast<int>(margins >> 16);
+    shared.margin_y = static_cast<int>(margins & 0xFFFF);
+    return shared;
+}
+
+void set_canvas_kind(int kind) {
+    g_canvas_kind = kind;
+    g_world_drawn |= kind == kWorld;
+}
+
 bool present_frame(void* window_handle, double aspect) {
     if (!g_device.ready || !g_device.frame_view || !window_handle) {
         return false;
@@ -5288,6 +5393,7 @@ bool present_frame(void* window_handle, double aspect) {
     HWND window = static_cast<HWND>(window_handle);
     g_present_window = window;
     g_present_aspect = aspect;
+    g_picture_aspect = aspect;
     static auto checked = std::chrono::steady_clock::time_point{};
     if (std::chrono::steady_clock::now() - checked > std::chrono::seconds(2)) {
         checked = std::chrono::steady_clock::now();
@@ -5423,8 +5529,8 @@ GpuFigures gpu_figures() {
     if (adapter3 && SUCCEEDED(adapter3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &memory))) {
         figures.vram_used_gb = static_cast<double>(memory.CurrentUsage) / kGigabyte;
     }
-    figures.width = scaled(kEfbWidth);
-    figures.height = scaled(kEfbHeight);
+    figures.width = scaled(canvas_width());
+    figures.height = scaled(canvas_height());
     figures.refresh_hz = g_display_hz;
     return figures;
 }
@@ -5561,6 +5667,7 @@ void clear(int x, int y, int width, int height) {
     if (width <= 0 || height <= 0) {
         return;
     }
+    place_on_canvas(x, y, width, height);
     ClearCommand command{mask, depth_enable, {red / 255.0f, green / 255.0f, blue / 255.0f, alpha / 255.0f, static_cast<float>(16777215u - depth) / 16777215.0f, 0, 0, 0}, x, y, width, height};
     if (g_frame_end.due && !g_frame_end.has_clear) {
         g_frame_end.has_clear = true;
@@ -5581,7 +5688,7 @@ void run_clear(const ClearCommand& command) {
     ID3D11DeviceContext* context = g_device.context;
     context->UpdateSubresource(g_device.clear_constants, 0, nullptr, command.constants, 0, 0);
     context->OMSetRenderTargets(1, &g_device.target_view, g_device.depth_view);
-    D3D11_VIEWPORT viewport{0, 0, static_cast<float>(scaled(kEfbWidth)), static_cast<float>(scaled(kEfbHeight)), 0.0f, 1.0f};
+    D3D11_VIEWPORT viewport{0, 0, static_cast<float>(scaled(canvas_width())), static_cast<float>(scaled(canvas_height())), 0.0f, 1.0f};
     context->RSSetViewports(1, &viewport);
     D3D11_RECT rectangle{scaled(x), scaled(y), scaled(x + width), scaled(y + height)};
     context->RSSetScissorRects(1, &rectangle);

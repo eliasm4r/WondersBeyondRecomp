@@ -8,6 +8,7 @@
 #include "wp/cpu.h"
 #include "wp/game.h"
 #include "wp/gx.h"
+#include "wp/gx_render.h"
 #include "wp/disc.h"
 #include "wp/frame_pacing.h"
 #include "wp/free_camera.h"
@@ -543,6 +544,23 @@ void without_interrupts(Cpu& c, HleFunction original) {
     c.msr |= enabled;
 }
 
+constexpr double kWorldFar = 2000.0;
+constexpr double kPictureWidth = 640.0;
+constexpr double kPictureHeight = 456.0;
+constexpr double kWidestFieldOfView = 180.0;
+constexpr double kDegreesPerHalfRadian = 360.0 / 3.14159265358979323846;
+
+void culling_frustum(Cpu& c, HleFunction original) {
+    gx::render::Canvas canvas = gx::render::shared_canvas();
+    if ((canvas.margin_x != 0 || canvas.margin_y != 0) && c.f[4] >= kWorldFar && c.f[1] > 0.0 && c.f[1] < kWidestFieldOfView) {
+        double wide = (kPictureWidth + 2.0 * canvas.margin_x) / kPictureWidth;
+        double tall = (kPictureHeight + 2.0 * canvas.margin_y) / kPictureHeight;
+        c.f[1] = std::atan(std::tan(c.f[1] / kDegreesPerHalfRadian) * tall) * kDegreesPerHalfRadian;
+        c.f[2] *= wide / tall;
+    }
+    original(c);
+}
+
 void temp_pool_alloc(Cpu& c, HleFunction original) {
     uint32_t pool = c.r[3];
     uint32_t index = c.r[4];
@@ -578,7 +596,7 @@ HookFunction hook(const char* name) {
                    {"FindResourceByNumber", find_resource_by_number},
                    {"AddSceneParameter", add_scene_parameter}, {"PickScene", pick_scene}, {"SceneManagerRunBegin", scene_manager_run_begin},
                    {"DanceFrame", dance_frame}, {"DanceFrameSecondPart", dance_frame_second_part},
-                   {"DanceJudge", dance_judge}};
+                   {"DanceJudge", dance_judge}, {"CullingFrustum", culling_frustum}};
     for (const auto& entry : kHooks) {
         if (std::strcmp(entry.name, name) == 0) {
             return entry.function;

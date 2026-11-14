@@ -32,7 +32,7 @@ constexpr const char* kLiveKeys[] = {
     "overlay.show",         "overlay.level",        "overlay.corner",        "controls.device",    "stats.play_time",
     "video.brightness",     "video.contrast",       "video.saturation",      "video.gamma",        "video.colors_reset",
     "camera.free",          "camera.mouse_speed",   "camera.stick_speed",    "camera.invert_y",    "video.bug_recorder",
-    "system.check_updates", "system.update",
+    "system.check_updates", "system.update",        "video.aspect",
 };
 
 struct Language {
@@ -137,7 +137,7 @@ const char* tab_label(size_t tab) {
 std::vector<std::string> tab_keys(size_t tab, Device device) {
     switch (tab) {
     case 0:
-        return {"video.scale",      "video.fullscreen", "system.widescreen", "video.vsync", "video.smooth", "video.anisotropy",
+        return {"video.scale",      "video.fullscreen", "system.widescreen", "video.aspect", "video.vsync", "video.smooth", "video.anisotropy",
                 color::kBrightness.key, color::kContrast.key, color::kSaturation.key, color::kGamma.key, kResetColors};
     case 1:
         return {"video.fps", "saves.backups", "system.discord", kPlayTime};
@@ -220,6 +220,9 @@ std::vector<std::string> choices(const std::string& key) {
     if (key == "video.anisotropy") {
         return {"1", "2", "4", "8", "16"};
     }
+    if (key == "video.aspect") {
+        return {"16:9", "16:10", "21:9", "32:9", "auto"};
+    }
     if (key == "overlay.level") {
         return {"minimal", "standard", "full"};
     }
@@ -277,6 +280,9 @@ std::string shown_value(const std::string& key, const std::string& value) {
     }
     if (key == "video.anisotropy") {
         return value == "1" ? text.menu_off : value + "x";
+    }
+    if (key == "video.aspect") {
+        return value == "auto" ? ui::label("menu.aspect.auto") : value == "16:9" ? ui::label("menu.aspect.original") : value;
     }
     if (key == "overlay.level" || key == "overlay.corner" || key == kDevice) {
         std::string prefix = key == "overlay.level" ? "menu.level." : key == "overlay.corner" ? "menu.corner." : "menu.device.";

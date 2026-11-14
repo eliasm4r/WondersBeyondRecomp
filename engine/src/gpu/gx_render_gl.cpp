@@ -1416,6 +1416,16 @@ void reset_kept() {}
 
 void finish_frame() {}
 
+Canvas canvas() {
+    return {};
+}
+
+Canvas shared_canvas() {
+    return {};
+}
+
+void set_canvas_kind(int) {}
+
 int64_t service_presents() {
     return -1;
 }

@@ -93,6 +93,18 @@ void finish_copies();
 void finish_frame();
 void copy_to_framebuffer(int x, int y, int width, int height, bool depth, const CopyFilter& filter);
 bool present_frame(void* window, double aspect);
+
+struct Canvas {
+    int margin_x = 0;
+    int margin_y = 0;
+    bool world = false;
+};
+
+enum CanvasKind : int { kInPicture = 0, kWorld = 1, kStretched = 2 };
+
+Canvas canvas();
+Canvas shared_canvas();
+void set_canvas_kind(int kind);
 int64_t service_presents();
 uint32_t take_interpolated_frames();
 uint32_t take_late_frames();

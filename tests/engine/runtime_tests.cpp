@@ -1771,7 +1771,7 @@ void test_options_menu() {
     CHECK(std::strcmp(wp::ui::label("tab.advanced", wp::ui::Language::English), "Advanced") == 0);
     CHECK(std::strcmp(wp::ui::label("tab.controls", wp::ui::Language::Galician), "Controls") != 0);
     CHECK(std::strcmp(wp::ui::label("help.video.scale", wp::ui::Language::Spanish), wp::ui::label("help.video.scale", wp::ui::Language::English)) != 0);
-    CHECK((wp::options::tab_keys(0) == std::vector<std::string>{"video.scale", "video.fullscreen", "system.widescreen", "video.vsync", "video.smooth", "video.anisotropy",
+    CHECK((wp::options::tab_keys(0) == std::vector<std::string>{"video.scale", "video.fullscreen", "system.widescreen", "video.aspect", "video.vsync", "video.smooth", "video.anisotropy",
                                                                  "video.brightness", "video.contrast", "video.saturation", "video.gamma", "video.colors_reset"}));
     CHECK(std::strcmp(wp::ui::label("video.colors_reset", wp::ui::Language::French), "Couleurs d'origine") == 0);
     CHECK(std::strcmp(wp::ui::label("video.brightness", wp::ui::Language::French), "Luminosité") == 0);
@@ -1912,16 +1912,21 @@ void test_options_menu() {
 
     menu.select_tab(0);
     std::vector<wp::options::Row> screen = menu.rows();
-    CHECK(screen.size() == 11 && screen[6].key == "video.brightness" && screen[10].key == "video.colors_reset");
-    for (size_t i = 6; i < 10; i++) {
+    CHECK(screen.size() == 12 && screen[3].key == "video.aspect" && screen[3].kind == wp::options::Kind::Choice && screen[3].live);
+    CHECK(screen[3].value == "16:9 (original)" && screen[7].key == "video.brightness" && screen[11].key == "video.colors_reset");
+    for (size_t i = 7; i < 11; i++) {
         CHECK(screen[i].kind == wp::options::Kind::Slider && screen[i].value == "100%" && screen[i].live && screen[i].fraction == 0.5);
     }
-    CHECK(screen[10].kind == wp::options::Kind::Button && screen[10].live);
-    menu.select(6);
+    CHECK(screen[11].kind == wp::options::Kind::Button && screen[11].live);
+    menu.select(3);
+    CHECK(menu.handle(wp::options::Action::Next) == "video.aspect");
+    CHECK(wp::settings::text("video.aspect", nullptr) == "16:10");
+    wp::settings::store("video.aspect", "16:9");
+    menu.select(7);
     CHECK(menu.handle(wp::options::Action::Next) == "video.brightness");
     CHECK(wp::settings::number("video.brightness", nullptr) == 105);
     wp::settings::store("video.saturation", "0");
-    menu.select(10);
+    menu.select(11);
     CHECK(menu.handle(wp::options::Action::Accept) == "video.colors_reset");
     CHECK(wp::settings::number("video.brightness", nullptr) == 100 && wp::settings::number("video.saturation", nullptr) == 100);
 

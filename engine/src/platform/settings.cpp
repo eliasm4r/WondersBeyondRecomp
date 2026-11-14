@@ -61,6 +61,7 @@ const Option kBaseOptions[] = {
     {"system.language", "auto"},
     {"system.pal60", "1"},
     {"system.widescreen", "1"},
+    {"video.aspect", "16:9"},
     {"system.options_menu", "1"},
     {"system.discord", "1"},
     {"system.check_updates", "1"},

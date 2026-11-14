@@ -10,6 +10,11 @@ Every change to WondersBeyondRecomp, newest first.
 
 <br>
 
+## Unreleased
+
+### Added
+- Picture shape option (Options > Screen): 16:10, 21:9, 32:9 or the window's own shape. The world fills the wider screen and shows more on the sides; menus, text and the map stay in the middle, and screens with no world (title video, menus, loading) keep their 16:9 shape. Objects past the old edges are drawn too, so nothing pops in at the sides.
+
 ## v0.2.0-alpha · 2026-11-14
 
 > **Smoother and faster.** Up to 240 fps, shorter freezes when a zone appears, a faster start, an update check and controls made for the four attractions. [Download it here.](https://github.com/eliasm4r/WondersBeyondRecomp/releases/tag/v0.2.0-alpha)
