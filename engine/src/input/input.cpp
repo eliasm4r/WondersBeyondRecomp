@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "wp/attraction.h"
 #include "wp/game.h"
 #include "wp/gamepad.h"
 #include "wp/free_camera.h"
@@ -207,6 +208,8 @@ Sample gamepad_sample(uint32_t channel, bool sideways) {
     for (int i = 0; i < 3; i++) {
         result.accel[i] = pad.accel[i];
     }
+    result.stick_x = pad.stick_x;
+    result.stick_y = pad.stick_y;
     return result;
 }
 
@@ -327,7 +330,9 @@ Sample device_sample(uint32_t channel) {
         settings::reload_if_changed();
     }
     const keymap::Bindings& keys = bindings();
-    bool mouse_aims = focused && any_pressed(keys.of(keymap::Action::Pointer));
+    attraction::Mode mode = attraction::mode();
+    bool free_aim = mode == attraction::Mode::Aim;
+    bool mouse_aims = focused && (free_aim || any_pressed(keys.of(keymap::Action::Pointer)));
     free_camera::set_pointer_held(mouse_aims || (focused && any_pressed(keys.of(keymap::Action::MouseMotion))));
     if (focused) {
         result.buttons |= keyboard_buttons(keys, pressed, mouse_aims);
@@ -341,7 +346,16 @@ Sample device_sample(uint32_t channel) {
         result.buttons |= kMotionSideways;
     }
     gamepad::State pad = gamepad::poll(channel, sideways);
+    if (mode == attraction::Mode::Aim && (pad.buttons & (kButtonTwo | kButtonB))) {
+        pad.buttons = (pad.buttons & ~(kButtonTwo | kButtonB)) | kButtonA;
+    }
     result.buttons |= pad.buttons;
+    if (mode == attraction::Mode::Shake) {
+        uint32_t bomb = (result.buttons & kButtonTwo) ? kButtonA : 0;
+        result.buttons = (result.buttons & ~(kButtonA | kButtonTwo)) | bomb;
+    }
+    result.stick_x = pad.stick_x;
+    result.stick_y = pad.stick_y;
     if (pad.motion_valid) {
         result.motion_valid = true;
         for (int i = 0; i < 3; i++) {

@@ -32,6 +32,8 @@ constexpr ActionInfo kActions[kActionCount] = {
     {"tilt_right", input::kMotionTiltRight, "L"},
     {"tilt_up", input::kMotionTiltUp, "I"},
     {"tilt_down", input::kMotionTiltDown, "K"},
+    {"shake_left", input::kMotionShakeLeft, "Q"},
+    {"shake_right", input::kMotionShakeRight, "E"},
     {"screenshot", 0, "F9"},
     {"mouse_motion", 0, "Z"},
     {"pointer", 0, "Ctrl"},
@@ -243,6 +245,10 @@ const char* previous_defaults(size_t index) {
     return nullptr;
 }
 
+bool attraction_only(size_t index) {
+    return index == static_cast<size_t>(Action::ShakeLeft) || index == static_cast<size_t>(Action::ShakeRight);
+}
+
 std::vector<size_t> outdated(const std::function<std::string(const std::string& key)>& value, const std::function<int(int letter)>& letter) {
     std::vector<std::vector<int>> stored(kActionCount);
     std::vector<bool> moving(kActionCount, false);
@@ -259,7 +265,7 @@ std::vector<size_t> outdated(const std::function<std::string(const std::string& 
             }
             for (int code : parse(localize(kActions[i].defaults, letter)).codes) {
                 for (size_t other = 0; other < kActionCount; other++) {
-                    if (moving[i] && other != i && !moving[other] && std::find(stored[other].begin(), stored[other].end(), code) != stored[other].end()) {
+                    if (moving[i] && other != i && !moving[other] && !attraction_only(other) && std::find(stored[other].begin(), stored[other].end(), code) != stored[other].end()) {
                         moving[i] = false;
                         changed = true;
                     }

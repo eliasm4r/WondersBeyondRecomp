@@ -27,6 +27,7 @@ add_library(wp_engine STATIC
     src/ios/disc.cpp
     src/input/bluetooth.cpp
     src/input/wiimote.cpp
+    src/input/attraction.cpp
     src/input/input.cpp
     src/input/keymap.cpp
     src/input/padmap.cpp

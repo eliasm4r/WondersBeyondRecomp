@@ -26,6 +26,8 @@ constexpr uint32_t kMotionTiltRight = 0x100000;
 constexpr uint32_t kMotionTiltUp = 0x200000;
 constexpr uint32_t kMotionTiltDown = 0x400000;
 constexpr uint32_t kMotionSideways = 0x800000;
+constexpr uint32_t kMotionShakeLeft = 0x1000000;
+constexpr uint32_t kMotionShakeRight = 0x2000000;
 
 struct MouseMotionState {
     bool tracking = false;
@@ -45,6 +47,8 @@ struct Sample {
     float pointer_y = 0.0f;
     bool motion_valid = false;
     float accel[3] = {0.0f, 0.0f, 1.0f};
+    float stick_x = 0.0f;
+    float stick_y = 0.0f;
 };
 
 bool connected(uint32_t channel);

@@ -13,6 +13,7 @@
 #include <mutex>
 #include <thread>
 
+#include "wp/attraction.h"
 #include "wp/input.h"
 #include "wp/log.h"
 #include "wp/settings.h"
@@ -285,7 +286,7 @@ Snapshot read(Pad& pad, float dt) {
     float right_y = axis(handle, SDL_GAMEPAD_AXIS_RIGHTY);
     snapshot.right_x = right_x;
     snapshot.right_y = right_y;
-    bool aiming = padmap::held(padmap::current_mapping()[padmap::kPointerAction], physical_state(snapshot));
+    bool aiming = padmap::held(padmap::current_mapping()[padmap::kPointerAction], physical_state(snapshot)) || attraction::mode() == attraction::Mode::Aim;
     if (aiming && !pad.aiming) {
         pad.pointer_x = 0.0f;
         pad.pointer_y = 0.0f;
@@ -621,6 +622,8 @@ State poll(uint32_t slot, bool sideways) {
     } else {
         b |= (left ? input::kButtonLeft : 0) | (right ? input::kButtonRight : 0) | (up ? input::kButtonUp : 0) | (down ? input::kButtonDown : 0);
     }
+    state.stick_x = current.left_x;
+    state.stick_y = current.left_y;
     state.pointer_valid = current.pointer_valid;
     state.pointer_x = current.pointer_x;
     state.pointer_y = current.pointer_y;
