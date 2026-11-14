@@ -30,7 +30,7 @@ int dance_swing(uint32_t moves, uint32_t report);
 bool dance_playing();
 
 enum class Arrow : int { None, Left, Up, Down, Right };
-enum class Shape : int { None, Cross, Circle, Square, Triangle };
+enum class Shape : int { None, Cross, Circle, Square, Triangle, SpaceBar };
 
 struct Label {
     Arrow arrow = Arrow::None;

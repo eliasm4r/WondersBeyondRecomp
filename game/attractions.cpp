@@ -61,6 +61,8 @@ bool guest_text_is(uint32_t address, const char* text) {
 
 int g_test_request = 0;
 
+void label_bomb_button();
+
 void read_test_request() {
     static bool done = false;
     static std::chrono::steady_clock::time_point first{};
@@ -104,6 +106,9 @@ void add_scene_parameter(Cpu& c, HleFunction original) {
 
 void scene_manager_run_begin(Cpu& c, HleFunction original) {
     original(c);
+    if (attraction::mode() == attraction::Mode::Shake) {
+        label_bomb_button();
+    }
     if (g_scene != kScenePark) {
         return;
     }
@@ -327,6 +332,11 @@ constexpr uint32_t kArchiveMagic = 0x55aa382d;
 constexpr uint32_t kTplMagic = 0x0020af30;
 constexpr uint32_t kFormatCi8 = 9;
 constexpr int64_t kSearchPeriodMs = 1000;
+constexpr const char* kBombButtonName = "AtAButton00.tpl";
+constexpr int kBombDiscRadius = 22;
+constexpr int kBombGlyphHalf = 16;
+constexpr int kBombGlyphDarkness = 330;
+constexpr int kBombFont = 34;
 
 struct Icons {
     uint32_t dance = 0;
@@ -343,13 +353,13 @@ bool is_archive(uint32_t header) {
     return header && rd32(header) == kArchiveMagic && rd32(header + 4) == 0x20;
 }
 
-uint32_t find_archive() {
+uint32_t find_archive(const std::string& name_wanted) {
     struct Range {
         uint32_t base;
         uint32_t size;
     };
     constexpr Range kRam[] = {{0x90000000u, 0x04000000u}, {0x80000000u, 0x01800000u}};
-    static const std::string kName = "At01UIDanceIcon00.tpl";
+    const std::string& kName = name_wanted;
     for (const Range& range : kRam) {
         const char* start = reinterpret_cast<const char*>(host(range.base));
         const char* end = start + range.size;
@@ -393,6 +403,8 @@ uint32_t tpl_at(uint32_t tpl, uint32_t value) {
 
 struct Picture {
     uint32_t image = 0;
+    int width = 0;
+    int height = 0;
     int colours = 0;
     uint8_t rgba[256][4] = {};
 };
@@ -404,9 +416,11 @@ bool picture(uint32_t tpl, Picture& result) {
     uint32_t table = tpl_at(tpl, rd32(tpl + 8));
     uint32_t image = table ? tpl_at(tpl, rd32(table)) : 0;
     uint32_t palette = table ? tpl_at(tpl, rd32(table + 4)) : 0;
-    if (!image || !palette || rd16(image) != kIconSize || rd16(image + 2) != kIconSize || rd32(image + 4) != kFormatCi8) {
+    if (!image || !palette || rd32(image + 4) != kFormatCi8) {
         return false;
     }
+    result.height = rd16(image);
+    result.width = rd16(image + 2);
     result.image = tpl_at(tpl, rd32(image + 8));
     uint32_t colours = tpl_at(tpl, rd32(palette + 8));
     if (!result.image || !colours) {
@@ -440,8 +454,8 @@ bool picture(uint32_t tpl, Picture& result) {
     return result.colours > 0;
 }
 
-uint32_t ci8_byte(uint32_t image, int x, int y) {
-    return image + static_cast<uint32_t>(((y / 4) * (kIconSize / 8) + x / 8) * 32 + (y % 4) * 8 + x % 8);
+uint32_t ci8_byte(const Picture& picture, int x, int y) {
+    return picture.image + static_cast<uint32_t>(((y / 4) * ((picture.width + 7) / 8) + x / 8) * 32 + (y % 4) * 8 + x % 8);
 }
 
 int nearest_colour(const Picture& picture, uint32_t argb) {
@@ -510,20 +524,24 @@ std::vector<std::array<float, 2>> ring_points(float cx, float cy, float radius, 
     return points;
 }
 
-void draw_shape(canvas::Canvas& badge, attraction::Shape shape, uint32_t colour) {
-    float centre = kBadge / 2.0f;
-    int middle = kBadge / 2;
+void draw_shape(canvas::Canvas& target, attraction::Shape shape, int middle_x, int middle_y, uint32_t colour, uint32_t hollow) {
+    float x = static_cast<float>(middle_x);
+    float y = static_cast<float>(middle_y);
     if (shape == attraction::Shape::Cross) {
-        badge.cross(middle, middle, 12, 6, colour);
+        target.cross(middle_x, middle_y, 12, 6, colour);
     } else if (shape == attraction::Shape::Circle) {
-        badge.fill_polygon(ring_points(centre, centre, 16.0f, 48, 0.0f), colour);
-        badge.fill_polygon(ring_points(centre, centre, 10.0f, 48, 0.0f), 0xffffffffu);
+        target.fill_polygon(ring_points(x, y, 16.0f, 48, 0.0f), colour);
+        target.fill_polygon(ring_points(x, y, 10.0f, 48, 0.0f), hollow);
     } else if (shape == attraction::Shape::Square) {
-        badge.fill(middle - 15, middle - 15, middle + 15, middle + 15, colour);
-        badge.fill(middle - 9, middle - 9, middle + 9, middle + 9, 0xffffffffu);
+        target.fill(middle_x - 15, middle_y - 15, middle_x + 15, middle_y + 15, colour);
+        target.fill(middle_x - 9, middle_y - 9, middle_x + 9, middle_y + 9, hollow);
     } else if (shape == attraction::Shape::Triangle) {
-        badge.fill_polygon(ring_points(centre, centre + 3.0f, 20.0f, 3, -1.5707963f), colour);
-        badge.fill_polygon(ring_points(centre, centre + 3.0f, 10.0f, 3, -1.5707963f), 0xffffffffu);
+        target.fill_polygon(ring_points(x, y + 3.0f, 20.0f, 3, -1.5707963f), colour);
+        target.fill_polygon(ring_points(x, y + 3.0f, 10.0f, 3, -1.5707963f), hollow);
+    } else if (shape == attraction::Shape::SpaceBar) {
+        target.fill(middle_x - 16, middle_y + 3, middle_x + 16, middle_y + 9, colour);
+        target.fill(middle_x - 16, middle_y - 6, middle_x - 10, middle_y + 9, colour);
+        target.fill(middle_x + 10, middle_y - 6, middle_x + 16, middle_y + 9, colour);
     }
 }
 
@@ -549,7 +567,7 @@ void draw_badge(const Picture& picture, const attraction::Label& label) {
     if (label.arrow != attraction::Arrow::None) {
         draw_arrow(badge, label.arrow, dark);
     } else if (label.shape != attraction::Shape::None) {
-        draw_shape(badge, label.shape, dark);
+        draw_shape(badge, label.shape, kBadge / 2, kBadge / 2, dark, 0xffffffffu);
     } else {
         badge.text(face, dark, label.text, padding, kBadgeEdge, width - padding, kBadge - kBadgeEdge, canvas::Align::Center, true);
     }
@@ -559,7 +577,7 @@ void draw_badge(const Picture& picture, const attraction::Label& label) {
         for (int x = 0; x < width; x++) {
             uint32_t pixel = badge.pixels[static_cast<size_t>(y) * width + x];
             if ((pixel >> 24) >= 128) {
-                wr8(ci8_byte(picture.image, left + x, top + y), static_cast<uint8_t>(nearest_colour(picture, pixel)));
+                wr8(ci8_byte(picture, left + x, top + y), static_cast<uint8_t>(nearest_colour(picture, pixel)));
             }
         }
     }
@@ -586,7 +604,7 @@ void label_icons(uint32_t dance) {
         }
         g_icons.searched = now;
         forget_icons();
-        g_icons.archive = find_archive();
+        g_icons.archive = find_archive("At01UIDanceIcon00.tpl");
         if (!g_icons.archive) {
             return;
         }
@@ -610,7 +628,7 @@ void label_icons(uint32_t dance) {
     for (int m = 0; m < kMoveCount; m++) {
         int icon = kMoves[m].icon;
         Picture current;
-        if (!g_icons.tpl[icon] || !picture(g_icons.tpl[icon], current)) {
+        if (!g_icons.tpl[icon] || !picture(g_icons.tpl[icon], current) || current.width != kIconSize || current.height != kIconSize) {
             continue;
         }
         std::vector<uint8_t>& original = g_icons.original[icon];
@@ -622,6 +640,114 @@ void label_icons(uint32_t dance) {
         if (labels[m].arrow != attraction::Arrow::None || labels[m].shape != attraction::Shape::None || !labels[m].text.empty()) {
             draw_badge(current, labels[m]);
         }
+    }
+}
+
+struct BombButton {
+    uint32_t archive = 0;
+    uint32_t tpl = 0;
+    int64_t searched = 0;
+    std::vector<uint8_t> original;
+    std::string drawn;
+};
+
+BombButton g_bomb_button;
+
+bool dark_colour(const Picture& picture, uint8_t index) {
+    const uint8_t* c = picture.rgba[index];
+    return c[3] >= 128 && c[0] + c[1] + c[2] < kBombGlyphDarkness;
+}
+
+void draw_bomb_button(const Picture& picture, const attraction::Label& label) {
+    int middle_x = picture.width / 2;
+    int middle_y = picture.height / 2;
+    int glyph = -1;
+    int glyph_darkness = -1;
+    for (int dy = -kBombGlyphHalf; dy <= kBombGlyphHalf; dy++) {
+        int y = middle_y + dy;
+        int reach = static_cast<int>(std::sqrt(static_cast<double>(kBombDiscRadius * kBombDiscRadius - dy * dy)));
+        uint8_t fill = rd8(ci8_byte(picture, middle_x - reach + 2, y));
+        for (int x = middle_x - kBombGlyphHalf; x <= middle_x + kBombGlyphHalf; x++) {
+            uint32_t at = ci8_byte(picture, x, y);
+            uint8_t index = rd8(at);
+            if (dark_colour(picture, index)) {
+                const uint8_t* c = picture.rgba[index];
+                int darkness = 765 - c[0] - c[1] - c[2];
+                if (darkness > glyph_darkness) {
+                    glyph_darkness = darkness;
+                    glyph = index;
+                }
+            }
+            wr8(at, fill);
+        }
+    }
+    if (glyph < 0) {
+        return;
+    }
+    const uint8_t* g = picture.rgba[glyph];
+    uint32_t ink = 0xff000000u | static_cast<uint32_t>(g[0]) << 16 | static_cast<uint32_t>(g[1]) << 8 | g[2];
+    const uint8_t* h = picture.rgba[rd8(ci8_byte(picture, middle_x, middle_y))];
+    uint32_t hollow = 0xff000000u | static_cast<uint32_t>(h[0]) << 16 | static_cast<uint32_t>(h[1]) << 8 | h[2];
+    canvas::Canvas symbol;
+    symbol.width = picture.width;
+    symbol.height = picture.height;
+    symbol.pixels.assign(static_cast<size_t>(picture.width) * picture.height, 0);
+    if (label.shape != attraction::Shape::None) {
+        draw_shape(symbol, label.shape, middle_x, middle_y, ink, hollow);
+    } else {
+        int room = 2 * kBombDiscRadius - 8;
+        int size = kBombFont;
+        canvas::Face face = canvas::make_face(canvas::FontId::Heavy, size);
+        while (size > 10 && canvas::text_width(face, label.text) > room) {
+            face = canvas::make_face(canvas::FontId::Heavy, --size);
+        }
+        symbol.text(face, ink, label.text, middle_x - room / 2, 0, middle_x + room / 2, picture.height, canvas::Align::Center, true);
+    }
+    for (int y = 0; y < picture.height; y++) {
+        for (int x = 0; x < picture.width; x++) {
+            uint32_t pixel = symbol.pixels[static_cast<size_t>(y) * picture.width + x];
+            if ((pixel >> 24) >= 128) {
+                wr8(ci8_byte(picture, x, y), static_cast<uint8_t>(nearest_colour(picture, pixel)));
+            }
+        }
+    }
+}
+
+void label_bomb_button() {
+    BombButton& state = g_bomb_button;
+    if (!is_archive(state.archive) || !state.tpl || rd32(state.tpl) != kTplMagic) {
+        int64_t now = now_ms();
+        if (now - state.searched < kSearchPeriodMs) {
+            return;
+        }
+        state.searched = now;
+        state.original.clear();
+        state.drawn.clear();
+        state.archive = find_archive(kBombButtonName);
+        state.tpl = state.archive ? archive_file(state.archive, kBombButtonName) : 0;
+        if (!state.tpl) {
+            return;
+        }
+        log::write("game", "bomb button at %08x", state.tpl);
+    }
+    attraction::Label label = attraction::move_label(attraction::kMovePose);
+    std::string key = std::to_string(static_cast<int>(label.shape)) + label.text;
+    if (key == state.drawn) {
+        return;
+    }
+    Picture current;
+    if (!picture(state.tpl, current) || current.width > 64 || current.height > 64) {
+        return;
+    }
+    state.drawn = key;
+    uint8_t* pixels = host(current.image);
+    size_t bytes = static_cast<size_t>((current.width + 7) / 8) * ((current.height + 3) / 4) * 32;
+    if (state.original.empty()) {
+        state.original.assign(pixels, pixels + bytes);
+    }
+    std::memcpy(pixels, state.original.data(), state.original.size());
+    if (label.shape != attraction::Shape::None || !label.text.empty()) {
+        draw_bomb_button(current, label);
     }
 }
 

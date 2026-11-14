@@ -77,7 +77,9 @@ Label move_label(uint32_t move) {
     }
     std::string name = keymap::key_name(codes.front());
     label.arrow = name == "Left" ? Arrow::Left : name == "Up" ? Arrow::Up : name == "Down" ? Arrow::Down : name == "Right" ? Arrow::Right : Arrow::None;
-    if (label.arrow == Arrow::None) {
+    if (name == "Space") {
+        label.shape = Shape::SpaceBar;
+    } else if (label.arrow == Arrow::None) {
         label.text = control_names::key(codes.front());
     }
     return label;
