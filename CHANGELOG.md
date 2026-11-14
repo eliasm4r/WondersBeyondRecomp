@@ -13,6 +13,8 @@ Every change to WondersBeyondRecomp, newest first.
 ## Unreleased
 
 ### Changed
+- RecompLauncher: after an update the game is built again from the new version on the first start (a small window shows the progress, about a minute, without the disc image), so the update really takes effect. Saves and settings are kept.
+- RecompLauncher: the frame rate setting goes up to 240 and the picture shape setting offers 16:10, 21:9, 32:9 and Fit window.
 - Faster on the graphics card at high internal resolutions: the screen clears no longer write depth from the pixel shader. At 6x and 240 fps the GPU load on the first beach went from 80% to 66%.
 
 ### Added

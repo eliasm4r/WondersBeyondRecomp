@@ -14,6 +14,13 @@ import steps
 from texts import TEXTS
 
 HERE = Path(__file__).resolve().parent
+UPDATE_STOPPED = 3
+UPDATE_FAILED = 4
+
+
+def use_tk():
+    for name, folder in (("TCL_LIBRARY", "tcl8.6"), ("TK_LIBRARY", "tk8.6")):
+        os.environ[name] = str(HERE.parent / "python" / "tcl" / folder)
 
 
 def folder_problem(folder, texts):
@@ -31,8 +38,7 @@ class Window:
         self.events = queue.Queue()
         self.executable = ""
         t = self.texts
-        for name, folder in (("TCL_LIBRARY", "tcl8.6"), ("TK_LIBRARY", "tk8.6")):
-            os.environ[name] = str(HERE.parent / "python" / "tcl" / folder)
+        use_tk()
         self.root = tkinter.Tk()
         self.root.title(t["window"])
         self.root.resizable(False, False)
@@ -175,6 +181,97 @@ class Window:
         self.root.destroy()
 
 
+class Rebuild:
+    def __init__(self, folder):
+        t = TEXTS
+        self.folder = folder
+        self.events = queue.Queue()
+        self.result = UPDATE_STOPPED
+        use_tk()
+        self.root = tkinter.Tk()
+        self.root.title(t["rebuild_window"])
+        self.root.resizable(False, False)
+        try:
+            self.root.iconbitmap(str(HERE / "game.ico"))
+        except tkinter.TclError:
+            pass
+        self.root.protocol("WM_DELETE_WINDOW", self.close)
+        frame = ttk.Frame(self.root, padding=16)
+        frame.grid(sticky="nsew")
+        ttk.Label(frame, text=t["title"], font=("Segoe UI", 13, "bold")).grid(row=0, column=0, sticky="w")
+        ttk.Label(frame, text=t["rebuild_intro"], wraplength=460, justify="left").grid(row=1, column=0, sticky="w", pady=(6, 14))
+        self.bar = ttk.Progressbar(frame, maximum=1000, length=460)
+        self.bar.grid(row=2, column=0, sticky="we", pady=(0, 4))
+        self.status = tkinter.StringVar()
+        ttk.Label(frame, textvariable=self.status, wraplength=460, justify="left").grid(row=3, column=0, sticky="w")
+        self.cancel_button = ttk.Button(frame, text=t["cancel"], command=self.close)
+        self.cancel_button.grid(row=4, column=0, sticky="e", pady=(14, 0))
+        self.root.attributes("-topmost", True)
+        self.root.after(500, lambda: self.root.attributes("-topmost", False))
+        self.install = steps.Install(folder, "", HERE.parent, False, t, lambda kind, value: self.events.put((kind, value)), menu=False)
+        threading.Thread(target=self.install.execute, daemon=True).start()
+        self.root.after(100, self.poll)
+
+    def poll(self):
+        t = TEXTS
+        try:
+            while True:
+                kind, value = self.events.get_nowait()
+                if kind == "step":
+                    self.status.set(value + "...")
+                elif kind == "progress":
+                    self.bar.configure(value=int(value * 1000))
+                elif kind == "done":
+                    self.result = 0
+                    self.root.destroy()
+                    return
+                elif kind == "stopped":
+                    self.result = UPDATE_STOPPED
+                    self.root.destroy()
+                    return
+                else:
+                    log = Path(self.folder) / "logs" / "install.log"
+                    message = "\n\n".join([t["rebuild_failed"].format(step=value[0]), value[1][:1200], t["log"].format(path=log)])
+                    if (Path(self.folder) / steps.EXECUTABLE).is_file():
+                        old = messagebox.askyesno(t["rebuild_window"], message + "\n\n" + t["rebuild_old"], icon="error", parent=self.root)
+                        self.result = 0 if old else UPDATE_FAILED
+                    else:
+                        messagebox.showerror(t["rebuild_window"], message, parent=self.root)
+                        self.result = UPDATE_FAILED
+                    self.root.destroy()
+                    return
+        except queue.Empty:
+            pass
+        self.root.after(100, self.poll)
+
+    def close(self):
+        if messagebox.askyesno(TEXTS["rebuild_window"], TEXTS["rebuild_confirm_cancel"], parent=self.root):
+            self.cancel_button.configure(state="disabled")
+            threading.Thread(target=self.install.cancel, daemon=True).start()
+
+
+def start(arguments):
+    folder = HERE.parent
+    game = folder / steps.EXECUTABLE
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("WondersBeyondRecomp.Setup")
+    except (AttributeError, OSError):
+        pass
+    if steps.game_extracted(folder) and (folder / steps.SOURCES).is_file() and not steps.built_from_these(folder):
+        rebuild = Rebuild(str(folder))
+        rebuild.root.mainloop()
+        if rebuild.result != 0:
+            return rebuild.result
+    if not game.is_file():
+        return UPDATE_FAILED
+    try:
+        ctypes.windll.user32.AllowSetForegroundWindow(-1)
+    except (AttributeError, OSError):
+        pass
+    return subprocess.call([str(game)] + arguments, cwd=str(folder))
+
+
 def prepare(disc):
     t = TEXTS
     folder = str(HERE.parent)
@@ -217,9 +314,12 @@ def main():
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--prepare", action="store_true")
     parser.add_argument("--game", default="")
-    arguments, _ = parser.parse_known_args()
+    parser.add_argument("--start", action="store_true")
+    arguments, rest = parser.parse_known_args()
     if arguments.prepare:
         return prepare(arguments.game)
+    if arguments.start:
+        return start(rest)
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("WondersBeyondRecomp.Setup")

@@ -415,15 +415,32 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
   `progress <0 to 1> <step>` lines; it exits with 0 once the game is built, else 1 after printing the reason and the
   log path. `pythonw` opens no console window and its output still reaches the launcher through the pipe. The script
   path comes first: `Setup (if blocked).exe --prepare` would read `--prepare` as an option of Python itself.
-- Start: `pokepark2.exe` with `WP_ROOT` set to the install folder; the game makes it the working folder before
-  reading anything (`main.cpp`), since every path it uses is relative.
+- Start: `python/pythonw.exe installer/setup.py --start` with `WP_ROOT` set to the install folder. It starts
+  `pokepark2.exe` (any further arguments passed on), waits for it and returns its exit code, so the launcher sees
+  the game's run; the game makes `WP_ROOT` the working folder before reading anything (`main.cpp`), since every path
+  it uses is relative. `AllowSetForegroundWindow` lets the game's window come to the front.
+- Updates: an update unpacks the new release over the folder, which replaces `installer/sources.zip`, but the game
+  is built on the player's computer and the launcher's documentation does not say that it runs the setup step again.
+  Each build (setup window, `--prepare` or the step below) ends by writing the SHA-256 of `sources.zip` to
+  `build/sources.sha256`. `--start` compares it with the `sources.zip` in place: when they differ (or the file is
+  missing, as for a build made by v0.2.0 or older) and the disc files are already extracted, a small window
+  ("Update", same look as the setup) runs the same steps as the setup without the disc image, then starts the game.
+  Cancelled: exit code 3; failed: the error and the log path, then, if the old `pokepark2.exe` is still there (it is
+  only replaced at the very end), an offer to start it for now, else exit code 4. `exit_codes` in the manifest gives
+  the launcher a message for 3 and 4 (the game itself only returns 0 or 1).
+- Tested on a folder unpacked from the setup zip like the launcher does: `--prepare` from the disc image 2 min 43 s,
+  then `--start` with the same sources starts the game at once (0.2 s, no window); after a change to `sources.zip`,
+  `--start` rebuilt (about one minute, the tools and disc files already there), wrote the new digest and started the
+  rebuilt game. The window was checked with a fake build.
+- Players who installed v0.2.0 through the launcher get the new manifest with the update, so their first start
+  after it rebuilds once, unless the launcher already ran the setup step.
 - Settings: the launcher edits `game/settings.ini` key by key (`video/scale`). The game now writes each section once:
   `system.idle_sleep` and `video.custom_textures` sat apart in the option list and made a second `[system]` and
   `[video]`. Reading is unchanged.
 - `dumps`: CRC32 a9bf13d3 is the Redump entry "PokePark 2 - Wonders Beyond (Europe) (En,Fr,De,Es,It)" as nodtool
   1.4.4 matched it on the user's disc (redump.org did not answer); the size is left out, not checked against Redump.
-- Open: the launcher runs the setup step after the first install and when the player picks another copy. An update
-  unpacks the new sources over the folder, and nothing says it runs the step again: until it does, the old build stays.
+- The launcher's frame rate choices go up to 240 and its picture shape choice sets `video.aspect` as well as
+  `system.widescreen` (16:9, 16:10, 21:9, 32:9, Fit window, 4:3).
 - A folder built in one place and then moved (a friend built the v0.2.0 zip in Downloads, then put it in
   `C:/Recomp Library`) stopped the setup at the configure step: CMake refuses a `build/out` whose cache names another
   source folder. `configure` now reads `CMAKE_HOME_DIRECTORY` in `build/out/CMakeCache.txt` (`built_elsewhere`), and

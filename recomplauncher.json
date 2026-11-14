@@ -18,8 +18,13 @@
     "timeout": 3600
   },
   "start": {
-    "program": ["pokepark2.exe"],
+    "program": ["python/pythonw.exe"],
+    "args": ["{install}/installer/setup.py", "--start"],
     "env": { "WP_ROOT": "{install}" }
+  },
+  "exit_codes": {
+    "3": "The update was stopped before the end. It starts again the next time you play.",
+    "4": "The new version could not be built. The details are in logs/install.log in the game's folder."
   },
   "config": [
     {
@@ -54,13 +59,16 @@
     },
     {
       "id": "frame_rate", "label": "Frame rate",
-      "help": "30 or 60 as on the Wii (60 works perfectly), 45 in between. 90 and 120 add images between the game's own frames on a fast screen; experimental. Movies and cutscenes stay at 30.",
+      "help": "30 or 60 as on the Wii (60 works perfectly), 45 in between. 90 to 240 add images between the game's own frames, up to your screen's refresh rate. Movies and cutscenes stay at 30.",
       "choices": [
         { "label": "30", "set": { "video/fps": "30" } },
         { "label": "45", "set": { "video/fps": "45" } },
         { "label": "60", "set": { "video/fps": "60" } },
         { "label": "90", "set": { "video/fps": "90" } },
-        { "label": "120", "set": { "video/fps": "120" } }
+        { "label": "120", "set": { "video/fps": "120" } },
+        { "label": "144", "set": { "video/fps": "144" } },
+        { "label": "165", "set": { "video/fps": "165" } },
+        { "label": "240", "set": { "video/fps": "240" } }
       ],
       "defaults": { "video/fps": "60" }
     },
@@ -75,12 +83,16 @@
     },
     {
       "id": "shape", "label": "Picture shape",
-      "help": "Shows the game in 16:9, or in 4:3 as on an old TV.",
+      "help": "16:9 as on the Wii, or 4:3 as on an old TV. 16:10, 21:9 and 32:9 show more of the world around the picture; Fit window follows the window's shape.",
       "choices": [
-        { "label": "16:9", "set": { "system/widescreen": "1" } },
-        { "label": "4:3", "set": { "system/widescreen": "0" } }
+        { "label": "16:9", "set": { "system/widescreen": "1", "video/aspect": "16:9" } },
+        { "label": "16:10", "set": { "system/widescreen": "1", "video/aspect": "16:10" } },
+        { "label": "21:9", "set": { "system/widescreen": "1", "video/aspect": "21:9" } },
+        { "label": "32:9", "set": { "system/widescreen": "1", "video/aspect": "32:9" } },
+        { "label": "Fit window", "set": { "system/widescreen": "1", "video/aspect": "auto" } },
+        { "label": "4:3", "set": { "system/widescreen": "0", "video/aspect": "16:9" } }
       ],
-      "defaults": { "system/widescreen": "1" }
+      "defaults": { "system/widescreen": "1", "video/aspect": "16:9" }
     },
     {
       "id": "vsync", "label": "V-Sync",

@@ -20,6 +20,8 @@ EXECUTABLE = "pokepark2.exe"
 SHORTCUT_NAME = "PokePark 2 Wonders Beyond"
 NEEDED_GIGABYTES = 4
 LONGEST_FOLDER = 100
+SOURCES = Path("installer") / "sources.zip"
+BUILT_FROM = Path("build") / "sources.sha256"
 
 TOOLS = [
     {"name": "nodtool 1.4.4", "url": "https://github.com/encounter/nod/releases/download/v1.4.4/nodtool-windows-x86_64.exe",
@@ -56,6 +58,21 @@ def default_folder():
 
 def game_extracted(root):
     return any((Path(root) / folder / "extracted" / "sys" / "main.dol").is_file() for folder in ("game", OLD_FOLDER))
+
+
+def sources_digest(bundle):
+    value = hashlib.sha256()
+    with open(Path(bundle) / SOURCES, "rb") as file:
+        while block := file.read(1 << 20):
+            value.update(block)
+    return value.hexdigest()
+
+
+def built_from_these(root):
+    try:
+        return (Path(root) / BUILT_FROM).read_text().strip() == sources_digest(root) and (Path(root) / EXECUTABLE).is_file()
+    except OSError:
+        return False
 
 
 def move_old_folder(root):
@@ -274,7 +291,7 @@ class Install:
         return "\n".join(output)
 
     def copy_sources(self, move):
-        with zipfile.ZipFile(self.bundle / "installer" / "sources.zip") as archive:
+        with zipfile.ZipFile(self.bundle / SOURCES) as archive:
             names = archive.namelist()
             for index, name in enumerate(names):
                 if self.stop.is_set():
@@ -395,6 +412,7 @@ class Install:
             raise Failure(EXECUTABLE)
         for file in [built / EXECUTABLE] + sorted(built.glob("*.dll")):
             shutil.copyfile(file, self.root / file.name)
+        (self.root / BUILT_FROM).write_text(sources_digest(self.bundle))
         shutil.rmtree(self.root / "downloads", ignore_errors=True)
         links = [shell_folder(0x02)] if self.menu else []
         if self.shortcut:
