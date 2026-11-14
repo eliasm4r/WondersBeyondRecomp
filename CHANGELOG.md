@@ -17,6 +17,7 @@ Every change to WondersBeyondRecomp, newest first.
 
 ### Changed
 - **Lighter on the processor.** The game's own thread does about 15 % less work at 60 fps: the clock is read through the processor's counter instead of a slow Windows call, and the paired-single loads and stores of plain floats are compiled into the game code.
+- **Smoother zone arrivals.** The longest freeze when a zone starts, about 0.4 s while its scripts looked up their resources one by one, is down to about 0.1 s, and textures decode several times faster, which removes most of the next freeze (0.18 s).
 
 ## v0.1.0-alpha · 2026-11-13
 

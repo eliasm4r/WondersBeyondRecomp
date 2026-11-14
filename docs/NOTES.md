@@ -108,6 +108,30 @@ hash of all shader sources, so a build that changes any of them starts a new fil
 is dropped and the file truncated after the last whole record. `WP_SHADER_CACHE=0` turns the cache off. Direct3D
 bytecode does not depend on the graphics card, so a filled file could ship with the setup.
 
+## Scene changes
+
+Measured headless at 60 fps from boot into the user's save spot (`switch.txt`), on the RTX 4070 / Ryzen 7 5800X, with
+a temporary sampler that took the stacks of the game and GPU threads every 0.5 ms and kept those of every frame
+over 33 ms. The 30 fps of the title and menus (frames of 33-34 ms) are the game's own and not counted.
+
+- Entering the zone stalled 417-454 ms in one frame, 58 % of it in three guest functions that look up a resource
+  by name or number in a table of `{16-bit length, name, 32-bit offset, 4 bytes}` entries, walking it from the start
+  and calling the game's `strcmp` on every entry: `0x80233a10` and `0x80233ca0` (by name, two copies) and `0x80233ad0`
+  (by number), the PAL places of PokePark 2 Wiicompiled's `fn_80195F70`, `fn_80196200`, `fn_80196030` (USA + 0x920).
+  The zone's scripts make about a million lookups as they start. `game/lookup.cpp` (hooks `FindResourceByName`,
+  `FindResourceByNameOther`, `FindResourceByNumber`) answers them natively, as Wiicompiled's `hle_lookup.c` (CC0):
+  tables of more than 16 entries get a hash index over a copy of their bytes, compared again with the table at the
+  first lookup of each retrace; a name found is checked in the live table, a name not found is trusted while the
+  count and the first and last 64 bytes are unchanged, otherwise the table is walked and indexed again.
+  `WP_NATIVE_LOOKUP=0` runs the game's walk, `=2` runs both and logs any difference: 983,040 lookups, 0 differ.
+  The stall went from 417-454 ms to 93-103 ms (what is left is the scripts themselves, spread over many functions).
+- The next frame took 175-180 ms on the GPU thread, 85 % of it in `decode_texture`: CMPR textures decoded the
+  whole 4x4 block again for every pixel, and every format went through a switch per pixel. The decoder now picks
+  the format once, decodes each CMPR sub-block once and each palette once per texture (unit test
+  `test_texture_decoder_matches_reference` against a per-pixel reference, every format, odd sizes). That frame
+  became two of 48 and 56 ms: the first is texture creation in the driver, the second a wait for a copy read back
+  from the GPU (`complete_write_backs`).
+
 ## 60 fps
 
 The main loop is paced by two periodic alarms in the timer manager at 0x804BA4D8 (0x70 bytes each): input at

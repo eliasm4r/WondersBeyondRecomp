@@ -15,6 +15,7 @@
 #include "wp/log.h"
 #include "wp/memory.h"
 #include "wp/settings.h"
+#include "lookup.h"
 
 namespace wp::game {
 
@@ -99,6 +100,7 @@ const Description& description() {
 // The loop applies a pending period by itself (0x8000efa0). Movies advance one picture per rendered frame, so they
 // keep 30 fps while their file is being streamed.
 void retrace() {
+    next_lookup_retrace();
     constexpr uint32_t kInputAlarm = 0x804BA4D8;
     constexpr uint32_t kFrameAlarm = 0x804BA548;
     constexpr uint32_t kPeriod = 0x38;
@@ -508,7 +510,10 @@ HookFunction hook(const char* name) {
     static const struct {
         const char* name;
         HookFunction function;
-    } kHooks[] = {{"FieldCameraUpdate", field_camera}, {"DeferredFree", deferred_free}, {"ReleaseDeferredFrees", release_deferred_frees}, {"TempPoolAlloc", temp_pool_alloc}};
+    } kHooks[] = {{"FieldCameraUpdate", field_camera}, {"DeferredFree", deferred_free}, {"ReleaseDeferredFrees", release_deferred_frees}, {"TempPoolAlloc", temp_pool_alloc},
+                   {"FindResourceByName", find_resource_by_name},
+                   {"FindResourceByNameOther", find_resource_by_name},
+                   {"FindResourceByNumber", find_resource_by_number}};
     for (const auto& entry : kHooks) {
         if (std::strcmp(entry.name, name) == 0) {
             return entry.function;
