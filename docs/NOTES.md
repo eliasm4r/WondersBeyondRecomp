@@ -929,6 +929,31 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
 - Tests: `WP_MOVIE=n` with `WP_ATTRACTION=1,8` gives the scene parameter `Movie` instead of `AttractionId`, which
   starts movie `n` of the table at 0x80468C28 from the park (2 is DmCh1110_01).
 
+## Button icons
+
+- `game/prompts.cpp`, `game.button_icons` (Game tab, live, on by default). Idea from the rival PP2 recomp
+  (`hle_prompts.c`); its icons are Icons8 pictures, so ours are drawn by code (distance fields: rings, keycaps,
+  lines, the PlayStation shapes, a mouse, a stick, plus key names in the Heavy font).
+- Text: the game writes a button with an MSBT tag that draws a glyph of its font, U+E041 to U+E048 (+ Control Pad,
+  A, B, HOME, +, -, 1, 2). `ResFontBase::SetResourceBuffer` (0x80277E30 here, 0x80277510 in the US game, r4 = the
+  font, already RFNU) is hooked as `FontResource`; the font's TGLP gives the I4 sheets (the main font: 40x47 cells,
+  baseline 38, three a row, the buttons from glyph 195, 35 columns drawn), CMAP the glyphs and CWDH their width.
+  Each button glyph is kept and redrawn as a square icon up to the baseline in 16 grey levels.
+- Pictures: `TPLBind` (0x8031EBC0 here, 0x8031E2A0 in the US game) is hooked as `TextureBind`. Two CI8 / RGB5A3
+  textures show the 2 button: the action bubble (`ActionWin.tpl`, 110x71, 80 colours) and the title's "Press"
+  (`StartButtonTwo.tpl`, 290x34, 64 colours). Their words change with the language, so the disc is found in the
+  picture: the bubble's by its opaque greys darker than 160 (54, 23, radius 10 in all five languages), the title's
+  as the rightmost opaque column, a disc as tall as the picture (English 258, French 238). The disc is wiped and the
+  icon drawn in the bubble's ring grey, or for the title white with a one pixel grey edge like its words, each pixel
+  mapped to the nearest palette colour.
+- Which icon: the keyboard's first key for the action (`input::bindings`), or with a pad (`input::gamepad_in_use`)
+  the first combo of `padmap::current_mapping` in the family shown (`gamepad::shown_family`). Move is the arrow keys
+  (four arrows), other keys as four small keycaps, or the left stick on a pad. Both are read again each frame from
+  `SceneManager` run begin, so changes in the options menu show at once; the drawing is redone only when the
+  description of the eight icons changes. A real Wii Remote (`real_wiimote::present`) keeps the game's glyphs.
+- Not redrawn: `KeyButton` (the menus' button bar) and `FukidashiMini`, whose spots are not mapped.
+- Tests: `SED_SETTINGS` in `run.sh` changes the settings for one run; `two=F,Enter` showed F on the title.
+
 ## Bug recorder and hang report
 
 - `video.bug_recorder` (Advanced tab, off by default, Direct3D 11): every image shown, real or interpolated, is copied

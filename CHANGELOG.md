@@ -16,6 +16,7 @@ Every change to WondersBeyondRecomp, newest first.
 - Picture shape option (Options > Screen): 16:10, 21:9, 32:9 or the window's own shape. The world fills the wider screen and shows more on the sides; menus, text and the map stay in the middle, and screens with no world (title video, menus, loading) keep their 16:9 shape. Objects past the old edges are drawn too, so nothing pops in at the sides.
 - Text speed option (Options > Game): dialogue written as in the game, 2 or 3 times faster, or a whole page at once.
 - Video scenes can be skipped: hold A or + (Start, Tab) for a second, a small gauge fills in the corner. It can be turned off in Options > Game.
+- Button icons: the game's texts, the action bubble over Pikachu and the title screen show the keys and buttons set in Controls (keyboard keys, mouse buttons, Xbox, PlayStation or Switch buttons, whichever was used last) instead of the Wii Remote's. They change as soon as a binding or the device does, and the Wii Remote's come back with a real Wii Remote or with Options > Game > Button icons off.
 
 ## v0.2.0-alpha · 2026-11-14
 

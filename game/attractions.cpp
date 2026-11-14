@@ -1,4 +1,5 @@
 #include "attractions.h"
+#include "prompts.h"
 
 #include <algorithm>
 #include <array>
@@ -108,6 +109,7 @@ void add_scene_parameter(Cpu& c, HleFunction original) {
 
 void scene_manager_run_begin(Cpu& c, HleFunction original) {
     original(c);
+    update_prompts();
     if (attraction::mode() == attraction::Mode::Shake) {
         label_bomb_button();
     }

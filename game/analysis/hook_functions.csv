@@ -16,3 +16,5 @@ address,name
 0x8027dcd0,CullingFrustum
 0x801485a0,DialogueWriterStep
 0x8020a9a0,MovieSceneUpdate
+0x80277e30,FontResource
+0x8031ebc0,TextureBind

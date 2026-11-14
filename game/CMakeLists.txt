@@ -15,7 +15,7 @@ if(NOT WP_DOL_SOURCES)
     return()
 endif()
 
-add_library(pokepark2_code STATIC game.cpp lookup.cpp attractions.cpp ${WP_DOL_SOURCES})
+add_library(pokepark2_code STATIC game.cpp lookup.cpp attractions.cpp prompts.cpp ${WP_DOL_SOURCES})
 set_source_files_properties(${WP_DOL_SOURCES} ${WP_MODULE_SOURCES} PROPERTIES COMPILE_OPTIONS "${WP_CODE_OPT}")
 target_include_directories(pokepark2_code PUBLIC "${WP_GENERATED}/dol")
 if(WP_MODULE_SOURCES)
