@@ -364,6 +364,43 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
   The test used two temporary switches (a camera log line, a forced spin) that are not kept.
 - Not seen yet in game: scenes that move this same camera themselves would be overridden too.
 
+## Attractions
+
+Each of the four attractions gets its own controls, chosen by `game/attractions.cpp` and applied by the engine
+(`wp/attraction.h`, `engine/src/input/wiimote.cpp`, `input.cpp`). The approach and the dance tables come from
+PokePark-2-Wiicompiled (CC0, USA disc), mapped to PAL by function size patterns.
+
+- PAL addresses: `SceneManager::Get` `0x80074A90`, `EndScene` `0x802076A0`, `AddSceneParameter` `0x80207730` (hooked),
+  the scene picker `0x80210F80` (hooked, r3 = scene), `SceneManager` run begin `0x802073E0` (hooked), the dance frames
+  `0x801B8230` and `0x801B8910` (hooked, r3 = the dance), the dance judgement `0x801B9950` (hooked) and the
+  `"AttractionId"` string `0x8045394C`. Scenes: 0 park, 4 attraction, 5 lobby. `AttractionId` 0 to 3 = Cake
+  Contraption, Dance Inferno, Power Bash, Flight of Fancy. The mode is set in scene 4 only.
+- `WP_ATTRACTION=n[,seconds]` (1 to 4) adds the parameter and ends the park scene once the park has run that long,
+  which opens the attraction's lobby. `WP_DANCE_AUTO=1` plays the dance's moves by itself (tests).
+- Cake Contraption: the mouse aims without the pointer key and its buttons stay as bound; on a pad, the right stick
+  and the gyroscope aim, and 2 or B (pad south, RT) also press A.
+- Power Bash: `keys.shake_left` / `keys.shake_right` (Q/E, LB/RB) shake by turns: each press after the other key's
+  gives a 30 ms burst of 2.5 g on all three axes, so the faster, the stronger. 2 (Space, pad south) is A, the bomb.
+  The shake actions are left out of the key conflict check (`keymap::attraction_only`).
+- Flight of Fancy: the remote is held sideways; the movement keys or the left stick steer up to 90 degrees and climb
+  or dive up to 50, eased by 0.15 a report; the gyroscope adds its tilt from where the pad was on entry.
+- Dance Inferno: the remote is held upright and each move has a key: the screen directions, A (kick) and 2 (poses).
+  The chart's cue row is at chart + `0xBCC` (a word a slot, the move then `0x1F` for each further beat, `0` between,
+  `0xFF` for none), the tick at +`0x1F4C` / +`0x1F50` and the slot length at +`0x1F54`. A press near a cue swings once
+  if it is that cue's key, and held, swings again on each further beat of the move. A, 2 and the d-pad are hidden from
+  the game while the song plays.
+- Poses: the judgement (`0x801B9950`: r4 player, r5 cues, r6 swung, r7 still, r8 tick) counts a pose's swing only in
+  the first half of its slot (before the icon reaches the diamond, about 0.25 s early), then wants the remote still
+  before +`0x1F38` ticks (10) for GREAT. A swing up to half a slot late is counted at +`0x5294` (+4 per player) by the
+  hook, and when it came within the moves' window (+`0x1F34`, 8 ticks) the still window is widened for that slot, so a
+  pose pressed on the icon scores GREAT (all ten poses of the first part, on time or 6 ticks late).
+- The bound key is drawn in the lower right corner of each move icon (`At01UIDanceIcon00-07.tpl`, CI8 160x160 in the
+  `MenuAttraction` U8 archive, found in MEM2 or MEM1 by name at most once a second): a white rounded box edged in the
+  icon's darkest colour, with an arrow, a PlayStation shape or the key's name (the box widens up to 104 texels for long
+  names), mapped to the nearest palette colours. The icons are restored from a copy and redrawn when the labels change.
+  The labels follow the last device used (`input::gamepad_in_use`: a pad button or a stick past half sets it, a key or
+  mouse button clears it).
+
 ## Indirect maps left unbound
 
 `render::draw` bound only the maps named by TEV stage orders. A map read only by an indirect stage, such as the

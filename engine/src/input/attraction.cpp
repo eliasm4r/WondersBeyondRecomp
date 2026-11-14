@@ -50,9 +50,19 @@ Label move_label(uint32_t move) {
             return label;
         }
         padmap::Binding binding = padmap::current_mapping()[move == kMoveKick ? 0 : 3];
-        if (!binding.empty()) {
-            label.text = control_names::pad_binding({binding.front()}, gamepad::shown_family());
+        if (binding.empty()) {
+            return label;
         }
+        padmap::Family family = gamepad::shown_family();
+        bool playstation = family == padmap::Family::PlayStation3 || family == padmap::Family::PlayStation4 || family == padmap::Family::PlayStation5;
+        constexpr Shape kShapes[] = {Shape::Cross, Shape::Circle, Shape::Square, Shape::Triangle};
+        for (int i = 0; i < 4; i++) {
+            if (playstation && binding.front() == (padmap::Combo{1} << i)) {
+                label.shape = kShapes[i];
+                return label;
+            }
+        }
+        label.text = control_names::pad_binding({binding.front()}, family);
         return label;
     }
     keymap::Action action = arrow == Arrow::Left    ? keymap::Action::Left

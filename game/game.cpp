@@ -511,7 +511,8 @@ HookFunction hook(const char* name) {
         HookFunction function;
     } kHooks[] = {{"FieldCameraUpdate", field_camera}, {"DeferredFree", deferred_free}, {"ReleaseDeferredFrees", release_deferred_frees}, {"TempPoolAlloc", temp_pool_alloc},
                    {"AddSceneParameter", add_scene_parameter}, {"PickScene", pick_scene}, {"SceneManagerRunBegin", scene_manager_run_begin},
-                   {"DanceFrame", dance_frame}, {"DanceFrameSecondPart", dance_frame_second_part}};
+                   {"DanceFrame", dance_frame}, {"DanceFrameSecondPart", dance_frame_second_part},
+                   {"DanceJudge", dance_judge}};
     for (const auto& entry : kHooks) {
         if (std::strcmp(entry.name, name) == 0) {
             return entry.function;

@@ -10,6 +10,15 @@ Every change to WondersBeyondRecomp, newest first.
 
 <br>
 
+## Unreleased
+
+### Added
+- **Controls for the four attractions.** Each attraction now plays with the keyboard, the mouse or a gamepad, without hunting for the Wii Remote motion keys.
+  - **Cake Contraption:** the mouse aims by itself and left click throws. On a gamepad, the right stick or the gyroscope aims and A or RT throws.
+  - **Dance Inferno:** one key per move, drawn on the move's icon (arrows, E for the kick, Space for the poses, or the gamepad's buttons and PlayStation shapes when you play with a gamepad). Press it as the icon reaches the diamond, and hold it for moves that last several beats. Poses pressed on time now score GREAT.
+  - **Power Bash:** press Q and E by turns (LB and RB on a gamepad): the faster, the stronger. Space drops the bomb.
+  - **Flight of Fancy:** the movement keys or the left stick tilt gradually (up climbs, down dives), the gyroscope too, and Space flies faster.
+
 ## v0.1.0-alpha · 2026-11-13
 
 > **First public release.** PokéPark 2: Wonders Beyond on Windows at up to 120 fps, installed by a setup that builds the game from your own disc image in about 5 minutes. [Download it here.](https://github.com/eliasm4r/WondersBeyondRecomp/releases/tag/v0.1.0-alpha)

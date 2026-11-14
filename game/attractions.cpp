@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -130,6 +131,12 @@ constexpr int kChartSlots = 151;
 constexpr uint32_t kCueBeat = 0x1f;
 constexpr uint32_t kCueHeld = 0;
 constexpr uint32_t kCueNone = 0xff;
+constexpr uint32_t kCuePose = 0x20;
+constexpr uint32_t kDanceTickOffset = 0x5318;
+constexpr uint32_t kDancePoseSwings = 0x5294;
+constexpr uint32_t kDanceVerdicts = 0x52a4;
+constexpr uint32_t kDanceGreatWindow = 0x1f34;
+constexpr uint32_t kDancePoseWindow = 0x1f38;
 constexpr uint32_t kSwingReports = 6;
 
 struct DanceMove {
@@ -494,13 +501,39 @@ void draw_arrow(canvas::Canvas& badge, attraction::Arrow arrow, uint32_t colour)
     badge.fill_polygon(shape, colour);
 }
 
+std::vector<std::array<float, 2>> ring_points(float cx, float cy, float radius, int corners, float turn) {
+    std::vector<std::array<float, 2>> points;
+    for (int i = 0; i < corners; i++) {
+        float angle = turn + 6.2831853f * static_cast<float>(i) / static_cast<float>(corners);
+        points.push_back({cx + radius * std::cos(angle), cy + radius * std::sin(angle)});
+    }
+    return points;
+}
+
+void draw_shape(canvas::Canvas& badge, attraction::Shape shape, uint32_t colour) {
+    float centre = kBadge / 2.0f;
+    int middle = kBadge / 2;
+    if (shape == attraction::Shape::Cross) {
+        badge.cross(middle, middle, 12, 6, colour);
+    } else if (shape == attraction::Shape::Circle) {
+        badge.fill_polygon(ring_points(centre, centre, 16.0f, 48, 0.0f), colour);
+        badge.fill_polygon(ring_points(centre, centre, 10.0f, 48, 0.0f), 0xffffffffu);
+    } else if (shape == attraction::Shape::Square) {
+        badge.fill(middle - 15, middle - 15, middle + 15, middle + 15, colour);
+        badge.fill(middle - 9, middle - 9, middle + 9, middle + 9, 0xffffffffu);
+    } else if (shape == attraction::Shape::Triangle) {
+        badge.fill_polygon(ring_points(centre, centre + 3.0f, 20.0f, 3, -1.5707963f), colour);
+        badge.fill_polygon(ring_points(centre, centre + 3.0f, 10.0f, 3, -1.5707963f), 0xffffffffu);
+    }
+}
+
 void draw_badge(const Picture& picture, const attraction::Label& label) {
     uint32_t dark = darkest_colour(picture);
     int padding = kBadgeEdge + 4;
     int size = kBadgeFont;
     canvas::Face face = canvas::make_face(canvas::FontId::Heavy, size);
     int width = kBadge;
-    if (label.arrow == attraction::Arrow::None) {
+    if (label.arrow == attraction::Arrow::None && label.shape == attraction::Shape::None) {
         int wanted = static_cast<int>(canvas::text_width(face, label.text)) + 2 * padding;
         width = std::clamp(wanted, kBadge, kBadgeWide);
         while (size > 12 && canvas::text_width(face, label.text) > width - 2 * padding) {
@@ -515,6 +548,8 @@ void draw_badge(const Picture& picture, const attraction::Label& label) {
     badge.fill_round(kBadgeEdge, kBadgeEdge, width - kBadgeEdge, kBadge - kBadgeEdge, 10, 0xffffffffu);
     if (label.arrow != attraction::Arrow::None) {
         draw_arrow(badge, label.arrow, dark);
+    } else if (label.shape != attraction::Shape::None) {
+        draw_shape(badge, label.shape, dark);
     } else {
         badge.text(face, dark, label.text, padding, kBadgeEdge, width - padding, kBadge - kBadgeEdge, canvas::Align::Center, true);
     }
@@ -566,7 +601,7 @@ void label_icons(uint32_t dance) {
     std::string key;
     for (int m = 0; m < kMoveCount; m++) {
         labels[m] = attraction::move_label(kMoves[m].move);
-        key += std::to_string(static_cast<int>(labels[m].arrow)) + labels[m].text + '\n';
+        key += std::to_string(static_cast<int>(labels[m].arrow)) + std::to_string(static_cast<int>(labels[m].shape)) + labels[m].text + '\n';
     }
     if (key == g_icons.drawn) {
         return;
@@ -584,7 +619,7 @@ void label_icons(uint32_t dance) {
             original.assign(pixels, pixels + kIconSize * kIconSize);
         }
         std::memcpy(pixels, original.data(), original.size());
-        if (labels[m].arrow != attraction::Arrow::None || !labels[m].text.empty()) {
+        if (labels[m].arrow != attraction::Arrow::None || labels[m].shape != attraction::Shape::None || !labels[m].text.empty()) {
             draw_badge(current, labels[m]);
         }
     }
@@ -598,7 +633,8 @@ void note_dance(Cpu& c, int part) {
     }
     uint32_t dance = c.r[3];
     if (dance != g_dance) {
-        log::write("game", "dance at %08x, part %d, %u ticks a slot", dance, part + 1, rd32(dance + kDanceSlotTicks));
+        log::write("game", "dance at %08x, part %d, %u ticks a slot, windows %d and %d", dance, part + 1, rd32(dance + kDanceSlotTicks),
+                   static_cast<int32_t>(rd32(dance + kDanceGreatWindow)), static_cast<int32_t>(rd32(dance + kDancePoseWindow)));
     }
     g_dance = dance;
     g_dance_vtable = rd32(dance);
@@ -617,6 +653,44 @@ void dance_frame(Cpu& c, HleFunction original) {
 void dance_frame_second_part(Cpu& c, HleFunction original) {
     note_dance(c, 1);
     original(c);
+}
+
+void dance_judge(Cpu& c, HleFunction original) {
+    static uint32_t late_dance = 0;
+    static int32_t late_slot = -1;
+    static uint32_t late_player = 0;
+    uint32_t dance = c.r[3];
+    uint32_t player = c.r[4];
+    uint32_t cues = c.r[5];
+    int32_t slot_ticks = static_cast<int32_t>(rd32(dance + kDanceSlotTicks));
+    if (player >= 4 || slot_ticks <= 0 || slot_ticks > 1000) {
+        original(c);
+        return;
+    }
+    int32_t half = slot_ticks / 2;
+    int32_t at = static_cast<int32_t>(c.r[8]) + half + static_cast<int32_t>(rd32(dance + kDanceTickOffset));
+    int32_t slot = at >= 0 ? at / slot_ticks : -1;
+    int32_t from_centre = at - slot * slot_ticks - half;
+    uint32_t cue = slot >= 0 && slot < kChartSlots ? rd32(cues + 4 * static_cast<uint32_t>(slot)) : kCueNone;
+    uint32_t swings = dance + kDancePoseSwings + 4 * player;
+    uint32_t verdict = dance + kDanceVerdicts + 4 * player;
+    bool pose = (cue & 0xf0) == kCuePose && rd32(verdict) == 0;
+    if (pose && c.r[6] != 0 && from_centre >= 0 && from_centre < half - 1 && rd32(swings) == 0) {
+        wr32(swings, 1);
+        bool in_time = from_centre <= static_cast<int32_t>(rd32(dance + kDanceGreatWindow));
+        late_dance = in_time ? dance : 0;
+        late_slot = slot;
+        late_player = player;
+    }
+    bool lenient = pose && dance == late_dance && slot == late_slot && player == late_player;
+    uint32_t still_window = rd32(dance + kDancePoseWindow);
+    if (lenient) {
+        wr32(dance + kDancePoseWindow, static_cast<uint32_t>(half - 1));
+    }
+    original(c);
+    if (lenient) {
+        wr32(dance + kDancePoseWindow, still_window);
+    }
 }
 
 }
