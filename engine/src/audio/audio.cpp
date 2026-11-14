@@ -1,3 +1,4 @@
+#include "wp/fast_clock.h"
 #include "wp/audio.h"
 
 #ifdef _WIN32
@@ -46,7 +47,7 @@ constexpr int kPhases = 512;
 constexpr double kCutoff = 0.95;
 constexpr double kPi = 3.14159265358979323846;
 
-using Clock = std::chrono::steady_clock;
+using Clock = wp::FastClock;
 
 Clock::time_point g_last = Clock::now();
 double g_samples = 0.0;

@@ -1,5 +1,6 @@
 add_library(wp_engine STATIC
     src/core/runtime.cpp
+    src/core/fast_clock.cpp
     src/core/fpu.cpp
     src/core/fiber.cpp
     src/core/big_stack.cpp

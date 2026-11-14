@@ -2,6 +2,7 @@
 // Copyright 2019 Dolphin Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "wp/fast_clock.h"
 #include "wp/wiimote.h"
 
 #include <algorithm>
@@ -104,7 +105,7 @@ struct State {
     std::array<uint8_t, 0x100> speaker_registers{};
     SpeakerDecoder decoder;
     ReadRequest read;
-    std::chrono::steady_clock::time_point next_report{};
+    FastClock::time_point next_report{};
     double roll = 0.0;
     double pitch = 0.0;
     double shake_phase = 0.0;
@@ -624,7 +625,7 @@ void update(uint32_t index, const Sender& send) {
         return;
     }
     State& state = g_state[index];
-    auto now = std::chrono::steady_clock::now();
+    auto now = FastClock::now();
     if (now < state.next_report) {
         return;
     }

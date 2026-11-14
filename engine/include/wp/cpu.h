@@ -521,7 +521,7 @@ inline void quantize(uint32_t address, float value, uint32_t type, uint32_t scal
     }
 }
 
-inline void load_quantized(Cpu& c, uint32_t d, uint32_t address, uint32_t w, uint32_t index, uint32_t& size) {
+[[gnu::noinline]] inline void load_dequantized(Cpu& c, uint32_t d, uint32_t address, uint32_t w, uint32_t index, uint32_t& size) {
     uint32_t gqr = c.spr[kSprGqr0 + index];
     uint32_t type = (gqr >> 16) & 7;
     uint32_t scale = (gqr >> 24) & 0x3F;
@@ -537,7 +537,7 @@ inline void load_quantized(Cpu& c, uint32_t d, uint32_t address, uint32_t w, uin
     }
 }
 
-inline void store_quantized(Cpu& c, uint32_t s, uint32_t address, uint32_t w, uint32_t index, uint32_t& size) {
+[[gnu::noinline]] inline void store_requantized(Cpu& c, uint32_t s, uint32_t address, uint32_t w, uint32_t index, uint32_t& size) {
     uint32_t gqr = c.spr[kSprGqr0 + index];
     uint32_t type = gqr & 7;
     uint32_t scale = (gqr >> 8) & 0x3F;
@@ -550,6 +550,28 @@ inline void store_quantized(Cpu& c, uint32_t s, uint32_t address, uint32_t w, ui
         quantize(address == kFifoAddress ? address : address + first, static_cast<float>(c.ps1[s]), type, scale, second);
         size = first + second;
     }
+}
+
+[[gnu::always_inline]] inline void load_quantized(Cpu& c, uint32_t d, uint32_t address, uint32_t w, uint32_t index, uint32_t& size) {
+    if (c.spr[kSprGqr0 + index] & 0x40000) {
+        load_dequantized(c, d, address, w, index, size);
+        return;
+    }
+    c.f[d] = rdf32(address);
+    c.ps1[d] = w ? 1.0 : rdf32(address + 4);
+    size = w ? 4 : 8;
+}
+
+[[gnu::always_inline]] inline void store_quantized(Cpu& c, uint32_t s, uint32_t address, uint32_t w, uint32_t index, uint32_t& size) {
+    if (c.spr[kSprGqr0 + index] & 4) {
+        store_requantized(c, s, address, w, index, size);
+        return;
+    }
+    wrf32(address, static_cast<float>(c.f[s]));
+    if (!w) {
+        wrf32(address == kFifoAddress ? address : address + 4, static_cast<float>(c.ps1[s]));
+    }
+    size = w ? 4 : 8;
 }
 
 inline void ps_set(Cpu& c, int d, double x, double y) {

@@ -16,6 +16,7 @@
 #include <thread>
 #include <vector>
 
+#include "wp/fast_clock.h"
 #include "wp/canvas.h"
 #include "wp/color.h"
 #include "wp/control_names.h"
@@ -64,6 +65,22 @@ void check(bool condition, const char* expression, int line) {
 }
 
 #define CHECK(expression) check((expression), #expression, __LINE__)
+
+void test_fast_clock() {
+    auto fast_start = wp::FastClock::now();
+    auto steady_start = std::chrono::steady_clock::now();
+    wp::FastClock::time_point last = fast_start;
+    bool monotonic = true;
+    while (std::chrono::steady_clock::now() - steady_start < std::chrono::milliseconds(1300)) {
+        wp::FastClock::time_point now = wp::FastClock::now();
+        monotonic = monotonic && now >= last;
+        last = now;
+    }
+    double fast = std::chrono::duration<double>(wp::FastClock::now() - fast_start).count();
+    double steady = std::chrono::duration<double>(std::chrono::steady_clock::now() - steady_start).count();
+    CHECK(monotonic);
+    CHECK(std::fabs(fast - steady) < 0.005);
+}
 
 void test_software_fma() {
     std::mt19937_64 random(2026);
@@ -2331,6 +2348,7 @@ void test_linked_fifo_registers() {
 int main() {
     wp::g_memory = static_cast<uint8_t*>(std::calloc(wp::kMemorySize, 1));
     test_memory();
+    test_fast_clock();
     test_rotate_and_shift();
     test_arithmetic();
     test_condition_register();

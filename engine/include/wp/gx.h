@@ -9,6 +9,7 @@ namespace wp::gx {
 
 void push(uint64_t value, unsigned bytes);
 void process();
+void profile_current_thread(const char* path);
 bool take_finish_interrupt();
 bool take_token_interrupt();
 // Keeps the last shown image (black at boot) instead of the game's new frames.
