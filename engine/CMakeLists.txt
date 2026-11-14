@@ -1,5 +1,6 @@
 add_library(wp_engine STATIC
     src/core/runtime.cpp
+    src/core/fast_clock.cpp
     src/core/fpu.cpp
     src/core/fiber.cpp
     src/core/big_stack.cpp
@@ -27,6 +28,7 @@ add_library(wp_engine STATIC
     src/ios/disc.cpp
     src/input/bluetooth.cpp
     src/input/wiimote.cpp
+    src/input/attraction.cpp
     src/input/input.cpp
     src/input/keymap.cpp
     src/input/padmap.cpp
@@ -49,6 +51,7 @@ add_library(wp_engine STATIC
     src/platform/options.cpp
     src/platform/options_window.cpp
     src/platform/discord.cpp
+    src/platform/update_check.cpp
 )
 if(WIN32)
     target_sources(wp_engine PRIVATE src/gpu/gx_render.cpp src/platform/video.cpp)
@@ -60,13 +63,13 @@ set_source_files_properties(src/platform/embedded_fonts.cpp PROPERTIES
     OBJECT_DEPENDS "${WP_FONT_DIR}/Nunito-ExtraBold.ttf;${WP_FONT_DIR}/Nunito-Black.ttf")
 target_include_directories(wp_engine SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/third_party/stb")
 target_include_directories(wp_engine PUBLIC include)
-target_compile_definitions(wp_engine PRIVATE WP_BUILD="${WP_BUILD}"
+target_compile_definitions(wp_engine PRIVATE WP_BUILD="${WP_BUILD}" WP_VERSION="${WP_VERSION}"
     WP_DSP_IROM_PATH="${CMAKE_SOURCE_DIR}/third_party/dolphin/Data/Sys/GC/dsp_rom.bin"
     WP_DSP_COEF_PATH="${CMAKE_SOURCE_DIR}/third_party/dolphin/Data/Sys/GC/dsp_coef.bin")
 set_source_files_properties(src/audio/dsp_roms.cpp PROPERTIES OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/third_party/dolphin/Data/Sys/GC/dsp_rom.bin;${CMAKE_SOURCE_DIR}/third_party/dolphin/Data/Sys/GC/dsp_coef.bin")
 target_link_libraries(wp_engine PUBLIC wp_dolphin_dsp)
 if(WIN32)
-    target_link_libraries(wp_engine PUBLIC gdi32 user32 d3d11 d3dcompiler dxgi ole32 windowscodecs dwmapi winmm pdh advapi32)
+    target_link_libraries(wp_engine PUBLIC gdi32 user32 d3d11 d3dcompiler dxgi ole32 windowscodecs dwmapi winmm pdh advapi32 winhttp shell32)
 else()
     find_package(Threads REQUIRED)
     target_link_libraries(wp_engine PUBLIC Threads::Threads)

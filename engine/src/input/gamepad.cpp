@@ -13,6 +13,7 @@
 #include <mutex>
 #include <thread>
 
+#include "wp/attraction.h"
 #include "wp/input.h"
 #include "wp/log.h"
 #include "wp/settings.h"
@@ -86,6 +87,7 @@ struct Pad {
 
 std::mutex g_mutex;
 std::array<Snapshot, kSlots> g_snapshots;
+std::array<std::atomic<bool>, kSlots> g_connected{};
 std::array<std::atomic<bool>, kSlots> g_rumble{};
 std::array<std::atomic<int>, kSlots> g_player{};
 std::once_flag g_started;
@@ -285,7 +287,8 @@ Snapshot read(Pad& pad, float dt) {
     float right_y = axis(handle, SDL_GAMEPAD_AXIS_RIGHTY);
     snapshot.right_x = right_x;
     snapshot.right_y = right_y;
-    bool aiming = padmap::held(padmap::current_mapping()[padmap::kPointerAction], physical_state(snapshot));
+    bool free_aim = attraction::mode() == attraction::Mode::Aim;
+    bool aiming = padmap::held(padmap::current_mapping()[padmap::kPointerAction], physical_state(snapshot)) || free_aim;
     if (aiming && !pad.aiming) {
         pad.pointer_x = 0.0f;
         pad.pointer_y = 0.0f;
@@ -293,9 +296,13 @@ Snapshot read(Pad& pad, float dt) {
     pad.aiming = aiming;
     pad.pointer_active = aiming;
     bool motion_mode = snapshot.buttons[SDL_GAMEPAD_BUTTON_LEFT_SHOULDER];
-    if (aiming && !motion_mode && (std::fabs(right_x) > kStickDeadZone || std::fabs(right_y) > kStickDeadZone)) {
+    if (aiming && !free_aim && !motion_mode && (std::fabs(right_x) > kStickDeadZone || std::fabs(right_y) > kStickDeadZone)) {
         pad.pointer_x += right_x * kStickPointerSpeed * dt;
         pad.pointer_y += right_y * kStickPointerSpeed * dt;
+    }
+    if (free_aim && (std::fabs(snapshot.left_x) > kStickDeadZone || std::fabs(snapshot.left_y) > kStickDeadZone)) {
+        pad.pointer_x += snapshot.left_x * kStickPointerSpeed * dt;
+        pad.pointer_y += snapshot.left_y * kStickPointerSpeed * dt;
     }
     if (pad.has_accel) {
         snapshot.has_accel = SDL_GetGamepadSensorData(handle, SDL_SENSOR_ACCEL, snapshot.accel, 3);
@@ -314,7 +321,7 @@ Snapshot read(Pad& pad, float dt) {
         if (snapshot.has_accel) {
             calibrate(pad, gyro, snapshot.accel, dt);
         }
-        if (aiming) {
+        if (aiming && !free_aim) {
             pad.pointer_x -= (gyro[1] - pad.bias[1]) * dt * kPointerPerRadian;
             pad.pointer_y -= (gyro[0] - pad.bias[0]) * dt * kPointerPerRadian;
         }
@@ -479,17 +486,26 @@ void worker() {
             std::lock_guard<std::mutex> lock(g_mutex);
             g_snapshots = snapshots;
         }
+        for (size_t slot = 0; slot < kSlots; slot++) {
+            g_connected[slot].store(snapshots[slot].connected, std::memory_order_relaxed);
+        }
         std::this_thread::sleep_for(kPollInterval);
     }
 }
 
+std::atomic<bool> g_running{false};
+
 void start() {
+    if (g_running.load(std::memory_order_acquire)) {
+        return;
+    }
     std::call_once(g_started, [] {
         for (size_t slot = 0; slot < kSlots; slot++) {
             g_player[slot] = -1;
         }
         std::thread(worker).detach();
     });
+    g_running.store(true, std::memory_order_release);
 }
 
 Snapshot snapshot(uint32_t slot) {
@@ -504,7 +520,11 @@ Snapshot snapshot(uint32_t slot) {
 }
 
 bool connected(uint32_t slot) {
-    return snapshot(slot).connected;
+    if (slot >= kSlots || !enabled()) {
+        return false;
+    }
+    start();
+    return g_connected[slot].load(std::memory_order_relaxed);
 }
 
 bool camera_stick(float& x, float& y) {
@@ -621,6 +641,8 @@ State poll(uint32_t slot, bool sideways) {
     } else {
         b |= (left ? input::kButtonLeft : 0) | (right ? input::kButtonRight : 0) | (up ? input::kButtonUp : 0) | (down ? input::kButtonDown : 0);
     }
+    state.stick_x = current.left_x;
+    state.stick_y = current.left_y;
     state.pointer_valid = current.pointer_valid;
     state.pointer_x = current.pointer_x;
     state.pointer_y = current.pointer_y;

@@ -33,6 +33,8 @@ constexpr Action kActions[kActionCount] = {
     {"tilt_right", input::kMotionTiltRight, "left_shoulder+right_stick_right", "left_shoulder+right_stick_right"},
     {"tilt_up", input::kMotionTiltUp, "left_shoulder+right_stick_up", "left_shoulder+right_stick_up"},
     {"tilt_down", input::kMotionTiltDown, "left_shoulder+right_stick_down", "left_shoulder+right_stick_down"},
+    {"shake_left", input::kMotionShakeLeft, "left_shoulder", "left_shoulder"},
+    {"shake_right", input::kMotionShakeRight, "right_shoulder", "right_shoulder"},
     {"pointer", 0, "left_stick", "left_stick"},
 };
 

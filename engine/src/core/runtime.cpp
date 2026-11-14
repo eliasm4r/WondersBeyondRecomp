@@ -1,3 +1,4 @@
+#include "wp/fast_clock.h"
 #include "wp/cpu.h"
 #include "wp/profile.h"
 
@@ -353,7 +354,7 @@ uint64_t wall_clock_ticks() {
 }
 
 uint64_t time_base() {
-    using clock = std::chrono::steady_clock;
+    using clock = FastClock;
     static const clock::time_point origin = clock::now();
     static const uint64_t start = wall_clock_ticks();
     uint64_t elapsed = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now() - origin).count());

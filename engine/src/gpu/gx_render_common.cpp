@@ -1,6 +1,7 @@
 #include "gx_render_common.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 
@@ -124,6 +125,34 @@ uint32_t block_bytes(uint32_t format) {
     return format == 6 ? 64 : 32;
 }
 
+namespace {
+
+template <typename Pixel>
+void decode_blocks(const uint8_t* data, uint32_t* pixels, uint32_t padded_width, uint32_t padded_height, uint32_t block_width, uint32_t block_height,
+                   uint32_t bytes, Pixel pixel) {
+    for (uint32_t by = 0; by < padded_height; by += block_height) {
+        for (uint32_t bx = 0; bx < padded_width; bx += block_width) {
+            uint32_t* out = pixels + static_cast<size_t>(by) * padded_width + bx;
+            for (uint32_t y = 0; y < block_height; y++) {
+                for (uint32_t x = 0; x < block_width; x++) {
+                    out[y * padded_width + x] = pixel(data, x, y);
+                }
+            }
+            data += bytes;
+        }
+    }
+}
+
+std::vector<uint32_t> palette_for(const uint8_t* tlut, uint32_t tlut_format, uint32_t entries) {
+    std::vector<uint32_t> palette(entries);
+    for (uint32_t i = 0; i < entries; i++) {
+        palette[i] = palette_entry(tlut, tlut_format, i);
+    }
+    return palette;
+}
+
+}
+
 std::vector<uint32_t> decode_texture(const uint8_t* data, uint32_t width, uint32_t height, uint32_t format, const uint8_t* tlut,
                                      uint32_t tlut_format) {
     Layout layout = layout_for(format);
@@ -134,77 +163,121 @@ std::vector<uint32_t> decode_texture(const uint8_t* data, uint32_t width, uint32
         return pixels;
     }
     uint32_t bytes = block_bytes(format);
-    for (uint32_t by = 0; by < padded_height; by += layout.block_height) {
-        for (uint32_t bx = 0; bx < padded_width; bx += layout.block_width) {
-            uint32_t* out = &pixels[static_cast<size_t>(by) * padded_width + bx];
-            const uint8_t* block = data;
-            data += bytes;
-            for (uint32_t y = 0; y < layout.block_height; y++) {
-                for (uint32_t x = 0; x < layout.block_width; x++) {
-                    uint32_t pixel = 0;
-                    switch (format) {
-                    case 0: {
-                        uint32_t v = (block[y * 4 + x / 2] >> ((x & 1) ? 0 : 4)) & 15;
-                        pixel = rgba(expand4(v), expand4(v), expand4(v), expand4(v));
-                        break;
-                    }
-                    case 1: {
-                        uint32_t v = block[y * 8 + x];
-                        pixel = rgba(v, v, v, v);
-                        break;
-                    }
-                    case 2: {
-                        uint32_t v = block[y * 8 + x];
-                        uint32_t i = expand4(v & 15);
-                        pixel = rgba(i, i, i, expand4(v >> 4));
-                        break;
-                    }
-                    case 3: {
-                        uint32_t a = block[(y * 4 + x) * 2];
-                        uint32_t i = block[(y * 4 + x) * 2 + 1];
-                        pixel = rgba(i, i, i, a);
-                        break;
-                    }
-                    case 4:
-                        pixel = rgb565(be16(block + (y * 4 + x) * 2));
-                        break;
-                    case 5:
-                        pixel = rgb5a3(be16(block + (y * 4 + x) * 2));
-                        break;
-                    case 6: {
-                        uint32_t index = (y * 4 + x) * 2;
-                        pixel = rgba(block[index + 1], block[32 + index], block[32 + index + 1], block[index]);
-                        break;
-                    }
-                    case 8:
-                        pixel = palette_entry(tlut, tlut_format, (block[y * 4 + x / 2] >> ((x & 1) ? 0 : 4)) & 15);
-                        break;
-                    case 9:
-                        pixel = palette_entry(tlut, tlut_format, block[y * 8 + x]);
-                        break;
-                    case 10:
-                        pixel = palette_entry(tlut, tlut_format, be16(block + (y * 4 + x) * 2) & 0x3FFF);
-                        break;
-                    case 14: {
-                        uint32_t sub = (y / 4) * 2 + (x / 4);
-                        uint32_t local[16];
-                        decode_cmpr_block(block + sub * 8, local, 4);
-                        pixel = local[(y % 4) * 4 + (x % 4)];
-                        break;
-                    }
-                    default:
-                        break;
-                    }
-                    out[y * padded_width + x] = pixel;
+    uint32_t bw = layout.block_width;
+    uint32_t bh = layout.block_height;
+    uint32_t* out = pixels.data();
+    switch (format) {
+    case 0:
+        decode_blocks(data, out, padded_width, padded_height, bw, bh, bytes, [](const uint8_t* block, uint32_t x, uint32_t y) {
+            uint32_t v = expand4((block[y * 4 + x / 2] >> ((x & 1) ? 0 : 4)) & 15);
+            return rgba(v, v, v, v);
+        });
+        break;
+    case 1:
+        decode_blocks(data, out, padded_width, padded_height, bw, bh, bytes, [](const uint8_t* block, uint32_t x, uint32_t y) {
+            uint32_t v = block[y * 8 + x];
+            return rgba(v, v, v, v);
+        });
+        break;
+    case 2:
+        decode_blocks(data, out, padded_width, padded_height, bw, bh, bytes, [](const uint8_t* block, uint32_t x, uint32_t y) {
+            uint32_t v = block[y * 8 + x];
+            uint32_t i = expand4(v & 15);
+            return rgba(i, i, i, expand4(v >> 4));
+        });
+        break;
+    case 3:
+        decode_blocks(data, out, padded_width, padded_height, bw, bh, bytes, [](const uint8_t* block, uint32_t x, uint32_t y) {
+            uint32_t i = block[(y * 4 + x) * 2 + 1];
+            return rgba(i, i, i, block[(y * 4 + x) * 2]);
+        });
+        break;
+    case 4:
+        decode_blocks(data, out, padded_width, padded_height, bw, bh, bytes,
+                      [](const uint8_t* block, uint32_t x, uint32_t y) { return rgb565(be16(block + (y * 4 + x) * 2)); });
+        break;
+    case 5:
+        decode_blocks(data, out, padded_width, padded_height, bw, bh, bytes,
+                      [](const uint8_t* block, uint32_t x, uint32_t y) { return rgb5a3(be16(block + (y * 4 + x) * 2)); });
+        break;
+    case 6:
+        decode_blocks(data, out, padded_width, padded_height, bw, bh, bytes, [](const uint8_t* block, uint32_t x, uint32_t y) {
+            uint32_t index = (y * 4 + x) * 2;
+            return rgba(block[index + 1], block[32 + index], block[32 + index + 1], block[index]);
+        });
+        break;
+    case 8: {
+        std::vector<uint32_t> palette = palette_for(tlut, tlut_format, 16);
+        const uint32_t* colors = palette.data();
+        decode_blocks(data, out, padded_width, padded_height, bw, bh, bytes,
+                      [colors](const uint8_t* block, uint32_t x, uint32_t y) { return colors[(block[y * 4 + x / 2] >> ((x & 1) ? 0 : 4)) & 15]; });
+        break;
+    }
+    case 9: {
+        std::vector<uint32_t> palette = palette_for(tlut, tlut_format, 256);
+        const uint32_t* colors = palette.data();
+        decode_blocks(data, out, padded_width, padded_height, bw, bh, bytes, [colors](const uint8_t* block, uint32_t x, uint32_t y) { return colors[block[y * 8 + x]]; });
+        break;
+    }
+    case 10:
+        decode_blocks(data, out, padded_width, padded_height, bw, bh, bytes, [tlut, tlut_format](const uint8_t* block, uint32_t x, uint32_t y) {
+            return palette_entry(tlut, tlut_format, be16(block + (y * 4 + x) * 2) & 0x3FFF);
+        });
+        break;
+    case 14:
+        for (uint32_t by = 0; by < padded_height; by += 8) {
+            for (uint32_t bx = 0; bx < padded_width; bx += 8) {
+                uint32_t* corner = out + static_cast<size_t>(by) * padded_width + bx;
+                for (uint32_t sub = 0; sub < 4; sub++) {
+                    decode_cmpr_block(data + sub * 8, corner + (sub / 2) * 4 * padded_width + (sub % 2) * 4, padded_width);
                 }
+                data += 32;
             }
         }
+        break;
+    default:
+        decode_blocks(data, out, padded_width, padded_height, bw, bh, bytes, [](const uint8_t*, uint32_t, uint32_t) { return 0u; });
+        break;
+    }
+    if (padded_width == width) {
+        pixels.resize(static_cast<size_t>(width) * height);
+        return pixels;
     }
     std::vector<uint32_t> cropped(static_cast<size_t>(width) * height);
     for (uint32_t y = 0; y < height; y++) {
         std::memcpy(&cropped[static_cast<size_t>(y) * width], &pixels[static_cast<size_t>(y) * padded_width], width * sizeof(uint32_t));
     }
     return cropped;
+}
+
+std::vector<uint8_t> cmpr_to_bc1(const uint8_t* data, uint32_t width, uint32_t height) {
+    static const auto reversed = [] {
+        std::array<uint8_t, 256> table{};
+        for (uint32_t value = 0; value < 256; value++) {
+            table[value] = static_cast<uint8_t>((value >> 6 & 3) | (value >> 2 & 12) | (value << 2 & 48) | (value << 6 & 192));
+        }
+        return table;
+    }();
+    uint32_t across = (width + 3) / 4;
+    uint32_t down = (height + 3) / 4;
+    uint32_t large_across = (width + 7) / 8;
+    std::vector<uint8_t> blocks(static_cast<size_t>(across) * down * 8);
+    uint8_t* out = blocks.data();
+    for (uint32_t by = 0; by < down; by++) {
+        for (uint32_t bx = 0; bx < across; bx++) {
+            const uint8_t* in = data + (static_cast<size_t>(by / 2) * large_across + bx / 2) * 32 + ((by & 1) * 2 + (bx & 1)) * 8;
+            out[0] = in[1];
+            out[1] = in[0];
+            out[2] = in[3];
+            out[3] = in[2];
+            out[4] = reversed[in[4]];
+            out[5] = reversed[in[5]];
+            out[6] = reversed[in[6]];
+            out[7] = reversed[in[7]];
+            out += 8;
+        }
+    }
+    return blocks;
 }
 
 uint64_t hash_bytes(const uint8_t* data, size_t size) {

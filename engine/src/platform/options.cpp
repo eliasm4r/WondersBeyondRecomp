@@ -18,6 +18,7 @@
 #include "wp/play_time.h"
 #include "wp/settings.h"
 #include "wp/ui_text.h"
+#include "wp/update_check.h"
 
 namespace wp::options {
 
@@ -31,6 +32,7 @@ constexpr const char* kLiveKeys[] = {
     "overlay.show",         "overlay.level",        "overlay.corner",        "controls.device",    "stats.play_time",
     "video.brightness",     "video.contrast",       "video.saturation",      "video.gamma",        "video.colors_reset",
     "camera.free",          "camera.mouse_speed",   "camera.stick_speed",    "camera.invert_y",    "video.bug_recorder",
+    "system.check_updates", "system.update",
 };
 
 struct Language {
@@ -72,6 +74,7 @@ constexpr const char* kDeviceNames[] = {"keyboard", "gamepad"};
 constexpr const char* kResetKeys = "keys.reset";
 constexpr const char* kResetPad = "pad.reset";
 constexpr const char* kResetColors = "video.colors_reset";
+constexpr const char* kUpdate = "system.update";
 
 const Slider* slider_of(const std::string& key) {
     for (const Slider& slider : kSliders) {
@@ -98,6 +101,22 @@ size_t pad_action(const std::string& key) {
 bool known(const std::string& key) {
     std::vector<std::string> all = settings::keys();
     return std::find(all.begin(), all.end(), key) != all.end();
+}
+
+std::string update_text() {
+    std::string text = update::version();
+    switch (update::state()) {
+    case update::State::Checking:
+        return text + " \xC2\xB7 " + ui::label("menu.update.checking");
+    case update::State::Current:
+        return text + " \xC2\xB7 " + ui::label("menu.update.current");
+    case update::State::Newer:
+        return text + " \xC2\xB7 " + update::latest() + " " + ui::label("menu.update.newer");
+    case update::State::Failed:
+        return text + " \xC2\xB7 " + ui::label("menu.update.failed");
+    default:
+        return text;
+    }
 }
 
 bool enabled_text(const std::string& value) {
@@ -142,8 +161,14 @@ std::vector<std::string> tab_keys(size_t tab, Device device) {
     }
     case 4:
         return {"system.interface_language", "system.language"};
-    case 5:
-        return {"overlay.show", "overlay.level", "overlay.corner", "video.show_fps", "video.custom_textures", "video.dump_textures", "video.bug_recorder"};
+    case 5: {
+        std::vector<std::string> keys = {"overlay.show", "overlay.level", "overlay.corner", "video.show_fps", "video.custom_textures", "video.dump_textures", "video.bug_recorder"};
+        if (update::available()) {
+            keys.push_back("system.check_updates");
+        }
+        keys.push_back(kUpdate);
+        return keys;
+    }
     default:
         return {};
     }
@@ -153,7 +178,7 @@ Kind kind(const std::string& key) {
     if (key == kResetKeys || key == kResetPad || key == kResetColors) {
         return Kind::Button;
     }
-    if (key == kPlayTime) {
+    if (key == kPlayTime || key == kUpdate) {
         return Kind::Info;
     }
     if (starts_with(key, "keys.")) {
@@ -190,7 +215,7 @@ std::vector<std::string> choices(const std::string& key) {
         return scales;
     }
     if (key == "video.fps") {
-        return {"30", "45", "60", "90", "120"};
+        return {"30", "45", "60", "90", "120", "144", "165", "240"};
     }
     if (key == "video.anisotropy") {
         return {"1", "2", "4", "8", "16"};
@@ -244,7 +269,11 @@ std::string shown_value(const std::string& key, const std::string& value) {
     if (key == "video.fps") {
         int fps = std::atoi(value.c_str());
         int hz = pacing::display_hz();
-        return fps > 60 && !pacing::interpolation_wanted(fps, hz) ? value + " > 60 (" + std::to_string(hz) + " Hz)" : value;
+        if (fps > 60 && !pacing::interpolation_wanted(fps, hz)) {
+            return value + " > 60 (" + std::to_string(hz) + " Hz)";
+        }
+        int shown = pacing::capped_rate(fps, hz);
+        return shown < fps ? value + " > " + std::to_string(shown) + " (" + std::to_string(hz) + " Hz)" : value;
     }
     if (key == "video.anisotropy") {
         return value == "1" ? text.menu_off : value + "x";
@@ -396,6 +425,8 @@ std::vector<Row> Menu::rows() const {
             row.value = shown_value(key, kDeviceNames[device_ == Device::Gamepad ? 1 : 0]);
         } else if (key == kPlayTime) {
             row.value = play_time::format(play_time::seconds(), ui::language());
+        } else if (key == kUpdate) {
+            row.value = update_text();
         } else if (row.kind != Kind::Button) {
             std::string value = settings::text(key.c_str(), nullptr);
             row.value = shown_value(key, value);
@@ -498,6 +529,10 @@ std::string Menu::handle(Action action) {
         select_tab((tab_ + 1) % kTabCount);
         return "";
     case Action::Accept:
+        if (key == kUpdate && update::state() == update::State::Newer) {
+            update::open_page();
+            return "";
+        }
         if (type == Kind::Key || type == Kind::Pad) {
             capturing_ = true;
             return "";

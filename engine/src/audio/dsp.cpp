@@ -1,6 +1,7 @@
 // Copyright 2008 Dolphin Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "wp/fast_clock.h"
 #include "wp/dsp.h"
 
 #include <algorithm>
@@ -73,7 +74,7 @@ constexpr uint16_t kIramWords = 0x1000;
 constexpr double kMaxPumpStep = 0.0005;
 constexpr int kCatchUpRate = 4;
 
-using Clock = std::chrono::steady_clock;
+using Clock = wp::FastClock;
 
 struct AudioDma {
     uint32_t source = 0;

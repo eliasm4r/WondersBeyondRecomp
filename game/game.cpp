@@ -4,6 +4,7 @@
 #include <cstring>
 #include <vector>
 
+#include "attractions.h"
 #include "wp/cpu.h"
 #include "wp/game.h"
 #include "wp/gx.h"
@@ -15,6 +16,7 @@
 #include "wp/log.h"
 #include "wp/memory.h"
 #include "wp/settings.h"
+#include "lookup.h"
 
 namespace wp::game {
 
@@ -30,6 +32,7 @@ constexpr Description kDescription = {
     "game/textures",
     true,
     "1569649565127409705",
+    "eliasm4r/WondersBeyondRecomp",
 };
 
 // nsNile::nsSequence::SequencerBoot (vtable 0x80453800), state at +4. The game plays Strap (scene 1), which
@@ -44,11 +47,61 @@ constexpr uint32_t kSceneHold = 2;
 constexpr uint32_t kSceneCheckData = 3;
 constexpr uint32_t kStay = 0xFFFFFFFF;
 constexpr uint32_t kToTitle = 2;
+constexpr uint32_t kParkPrepareState = 0x804bb21c;
+constexpr uint32_t kParkPrepared = 2;
+constexpr uint32_t kInputAlarm = 0x804BA4D8;
+constexpr uint32_t kAlarmPeriod = 0x38;
+constexpr uint32_t kAlarmPending = 0x40;
+constexpr uint32_t kApplyAlarmPeriod = 0x8000efa0;
+constexpr uint64_t kBootSpeed = 4;
+
+bool g_boot_fast = false;
+
+bool boot_speedup() {
+    static const bool wanted = [] {
+        const char* value = std::getenv("WP_BOOT_SPEEDUP");
+        return !value || *value != '0';
+    }();
+    return wanted;
+}
+
+uint64_t read_u64(uint32_t address) {
+    return (static_cast<uint64_t>(rd32(address)) << 32) | rd32(address + 4);
+}
+
+void write_u64(uint32_t address, uint64_t value) {
+    wr32(address, static_cast<uint32_t>(value >> 32));
+    wr32(address + 4, static_cast<uint32_t>(value));
+}
+
+void pace_boot(Cpu& c, bool fast) {
+    static uint64_t normal = 0;
+    uint64_t period = read_u64(kInputAlarm + kAlarmPeriod);
+    if (fast && normal == 0) {
+        normal = period;
+        log::write("boot", "park data ready, hidden screens run %llu times faster", static_cast<unsigned long long>(kBootSpeed));
+    }
+    if (normal == 0) {
+        return;
+    }
+    uint64_t wanted = fast ? normal / kBootSpeed : normal;
+    if (period != wanted) {
+        write_u64(kInputAlarm + kAlarmPending, wanted);
+        uint32_t saved = c.r[3];
+        c.r[3] = kInputAlarm;
+        call(c, kApplyAlarmPeriod);
+        c.r[3] = saved;
+    }
+    if (!fast) {
+        normal = 0;
+    }
+}
 
 // Strap and Hold also set up the save, the common data and the sound the title needs, so they still run,
 // hidden and confirmed by themselves. CheckData is left as is: it can ask about the save.
 void start_scene(Cpu& c, uint32_t self, uint32_t scene) {
     bool hidden = scene != kSceneCheckData;
+    g_boot_fast = hidden && boot_speedup();
     gx::set_screen_hidden(hidden);
     input::set_auto_confirm(hidden);
     wr32(self + 4, scene);
@@ -61,6 +114,7 @@ void start_scene(Cpu& c, uint32_t self, uint32_t scene) {
 void boot_sequence(Cpu& c) {
     uint32_t self = c.r[3];
     uint32_t state = rd32(self + 4);
+    pace_boot(c, g_boot_fast && (state != kSceneStrap || rd32(kParkPrepareState) == kParkPrepared));
     if (state == kNotStarted) {
         start_scene(c, self, kSceneStrap);
         c.r[3] = kStay;
@@ -74,6 +128,8 @@ void boot_sequence(Cpu& c) {
     if (state == kSceneHold) {
         gx::set_screen_hidden(false);
         input::set_auto_confirm(false);
+        g_boot_fast = false;
+        pace_boot(c, false);
         log::write("boot", "title");
         c.r[3] = kToTitle;
         return;
@@ -99,7 +155,7 @@ const Description& description() {
 // The loop applies a pending period by itself (0x8000efa0). Movies advance one picture per rendered frame, so they
 // keep 30 fps while their file is being streamed.
 void retrace() {
-    constexpr uint32_t kInputAlarm = 0x804BA4D8;
+    next_lookup_retrace();
     constexpr uint32_t kFrameAlarm = 0x804BA548;
     constexpr uint32_t kPeriod = 0x38;
     constexpr uint32_t kPendingPeriod = 0x40;
@@ -403,6 +459,7 @@ constexpr uint32_t kHeapFreeList = 0xc;
 constexpr uint32_t kBlockNext = 0x8;
 constexpr uint32_t kMaxHeapBlocks = 10000;
 constexpr auto kTokenWait = std::chrono::milliseconds(500);
+constexpr uint32_t kExternalInterrupts = 0x8000;
 
 struct LateFree {
     uint32_t pool;
@@ -479,6 +536,13 @@ void release_deferred_frees(Cpu& c, HleFunction original) {
     g_late_frees.resize(kept);
 }
 
+void without_interrupts(Cpu& c, HleFunction original) {
+    uint32_t enabled = c.msr & kExternalInterrupts;
+    c.msr &= ~kExternalInterrupts;
+    original(c);
+    c.msr |= enabled;
+}
+
 void temp_pool_alloc(Cpu& c, HleFunction original) {
     uint32_t pool = c.r[3];
     uint32_t index = c.r[4];
@@ -499,7 +563,7 @@ void temp_pool_alloc(Cpu& c, HleFunction original) {
         c.r[5] = size;
         c.r[6] = alignment;
     }
-    original(c);
+    without_interrupts(c, original);
 }
 
 }
@@ -508,7 +572,13 @@ HookFunction hook(const char* name) {
     static const struct {
         const char* name;
         HookFunction function;
-    } kHooks[] = {{"FieldCameraUpdate", field_camera}, {"DeferredFree", deferred_free}, {"ReleaseDeferredFrees", release_deferred_frees}, {"TempPoolAlloc", temp_pool_alloc}};
+    } kHooks[] = {{"FieldCameraUpdate", field_camera}, {"DeferredFree", deferred_free}, {"ReleaseDeferredFrees", release_deferred_frees}, {"TempPoolAlloc", temp_pool_alloc}, {"TempPoolFree", without_interrupts},
+                   {"FindResourceByName", find_resource_by_name},
+                   {"FindResourceByNameOther", find_resource_by_name},
+                   {"FindResourceByNumber", find_resource_by_number},
+                   {"AddSceneParameter", add_scene_parameter}, {"PickScene", pick_scene}, {"SceneManagerRunBegin", scene_manager_run_begin},
+                   {"DanceFrame", dance_frame}, {"DanceFrameSecondPart", dance_frame_second_part},
+                   {"DanceJudge", dance_judge}};
     for (const auto& entry : kHooks) {
         if (std::strcmp(entry.name, name) == 0) {
             return entry.function;

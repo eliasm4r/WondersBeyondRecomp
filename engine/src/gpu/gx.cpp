@@ -2427,7 +2427,7 @@ constexpr auto kProfileWritePeriod = std::chrono::seconds(5);
 void sample_thread(HANDLE thread, std::string path) {
     struct Sample {
         uint64_t leaf;
-        uint64_t frames[3];
+        uint64_t frames[6];
     };
     uint64_t base = reinterpret_cast<uint64_t>(GetModuleHandle(nullptr));
     auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
@@ -2445,7 +2445,7 @@ void sample_thread(HANDLE thread, std::string path) {
         if (GetThreadContext(thread, &context)) {
             sample.leaf = context.Rip;
             int found = 0;
-            for (int depth = 0; depth < 64 && found < 3 && context.Rip != 0; depth++) {
+            for (int depth = 0; depth < 64 && found < 6 && context.Rip != 0; depth++) {
                 if (context.Rip >= base && context.Rip < end) {
                     sample.frames[found++] = context.Rip - base;
                 }
@@ -2478,8 +2478,10 @@ void sample_thread(HANDLE thread, std::string path) {
                 std::strcpy(module, "unknown");
             }
         }
-        std::snprintf(key, sizeof key, "%s %llx %llx %llx", module, static_cast<unsigned long long>(sample.frames[0]),
-                      static_cast<unsigned long long>(sample.frames[1]), static_cast<unsigned long long>(sample.frames[2]));
+        int length = std::snprintf(key, sizeof key, "%s", module);
+        for (uint64_t frame : sample.frames) {
+            length += std::snprintf(key + length, sizeof key - length, " %llx", static_cast<unsigned long long>(frame));
+        }
         counts[key]++;
         auto now = std::chrono::steady_clock::now();
         if (now - written > kProfileWritePeriod) {
@@ -2496,14 +2498,43 @@ void sample_thread(HANDLE thread, std::string path) {
 }
 #endif
 
-void gpu_thread() {
+}
+
+void profile_current_thread(const char* path) {
 #ifdef _WIN32
-    if (const char* path = std::getenv("WP_PROFILE_GPU")) {
+    if (path) {
         HANDLE self = nullptr;
         DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &self, 0, FALSE, DUPLICATE_SAME_ACCESS);
         std::thread(sample_thread, self, std::string(path)).detach();
     }
+#else
+    (void)path;
 #endif
+}
+
+namespace {
+
+constexpr int64_t kShortestPresentWait = 100;
+constexpr int64_t kLongestPresentWait = 1000;
+
+void sleep_precisely(std::chrono::microseconds span) {
+#ifdef _WIN32
+    static thread_local HANDLE timer = [] {
+        HANDLE precise = CreateWaitableTimerExW(nullptr, nullptr, 2, TIMER_ALL_ACCESS);
+        return precise ? precise : CreateWaitableTimerW(nullptr, FALSE, nullptr);
+    }();
+    LARGE_INTEGER due;
+    due.QuadPart = -span.count() * 10;
+    if (timer && SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE)) {
+        WaitForSingleObject(timer, INFINITE);
+        return;
+    }
+#endif
+    std::this_thread::sleep_for(span);
+}
+
+void gpu_thread() {
+    profile_current_thread(std::getenv("WP_PROFILE_GPU"));
     std::vector<uint8_t> buffer;
     while (true) {
         std::unique_lock<std::mutex> hold(g_gpu.lock);
@@ -2515,11 +2546,13 @@ void gpu_thread() {
         }
         while (g_gpu.items.empty()) {
             hold.unlock();
-            bool waiting = render::service_presents();
+            int64_t due_in = render::service_presents();
             hold.lock();
             auto asleep = std::chrono::steady_clock::now();
-            if (waiting) {
-                g_gpu.work.wait_for(hold, std::chrono::milliseconds(1), [] { return !g_gpu.items.empty(); });
+            if (due_in >= 0) {
+                hold.unlock();
+                sleep_precisely(std::chrono::microseconds(std::clamp<int64_t>(due_in, kShortestPresentWait, kLongestPresentWait)));
+                hold.lock();
             } else {
                 g_gpu.work.wait(hold, [] { return !g_gpu.items.empty(); });
             }

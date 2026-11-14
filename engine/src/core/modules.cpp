@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "wp/fast_clock.h"
 #include "wp/log.h"
 #include "wp/runtime.h"
 
@@ -191,7 +192,7 @@ void watch_modules() {
     if (!enabled()) {
         return;
     }
-    using Clock = std::chrono::steady_clock;
+    using Clock = FastClock;
     static Clock::time_point next = Clock::now();
     static std::string previous;
     Clock::time_point now = Clock::now();

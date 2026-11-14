@@ -14,6 +14,7 @@
 #include <thread>
 
 #include "wp/discord.h"
+#include "wp/update_check.h"
 #include "wp/big_stack.h"
 #include "wp/boot.h"
 #include "wp/cpu.h"
@@ -239,9 +240,11 @@ int run(int argc, char** argv) {
     }).detach();
     if (!std::getenv("WP_HEADLESS")) {
         wp::discord::start();
+        wp::update::start();
     }
     wp::Cpu cpu{};
     wp::init_threads(cpu);
+    wp::gx::profile_current_thread(std::getenv("WP_PROFILE_CPU"));
     wp::call(cpu, entry);
     std::puts("entry returned");
     return 0;

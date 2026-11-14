@@ -88,6 +88,7 @@ SamplerParams sampler_params(uint32_t map, bool custom);
 Layout layout_for(uint32_t format);
 uint32_t block_bytes(uint32_t format);
 std::vector<uint32_t> decode_texture(const uint8_t* data, uint32_t width, uint32_t height, uint32_t format, const uint8_t* tlut, uint32_t tlut_format);
+std::vector<uint8_t> cmpr_to_bc1(const uint8_t* data, uint32_t width, uint32_t height);
 uint64_t hash_bytes(const uint8_t* data, size_t size);
 uint64_t sample_hash(const uint8_t* data, size_t size);
 BlendState blend_state_for(uint32_t word);

@@ -58,8 +58,8 @@ void reset_kept() {}
 
 void finish_frame() {}
 
-bool service_presents() {
-    return false;
+int64_t service_presents() {
+    return -1;
 }
 
 uint32_t take_interpolated_frames() {

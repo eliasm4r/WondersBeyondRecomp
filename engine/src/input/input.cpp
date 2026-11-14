@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -12,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "wp/attraction.h"
 #include "wp/game.h"
 #include "wp/gamepad.h"
 #include "wp/free_camera.h"
@@ -33,6 +35,9 @@ std::atomic<int64_t> g_wheel_up{0};
 std::atomic<int64_t> g_wheel_down{0};
 std::atomic<bool> g_blocked{false};
 std::atomic<bool> g_auto_confirm{false};
+std::atomic<bool> g_gamepad_in_use{false};
+constexpr float kPadAimMove = 0.03f;
+constexpr float kStickAim = 0.2f;
 constexpr int64_t kConfirmPeriod = 500;
 constexpr int64_t kConfirmLength = 100;
 std::atomic<bool> g_release_wait[4] = {};
@@ -207,6 +212,8 @@ Sample gamepad_sample(uint32_t channel, bool sideways) {
     for (int i = 0; i < 3; i++) {
         result.accel[i] = pad.accel[i];
     }
+    result.stick_x = pad.stick_x;
+    result.stick_y = pad.stick_y;
     return result;
 }
 
@@ -327,11 +334,14 @@ Sample device_sample(uint32_t channel) {
         settings::reload_if_changed();
     }
     const keymap::Bindings& keys = bindings();
-    bool mouse_aims = focused && any_pressed(keys.of(keymap::Action::Pointer));
+    attraction::Mode mode = attraction::mode();
+    bool free_aim = mode == attraction::Mode::Aim;
+    bool mouse_aims = focused && (free_aim || any_pressed(keys.of(keymap::Action::Pointer)));
     free_camera::set_pointer_held(mouse_aims || (focused && any_pressed(keys.of(keymap::Action::MouseMotion))));
     if (focused) {
         result.buttons |= keyboard_buttons(keys, pressed, mouse_aims);
     }
+    uint32_t from_keys = result.buttons;
     bool sideways = sideways_grip();
     if (sideways) {
         uint32_t keys_held = result.buttons;
@@ -341,7 +351,21 @@ Sample device_sample(uint32_t channel) {
         result.buttons |= kMotionSideways;
     }
     gamepad::State pad = gamepad::poll(channel, sideways);
+    if (mode == attraction::Mode::Aim && (pad.buttons & (kButtonTwo | kButtonB))) {
+        pad.buttons = (pad.buttons & ~(kButtonTwo | kButtonB)) | kButtonA;
+    }
     result.buttons |= pad.buttons;
+    if ((pad.buttons & ~kMotionSideways) != 0 || std::abs(pad.stick_x) > 0.5f || std::abs(pad.stick_y) > 0.5f) {
+        g_gamepad_in_use = true;
+    } else if (from_keys != 0) {
+        g_gamepad_in_use = false;
+    }
+    if (mode == attraction::Mode::Shake) {
+        uint32_t bomb = (result.buttons & kButtonTwo) ? kButtonA : 0;
+        result.buttons = (result.buttons & ~(kButtonA | kButtonTwo)) | bomb;
+    }
+    result.stick_x = pad.stick_x;
+    result.stick_y = pad.stick_y;
     if (pad.motion_valid) {
         result.motion_valid = true;
         for (int i = 0; i < 3; i++) {
@@ -360,7 +384,25 @@ Sample device_sample(uint32_t channel) {
     video::cursor_position(cursor_x, cursor_y);
     static MouseMotionState mouse_state;
     result.buttons |= mouse_motion(mouse_state, focused && any_pressed(keys.of(keymap::Action::MouseMotion)), cursor_x, cursor_y, now);
-    if (mouse_aims && video::cursor_on_image(result.pointer_x, result.pointer_y)) {
+    static long last_cursor_x = 0;
+    static long last_cursor_y = 0;
+    static float pad_anchor_x = 0.0f;
+    static float pad_anchor_y = 0.0f;
+    static bool pad_aims = false;
+    bool stick_aims = std::fabs(pad.stick_x) > kStickAim || std::fabs(pad.stick_y) > kStickAim;
+    if (free_aim && pad.pointer_valid && stick_aims) {
+        pad_aims = true;
+    } else if (cursor_x != last_cursor_x || cursor_y != last_cursor_y || !pad.pointer_valid) {
+        pad_aims = false;
+        pad_anchor_x = pad.pointer_x;
+        pad_anchor_y = pad.pointer_y;
+    } else if (std::fabs(pad.pointer_x - pad_anchor_x) > kPadAimMove || std::fabs(pad.pointer_y - pad_anchor_y) > kPadAimMove) {
+        pad_aims = true;
+    }
+    last_cursor_x = cursor_x;
+    last_cursor_y = cursor_y;
+    bool pad_wins = free_aim && pad_aims && pad.pointer_valid;
+    if (mouse_aims && !pad_wins && video::cursor_on_image(result.pointer_x, result.pointer_y)) {
         result.pointer_valid = true;
     } else if (pad.pointer_valid) {
         result.pointer_valid = true;
@@ -372,6 +414,10 @@ Sample device_sample(uint32_t channel) {
 
 void set_auto_confirm(bool enabled) {
     g_auto_confirm = enabled;
+}
+
+bool gamepad_in_use() {
+    return g_gamepad_in_use;
 }
 
 void set_blocked(bool blocked) {

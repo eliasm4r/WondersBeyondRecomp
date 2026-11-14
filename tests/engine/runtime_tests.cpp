@@ -16,6 +16,7 @@
 #include <thread>
 #include <vector>
 
+#include "wp/fast_clock.h"
 #include "wp/canvas.h"
 #include "wp/color.h"
 #include "wp/control_names.h"
@@ -45,11 +46,14 @@
 #include "wp/stall_watch.h"
 #include "wp/settings.h"
 #include "wp/ui_text.h"
+#include "wp/update_check.h"
 #include "wp/video.h"
 #include "wp/wiimote.h"
 
 namespace wp::gx::render {
 uint64_t hash_bytes(const uint8_t* data, size_t size);
+std::vector<uint32_t> decode_texture(const uint8_t* data, uint32_t width, uint32_t height, uint32_t format, const uint8_t* tlut, uint32_t tlut_format);
+std::vector<uint8_t> cmpr_to_bc1(const uint8_t* data, uint32_t width, uint32_t height);
 }
 
 namespace {
@@ -64,6 +68,22 @@ void check(bool condition, const char* expression, int line) {
 }
 
 #define CHECK(expression) check((expression), #expression, __LINE__)
+
+void test_fast_clock() {
+    auto fast_start = wp::FastClock::now();
+    auto steady_start = std::chrono::steady_clock::now();
+    wp::FastClock::time_point last = fast_start;
+    bool monotonic = true;
+    while (std::chrono::steady_clock::now() - steady_start < std::chrono::milliseconds(1300)) {
+        wp::FastClock::time_point now = wp::FastClock::now();
+        monotonic = monotonic && now >= last;
+        last = now;
+    }
+    double fast = std::chrono::duration<double>(wp::FastClock::now() - fast_start).count();
+    double steady = std::chrono::duration<double>(std::chrono::steady_clock::now() - steady_start).count();
+    CHECK(monotonic);
+    CHECK(std::fabs(fast - steady) < 0.005);
+}
 
 void test_software_fma() {
     std::mt19937_64 random(2026);
@@ -831,6 +851,153 @@ void test_texture_hash_sees_every_byte() {
         }
         CHECK(wp::gx::render::hash_bytes(bytes.data(), size) == reference);
     }
+}
+
+uint32_t reference_texel(const uint8_t* data, uint32_t width, uint32_t x, uint32_t y, uint32_t format, const uint8_t* tlut, uint32_t tlut_format) {
+    auto be16 = [](const uint8_t* p) { return static_cast<uint32_t>(p[0] << 8 | p[1]); };
+    auto rgba = [](uint32_t r, uint32_t g, uint32_t b, uint32_t a) { return r | g << 8 | b << 16 | a << 24; };
+    auto e5 = [](uint32_t v) { return v << 3 | v >> 2; };
+    auto e6 = [](uint32_t v) { return v << 2 | v >> 4; };
+    auto e3 = [](uint32_t v) { return v << 5 | v << 2 | v >> 1; };
+    auto c565 = [&](uint32_t v) { return rgba(e5(v >> 11 & 31), e6(v >> 5 & 63), e5(v & 31), 255); };
+    auto c5a3 = [&](uint32_t v) {
+        if (v & 0x8000) {
+            return rgba(e5(v >> 10 & 31), e5(v >> 5 & 31), e5(v & 31), 255);
+        }
+        return rgba((v >> 8 & 15) * 17, (v >> 4 & 15) * 17, (v & 15) * 17, e3(v >> 12 & 7));
+    };
+    auto entry = [&](uint32_t index) {
+        uint32_t v = be16(tlut + index * 2);
+        return tlut_format == 0 ? rgba(v & 255, v & 255, v & 255, v >> 8) : tlut_format == 1 ? c565(v) : c5a3(v);
+    };
+    uint32_t bw = (format == 0 || format == 8 || format == 14) ? 8 : (format == 1 || format == 2 || format == 9) ? 8 : 4;
+    uint32_t bh = (format == 0 || format == 8 || format == 14) ? 8 : 4;
+    uint32_t blocks_across = (width + bw - 1) / bw;
+    uint32_t bytes = format == 6 ? 64 : 32;
+    const uint8_t* block = data + ((y / bh) * blocks_across + x / bw) * bytes;
+    uint32_t lx = x % bw;
+    uint32_t ly = y % bh;
+    switch (format) {
+    case 0: {
+        uint32_t v = (block[ly * 4 + lx / 2] >> ((lx & 1) ? 0 : 4) & 15) * 17;
+        return rgba(v, v, v, v);
+    }
+    case 1:
+        return rgba(block[ly * 8 + lx], block[ly * 8 + lx], block[ly * 8 + lx], block[ly * 8 + lx]);
+    case 2: {
+        uint32_t v = block[ly * 8 + lx];
+        return rgba((v & 15) * 17, (v & 15) * 17, (v & 15) * 17, (v >> 4) * 17);
+    }
+    case 3:
+        return rgba(block[(ly * 4 + lx) * 2 + 1], block[(ly * 4 + lx) * 2 + 1], block[(ly * 4 + lx) * 2 + 1], block[(ly * 4 + lx) * 2]);
+    case 4:
+        return c565(be16(block + (ly * 4 + lx) * 2));
+    case 5:
+        return c5a3(be16(block + (ly * 4 + lx) * 2));
+    case 6: {
+        uint32_t i = (ly * 4 + lx) * 2;
+        return rgba(block[i + 1], block[32 + i], block[33 + i], block[i]);
+    }
+    case 8:
+        return entry(block[ly * 4 + lx / 2] >> ((lx & 1) ? 0 : 4) & 15);
+    case 9:
+        return entry(block[ly * 8 + lx]);
+    case 10:
+        return entry(be16(block + (ly * 4 + lx) * 2) & 0x3FFF);
+    default: {
+        const uint8_t* sub = block + ((ly / 4) * 2 + lx / 4) * 8;
+        uint32_t a = be16(sub);
+        uint32_t b = be16(sub + 2);
+        uint32_t r0 = e5(a >> 11 & 31), g0 = e6(a >> 5 & 63), b0 = e5(a & 31);
+        uint32_t r1 = e5(b >> 11 & 31), g1 = e6(b >> 5 & 63), b1 = e5(b & 31);
+        uint32_t pick = sub[4 + ly % 4] >> (6 - 2 * (lx % 4)) & 3;
+        if (pick == 0) {
+            return rgba(r0, g0, b0, 255);
+        }
+        if (pick == 1) {
+            return rgba(r1, g1, b1, 255);
+        }
+        if (a > b) {
+            return pick == 2 ? rgba((2 * r0 + r1) / 3, (2 * g0 + g1) / 3, (2 * b0 + b1) / 3, 255) : rgba((r0 + 2 * r1) / 3, (g0 + 2 * g1) / 3, (b0 + 2 * b1) / 3, 255);
+        }
+        return pick == 2 ? rgba((r0 + r1) / 2, (g0 + g1) / 2, (b0 + b1) / 2, 255) : 0u;
+    }
+    }
+}
+
+void test_texture_decoder_matches_reference() {
+    std::mt19937 random(11);
+    std::vector<uint8_t> data(64 * 1024);
+    std::vector<uint8_t> tlut(32 * 1024);
+    for (uint8_t& byte : data) {
+        byte = static_cast<uint8_t>(random());
+    }
+    for (uint8_t& byte : tlut) {
+        byte = static_cast<uint8_t>(random());
+    }
+    int wrong = 0;
+    for (uint32_t format : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 8u, 9u, 10u, 14u}) {
+        for (uint32_t tlut_format : {0u, 1u, 2u}) {
+            for (auto size : {std::pair<uint32_t, uint32_t>{16, 16}, {13, 7}, {32, 8}, {1, 1}, {24, 40}}) {
+                std::vector<uint32_t> pixels = wp::gx::render::decode_texture(data.data(), size.first, size.second, format, tlut.data(), tlut_format);
+                CHECK(pixels.size() == static_cast<size_t>(size.first) * size.second);
+                for (uint32_t y = 0; y < size.second && pixels.size() == static_cast<size_t>(size.first) * size.second; y++) {
+                    for (uint32_t x = 0; x < size.first; x++) {
+                        if (pixels[y * size.first + x] != reference_texel(data.data(), size.first, x, y, format, tlut.data(), tlut_format)) {
+                            wrong++;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    CHECK(wrong == 0);
+}
+
+void test_cmpr_to_bc1_matches_decoder() {
+    std::mt19937 random(5);
+    std::vector<uint8_t> data(16 * 1024);
+    for (uint8_t& byte : data) {
+        byte = static_cast<uint8_t>(random());
+    }
+    auto e5 = [](uint32_t v) { return v << 3 | v >> 2; };
+    auto e6 = [](uint32_t v) { return v << 2 | v >> 4; };
+    int wrong = 0;
+    for (auto size : {std::pair<uint32_t, uint32_t>{8, 8}, {4, 4}, {16, 8}, {12, 20}, {64, 32}}) {
+        uint32_t width = size.first;
+        uint32_t height = size.second;
+        std::vector<uint32_t> pixels = wp::gx::render::decode_texture(data.data(), width, height, 14, nullptr, 0);
+        std::vector<uint8_t> blocks = wp::gx::render::cmpr_to_bc1(data.data(), width, height);
+        CHECK(blocks.size() == static_cast<size_t>((width + 3) / 4) * ((height + 3) / 4) * 8);
+        for (uint32_t y = 0; y < height; y++) {
+            for (uint32_t x = 0; x < width; x++) {
+                const uint8_t* block = blocks.data() + (static_cast<size_t>(y / 4) * ((width + 3) / 4) + x / 4) * 8;
+                uint32_t a = block[0] | block[1] << 8;
+                uint32_t b = block[2] | block[3] << 8;
+                uint32_t pick = block[4 + y % 4] >> (2 * (x % 4)) & 3;
+                uint32_t r0 = e5(a >> 11 & 31), g0 = e6(a >> 5 & 63), b0 = e5(a & 31);
+                uint32_t r1 = e5(b >> 11 & 31), g1 = e6(b >> 5 & 63), b1 = e5(b & 31);
+                uint32_t r = 0, g = 0, bl = 0, alpha = 255;
+                if (pick == 0) {
+                    r = r0, g = g0, bl = b0;
+                } else if (pick == 1) {
+                    r = r1, g = g1, bl = b1;
+                } else if (a > b) {
+                    r = pick == 2 ? (2 * r0 + r1) / 3 : (r0 + 2 * r1) / 3;
+                    g = pick == 2 ? (2 * g0 + g1) / 3 : (g0 + 2 * g1) / 3;
+                    bl = pick == 2 ? (2 * b0 + b1) / 3 : (b0 + 2 * b1) / 3;
+                } else if (pick == 2) {
+                    r = (r0 + r1) / 2, g = (g0 + g1) / 2, bl = (b0 + b1) / 2;
+                } else {
+                    alpha = 0;
+                }
+                if (pixels[y * width + x] != (r | g << 8 | bl << 16 | alpha << 24)) {
+                    wrong++;
+                }
+            }
+        }
+    }
+    CHECK(wrong == 0);
 }
 
 void test_fit_motion() {
@@ -1611,7 +1778,8 @@ void test_options_menu() {
     CHECK((wp::options::tab_keys(1) == std::vector<std::string>{"video.fps", "saves.backups", "system.discord", "stats.play_time"}));
     CHECK((wp::options::tab_keys(2) == std::vector<std::string>{"audio.volume", "audio.mute", "audio.wiimote_speaker"}));
     CHECK((wp::options::tab_keys(4) == std::vector<std::string>{"system.interface_language", "system.language"}));
-    CHECK((wp::options::tab_keys(5) == std::vector<std::string>{"overlay.show", "overlay.level", "overlay.corner", "video.show_fps", "video.custom_textures", "video.dump_textures", "video.bug_recorder"}));
+    CHECK((wp::options::tab_keys(5) == std::vector<std::string>{"overlay.show", "overlay.level", "overlay.corner", "video.show_fps", "video.custom_textures", "video.dump_textures", "video.bug_recorder", "system.update"}));
+    CHECK(wp::options::kind("system.update") == wp::options::Kind::Info);
     std::vector<std::string> keyboard = wp::options::tab_keys(3, wp::options::Device::Keyboard);
     CHECK(keyboard[0] == "controls.device" && keyboard[1] == "input.hide_cursor" && keyboard.back() == "keys.reset");
     CHECK(std::find(keyboard.begin(), keyboard.end(), "keys.overlay") != keyboard.end());
@@ -1981,6 +2149,21 @@ bool near(double a, double b) {
     return std::fabs(a - b) < 1e-6;
 }
 
+void test_update_check() {
+    using wp::update::newer;
+    using wp::update::tag_of;
+    CHECK(tag_of("{\"url\":\"x\",\"tag_name\": \"v0.2.0-alpha\",\"name\":\"y\"}") == "v0.2.0-alpha");
+    CHECK(tag_of("{\"tag_name\":\"v1.0\"}") == "v1.0");
+    CHECK(tag_of("{\"tag_name\":\"v1<b>\"}").empty() && tag_of("{\"message\":\"Not Found\"}").empty() && tag_of("").empty());
+    CHECK(tag_of("{\"tag_name\":\"v1.0").empty());
+    CHECK(newer("v0.2.0-alpha", "0.1.0-alpha") && newer("v0.1.1", "0.1.0-alpha") && newer("v1.0", "0.9.9"));
+    CHECK(!newer("v0.1.0-alpha", "0.1.0-alpha") && !newer("v0.1.0", "0.1.0-alpha") && !newer("v0.0.9", "0.1.0-alpha"));
+    CHECK(!newer("nightly", "0.1.0-alpha") && !newer("v0.2.0", "custom"));
+    int parts[3];
+    CHECK(wp::update::parse_version(wp::update::version(), parts));
+    CHECK(wp::update::state() == wp::update::State::Off);
+}
+
 void test_frame_pacing() {
     using wp::pacing::plan_frame;
     double next = 0;
@@ -2028,7 +2211,29 @@ void test_frame_pacing() {
     plan = plan_frame(next, 1.0 / 60, 90, 0);
     CHECK(plan.images == 0 && plan.show_real && next == 0);
 
-    CHECK(wp::pacing::interpolation_wanted(120, 0) && wp::pacing::interpolation_wanted(120, 144) && !wp::pacing::interpolation_wanted(120, 90));
+    CHECK(wp::pacing::interpolation_wanted(120, 0) && wp::pacing::interpolation_wanted(120, 144) && wp::pacing::interpolation_wanted(120, 90));
+    CHECK(!wp::pacing::interpolation_wanted(240, 60) && wp::pacing::interpolation_wanted(240, 144) && wp::pacing::capped_rate(240, 144) == 144);
+    CHECK(wp::pacing::capped_rate(165, 0) == 165 && wp::pacing::capped_rate(144, 240) == 144 && wp::pacing::capped_rate(120, 100) == 100);
+
+    next = 0;
+    outputs = 0;
+    real = 0;
+    for (int frame = 0; frame < 600; frame++) {
+        plan = plan_frame(next, 1.0 / 60, 144, 3);
+        outputs += plan.images + (plan.show_real ? 1 : 0);
+        real += plan.show_real ? 1 : 0;
+    }
+    CHECK(outputs == 1440 && real == 120 && near(plan.slot, 1.0 / 144));
+    next = 0;
+    outputs = 0;
+    for (int frame = 0; frame < 600; frame++) {
+        plan = plan_frame(next, 1.0 / 60, 165, 3);
+        outputs += plan.images + (plan.show_real ? 1 : 0);
+    }
+    CHECK(outputs == 1650);
+    next = 0;
+    plan = plan_frame(next, 1.0 / 60, 240, 3);
+    CHECK(plan.images == 3 && near(plan.fractions[0], 0.25) && near(plan.fractions[2], 0.75) && plan.show_real && near(plan.slot, 1.0 / 240));
     CHECK(wp::pacing::interpolation_wanted(90, 0) && wp::pacing::interpolation_wanted(90, 89) && wp::pacing::interpolation_wanted(90, 144));
     CHECK(!wp::pacing::interpolation_wanted(90, 75) && !wp::pacing::interpolation_wanted(60, 144) && !wp::pacing::interpolation_wanted(45, 144) && !wp::pacing::interpolation_wanted(30, 0));
     CHECK(wp::pacing::output_rate(90) == 90 && wp::pacing::output_rate(120) == 120);
@@ -2065,7 +2270,7 @@ void test_frame_pacing() {
     alarm = frame_alarm(0, input, input * 2, 45, false);
     CHECK(alarm.period == input && alarm.pending == input * 2);
 
-    CHECK((wp::options::choices("video.fps") == std::vector<std::string>{"30", "45", "60", "90", "120"}));
+    CHECK((wp::options::choices("video.fps") == std::vector<std::string>{"30", "45", "60", "90", "120", "144", "165", "240"}));
     CHECK(std::string(wp::ui::label("help.video.fps")).find("45") != std::string::npos);
     CHECK(std::string(wp::ui::label("help.video.fps", wp::ui::Language::French)).find("90") != std::string::npos);
     const std::pair<wp::ui::Language, const char*> experimental[] = {
@@ -2073,7 +2278,7 @@ void test_frame_pacing() {
         {wp::ui::Language::Spanish, "experimentales"}, {wp::ui::Language::Galician, "experimentais"}};
     for (const auto& [language, word] : experimental) {
         std::string help = wp::ui::label("help.video.fps", language);
-        CHECK(help.find(word) != std::string::npos && help.find("60") != std::string::npos && help.find("120") != std::string::npos);
+        CHECK(help.find(word) != std::string::npos && help.find("60") != std::string::npos && help.find("240") != std::string::npos);
         for (int height : {720, 1080}) {
             wp::options::Layout frame = wp::options::layout(height, 6, 0);
             wp::options::Rect line = wp::options::help_rect(frame);
@@ -2331,6 +2536,7 @@ void test_linked_fifo_registers() {
 int main() {
     wp::g_memory = static_cast<uint8_t*>(std::calloc(wp::kMemorySize, 1));
     test_memory();
+    test_fast_clock();
     test_rotate_and_shift();
     test_arithmetic();
     test_condition_register();
@@ -2354,6 +2560,8 @@ int main() {
     test_texture_keys();
     test_fit_motion();
     test_texture_hash_sees_every_byte();
+    test_texture_decoder_matches_reference();
+    test_cmpr_to_bc1_matches_decoder();
     test_key_names();
     test_key_defaults();
     test_bindings_upgrade();
@@ -2375,6 +2583,7 @@ int main() {
     test_canvas();
     test_play_time();
     test_frame_pacing();
+    test_update_check();
     test_system_stats();
     test_options_render();
     test_perf_overlay();

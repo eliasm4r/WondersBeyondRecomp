@@ -1,3 +1,4 @@
+#include "wp/fast_clock.h"
 #include "wp/log.h"
 
 #include <chrono>
@@ -10,7 +11,7 @@ namespace wp::log {
 
 namespace {
 
-using Clock = std::chrono::steady_clock;
+using Clock = wp::FastClock;
 
 struct LogFile {
     std::FILE* file = nullptr;

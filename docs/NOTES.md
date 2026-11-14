@@ -42,6 +42,31 @@ Every change that alters runtime behavior is recorded here with what was verifie
 - Strap and Hold cannot be skipped: Strap starts loading the save and the common data, and skipping Hold crashed the sound thread right after the title started (`DVDConvertPathToEntrynum` called with 7 as the path).
 - Change: the update is replaced (`SequencerBootUpdate` in `hle_functions.csv`, handler in `game/game.cpp`). It runs the same scenes, but while Strap and Hold run the engine keeps the screen black (`gx::set_screen_hidden`, no copy to the shown frame) and player 1 taps A (`input::set_auto_confirm`). CheckData is left visible, as it can ask about the save.
 - Verified: headless runs at 1x; frames are black until the title, which appears with its intro; no crash in 40 s.
+- Faster: once `nsDelhi::nsApp::ParkPrepare` (object 0x804bb1e8, state at +0x34, 2 when done; 0x804ba8c8 on the
+  USA disc) has loaded the park's data, the hidden Strap and Hold run 4 times faster: the input alarm (0x804ba4d8),
+  which paces the loop's logic steps, gets a quarter of its period through the game's own setter (0x8000efa0, which
+  cancels and restarts the OSAlarm when the period at +0x40 differs from the one at +0x38), and the frame alarm
+  follows it as usual. The title restores the period. Title reached at 2.9-3.3 s instead of 4.95-5.3 s (5 runs
+  each, hidden window). `WP_BOOT_SPEEDUP=0` turns it off.
+- What was tried: leaving Strap for Hold as soon as ParkPrepare is done, as PokePark-2-Wiicompiled does from
+  `SceneManager::RunBegin`, never finished here: the scene manager (0x80074a90) waits in state 7 until slot 3 of
+  the manager at 0x804ba2c0 is free (`0x800181c0`), and Strap holds that slot until its own end. Speeding Strap up
+  from the very start ended it before the park data was loaded in one run of three at 8 times, and 8 times after
+  the data was ready gave 2.7-5.7 s: with a 2 ms input period the loop often stayed at 60 steps a second.
+  Speeding up the video interrupt as well changed nothing.
+
+## Update check
+
+At start (not in headless runs), a thread asks `https://api.github.com/repos/<releases_repository>/releases/latest`
+with WinHTTP (10 s timeouts), reads `tag_name` (only letters, digits, dots and dashes, at most 40) and compares its
+first three numbers with `WP_VERSION` (CMake cache variable, `0.2.0-alpha`; a suffix such as `-alpha` is ignored).
+Options > Advanced shows the version and the result on the "Version" row; when a newer release exists, confirming
+the row opens the release page in the browser. Nothing is downloaded or installed. "Check for updates"
+(`system.check_updates`, on by default) turns it off; turning it back on checks at once. `WP_UPDATE_VERSION=0.0.5`
+checks as if this build were that version. `releases_repository` is in the game's `Description`
+(`eliasm4r/WondersBeyondRecomp`). Other systems than Windows do not check yet and only show the version.
+`WP_VERSION` must be raised with each release, or every build would offer the newer release as an update. The old
+local tags up to `v0.1.19-alpha` come from before the public history and are not the release numbers.
 
 ## IOS reply speed
 
@@ -97,6 +122,65 @@ into constants so the compiler folds the interpreter away (about 30 ms to compil
 shader draws until the variant is ready). Same scene at 6x: 30 fps. `WP_GENERIC_SHADER=1` turns the variants off.
 The OpenGL renderer still uses the generic shader only.
 
+## Shader cache
+
+Every compiled Direct3D shader is kept in `game/shaders.bin`, keyed by a hash of its source, entry point and
+profile; variants also store their TEV key. At start the file is read, the generic shaders come from it instead of
+the compiler, and every variant seen before is queued to the variant workers, which then only hand the stored
+bytecode to the driver. Headless, 150 s from boot into the heavy zone: 114 shaders compiled for 10.7 s of processor
+time on the first run, none on the second (all 114 from the file in the first second, 1 MB). The header holds a
+hash of all shader sources, so a build that changes any of them starts a new file. A record cut short by a crash
+is dropped and the file truncated after the last whole record. `WP_SHADER_CACHE=0` turns the cache off. Direct3D
+bytecode does not depend on the graphics card, so a filled file could ship with the setup.
+
+## Scene changes
+
+Measured headless at 60 fps from boot into the user's save spot (`switch.txt`), on the RTX 4070 / Ryzen 7 5800X, with
+a temporary sampler that took the stacks of the game and GPU threads every 0.5 ms and kept those of every frame
+over 33 ms. The 30 fps of the title and menus (frames of 33-34 ms) are the game's own and not counted.
+
+- Entering the zone stalled 417-454 ms in one frame, 58 % of it in three guest functions that look up a resource
+  by name or number in a table of `{16-bit length, name, 32-bit offset, 4 bytes}` entries, walking it from the start
+  and calling the game's `strcmp` on every entry: `0x80233a10` and `0x80233ca0` (by name, two copies) and `0x80233ad0`
+  (by number), the PAL places of PokePark 2 Wiicompiled's `fn_80195F70`, `fn_80196200`, `fn_80196030` (USA + 0x920).
+  The zone's scripts make about a million lookups as they start. `game/lookup.cpp` (hooks `FindResourceByName`,
+  `FindResourceByNameOther`, `FindResourceByNumber`) answers them natively, as Wiicompiled's `hle_lookup.c` (CC0):
+  tables of more than 16 entries get a hash index over a copy of their bytes, compared again with the table at the
+  first lookup of each retrace; a name found is checked in the live table, a name not found is trusted while the
+  count and the first and last 64 bytes are unchanged, otherwise the table is walked and indexed again.
+  `WP_NATIVE_LOOKUP=0` runs the game's walk, `=2` runs both and logs any difference: 983,040 lookups, 0 differ.
+  The stall went from 417-454 ms to 93-103 ms (what is left is the scripts themselves, spread over many functions).
+- The next frame took 175-180 ms on the GPU thread, 85 % of it in `decode_texture`: CMPR textures decoded the
+  whole 4x4 block again for every pixel, and every format went through a switch per pixel. The decoder now picks
+  the format once, decodes each CMPR sub-block once and each palette once per texture (unit test
+  `test_texture_decoder_matches_reference` against a per-pixel reference, every format, odd sizes). That frame
+  became two of 48 and 56 ms: the first is texture creation in the driver, the second a wait for a copy read back
+  from the GPU (`complete_write_backs`).
+- At 120 fps with the hidden window (`WP_HEADLESS=window`), the frame after the scripts created 178 textures of
+  12 million texels in all: 14-15 ms decoding and 20-22 ms in `CreateTexture2D` (51-55 ms in all). CMPR is the
+  Wii's form of BC1 (DXT1): 8x8 tiles of four 4x4 blocks, big-endian colours, the first texel in the high bits of
+  each index byte. `cmpr_to_bc1` reorders the blocks, swaps the colours and reverses the 2-bit indices, and CMPR
+  textures whose width and height are multiples of 4 are made `DXGI_FORMAT_BC1_UNORM` (8 times fewer bytes than
+  RGBA8) unless textures are being dumped. That frame: decoding 2.8 ms, creation 10.1 ms, 28 ms in all.
+  `test_cmpr_to_bc1_matches_decoder` decodes the blocks with the BC1 rules and compares them with the CMPR decoder
+  (same formulas, so equal). Picture, frame 900 of `still.txt` at 60 fps: 0.04 % of the pixels differ by more than 8
+  between BC1 and RGBA8, against 8.5 % between two RGBA8 runs (the game's own timing). `WP_BC1=0` keeps RGBA8.
+- Zone arrival at 120 fps with the hidden window, two runs each, frames over 25 ms: with `WP_NATIVE_LOOKUP=0
+  WP_BC1=0` (the new decoder still on) 380 + 50 and 372 + 50 ms; now 93 + 27 and 94 + 28 ms. Before the decoder
+  change the second frame was 175-180 ms.
+- Plain headless runs (`WP_HEADLESS=1`) present nothing, so the driver sends queued work to the GPU only when a
+  copy is read back: they showed a 56-86 ms wait in `complete_write_backs` after the texture frame and at the start
+  of an attraction that does not happen with the window. Measure frame times with `WP_HEADLESS=window`.
+- Entering an attraction's lobby (scene 5) takes 80-91 ms in one frame, half of it with every guest thread waiting;
+  the screen is black then. Starting the attraction (scene 4) is under 40 ms, except Power Bash on the `attractions`
+  branch, where redrawing the bomb button took about 20 ms of a 60 ms frame.
+- The pause menu showed no frame over 40 ms.
+- What is left in the 93 ms frame is the zone's scripts (the callers of the lookups, `0x80234240` and below),
+  spread over many guest functions, and about 15 % of waiting. Each poll of the interrupts read `steady_clock`
+  (a slow `gettimeofday` in this MinGW) for the module list and copied a whole gamepad snapshot under a mutex
+  after a `call_once`; the module watch now reads `FastClock` and `gamepad::connected` an atomic flag per slot
+  (guest idle about 2 points higher in the heavy zone at 120 fps, 52-53 % -> 53-56 %).
+
 ## 60 fps
 
 The main loop is paced by two periodic alarms in the timer manager at 0x804BA4D8 (0x70 bytes each): input at
@@ -117,6 +201,29 @@ Three more things were needed:
   keeps the 30 fps period.
 
 Measured in the first cave, D3D11: 59.9 to 60.0 fps at 3x and 6x.
+
+## 144, 165 and 240 fps
+
+`video.fps` also takes 144, 165 and 240. The game still runs 60 real frames; the rest are in-between images, at
+most three a frame (`kMaxImages`), which is exactly 240. The output rate is the setting capped at the screen's
+refresh rate (`pacing::capped_rate`, `output_rate`), and in-between images are made when that rate is 85 or more:
+240 on a 144 Hz screen gives 144, 120 on a 90 Hz screen now gives 90 instead of plain 60. The options show
+"240 > 144 (144 Hz)" when the cap applies. `plan_frame` rounds the images per real frame to whole numbers for
+120 and 240, to halves for 90, and to 0.05 otherwise (2.4 at 144, 2.75 at 165), the phase carrying over between
+frames as at 90. Unit tests: 600 frames at 144 give 1,440 images with 120 real frames shown, at 165 1,650.
+Measured with the hidden window on the user's 240 Hz screen, `switch.txt` at the save spot: 143.9-144.8 fps,
+164.8-164.9 fps and 239.8 fps, every frame with its images, 1.9, 2.0 and 2.2-2.3 ms per real frame for the images
+(1.1 ms at 120), GPU thread 37-44 % busy.
+
+The user got 210-216 fps at 240 in dialogues, and `pause.txt` with the hidden window gave the same. Every real
+frame had its three images (`replay` line: 60 frames, 60 with images, 0 late), but about 27 images a second were
+dropped by `service_deferred`, which shows only the newest of more than two images already due. The GPU thread
+looks at the queue of images between parsing commands, and when it has nothing to parse it waited on its condition
+variable for 1 ms: that wait lasted up to 11 ms, about 75 times a second (MinGW's timed wait is not precise), so in
+light scenes, where few commands wake it, the images piled up. The wait is now a high-resolution waitable timer up
+to the next image's time (0.1 to 1 ms), as PokePark 2 Wiicompiled's `wait_until` (`gx_frames.c`, which shows its
+images from a thread of their own). Same scene: 239.6-239.8 fps, images 2.8 to 5.5 ms apart instead of 0.1 to 14;
+144 fps 6 to 8 ms apart, 120 fps 7.6 to 9 ms, 60 fps unchanged.
 
 ## 45 and 90 fps
 
@@ -364,6 +471,60 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
   The test used two temporary switches (a camera log line, a forced spin) that are not kept.
 - Not seen yet in game: scenes that move this same camera themselves would be overridden too.
 
+## Attractions
+
+Each of the four attractions gets its own controls, chosen by `game/attractions.cpp` and applied by the engine
+(`wp/attraction.h`, `engine/src/input/wiimote.cpp`, `input.cpp`). The approach and the dance tables come from
+PokePark-2-Wiicompiled (CC0, USA disc), mapped to PAL by function size patterns.
+
+- PAL addresses: `SceneManager::Get` `0x80074A90`, `EndScene` `0x802076A0`, `AddSceneParameter` `0x80207730` (hooked),
+  the scene picker `0x80210F80` (hooked, r3 = scene), `SceneManager` run begin `0x802073E0` (hooked), the dance frames
+  `0x801B8230` and `0x801B8910` (hooked, r3 = the dance), the dance judgement `0x801B9950` (hooked) and the
+  `"AttractionId"` string `0x8045394C`. Scenes: 0 park, 4 attraction, 5 lobby. `AttractionId` 0 to 3 = Cake
+  Contraption, Dance Inferno, Power Bash, Flight of Fancy. The mode is set in scene 4 only.
+- `WP_ATTRACTION=n[,seconds]` (1 to 4) adds the parameter and ends the park scene once the park has run that long,
+  which opens the attraction's lobby. `WP_DANCE_AUTO=1` plays the dance's moves by itself (tests).
+- Cake Contraption: the mouse aims without the pointer key and its buttons stay as bound; on a pad, the left stick
+  aims (the right stick and the gyroscope do not, the player found them awkward there), and 2 or B (pad south, RT)
+  also press A. The pad takes the aim while the left stick is pushed past 0.2, or once its pointer has moved 0.03 (of
+  the half screen) since the cursor last moved; the mouse takes it back as soon as the cursor moves.
+  The pad's motion sensors are not passed on there: the game ignores the pointer unless the remote lies flat toward
+  the screen, so the remote is kept level whatever way the pad is held.
+- Power Bash: targets come up in front of Pikachu and a shake strikes them (PERFECT or GOOD by timing); bombs marked
+  A must be dropped with A instead, striking one stuns Pikachu, and a strike is ignored while Pikachu recovers. Each
+  press of `keys.shake_left`, `keys.shake_right` (Q/E, LB/RB) or `keys.shake` gives a 120 ms back-and-forth shake
+  (four 30 ms bursts of 2.5 g on all three axes, alternating): a single 30 ms burst was often lost (24 strikes against
+  33 for presses every 350 ms). While the pad is being shaken (`kMotionShake`, set by a jolt and held 250 ms) the
+  same shake goes on without a break, from the first jolt; the pad's raw motion and the generic shake wave are not
+  passed on there, since the game recognised a real shake late. 2 (Space, pad south) is A, the bomb.
+- The A drawn by the bombs is `AtAButton00.tpl` (CI8 57x56, layout `MnAtBomAButton`, in the same `MenuAttraction`
+  archive). While Power Bash runs (checked from the `SceneManager` run begin hook), the 33x33 middle of its disc is
+  repainted row by row with the disc's colour near its edge, then the bomb key is drawn in the letter's colour: the
+  key's name, a PlayStation shape, or a space bar symbol for Space (used on the dance icons too).
+- The archives holding the dance icons and the bomb button are found by searching guest RAM for the file name,
+  4 MB a frame (MEM2 then MEM1, then again a second later if absent). Searching all 88 MB at once took a 58-59 ms
+  frame when Power Bash started, again every second until the archive was loaded; with the chunks no frame there
+  goes over 40 ms, and the button is found about 0.4 s later, long before the first bomb.
+  The shake actions are left out of the key conflict check (`keymap::attraction_only`).
+- Flight of Fancy: the remote is held sideways; the movement keys or the left stick steer up to 90 degrees and climb
+  or dive up to 50, eased by 0.15 a report; the pad's own motion is ignored there, as in Cake Contraption.
+- Dance Inferno: the remote is held upright and each move has a key: the screen directions, A (kick) and 2 (poses).
+  The chart's cue row is at chart + `0xBCC` (a word a slot, the move then `0x1F` for each further beat, `0` between,
+  `0xFF` for none), the tick at +`0x1F4C` / +`0x1F50` and the slot length at +`0x1F54`. A press near a cue swings once
+  if it is that cue's key, and held, swings again on each further beat of the move. A, 2 and the d-pad are hidden from
+  the game while the song plays.
+- Poses: the judgement (`0x801B9950`: r4 player, r5 cues, r6 swung, r7 still, r8 tick) counts a pose's swing only in
+  the first half of its slot (before the icon reaches the diamond, about 0.25 s early), then wants the remote still
+  before +`0x1F38` ticks (10) for GREAT. A swing up to half a slot late is counted at +`0x5294` (+4 per player) by the
+  hook, and when it came within the moves' window (+`0x1F34`, 8 ticks) the still window is widened for that slot, so a
+  pose pressed on the icon scores GREAT (all ten poses of the first part, on time or 6 ticks late).
+- The bound key is drawn in the lower right corner of each move icon (`At01UIDanceIcon00-07.tpl`, CI8 160x160 in the
+  `MenuAttraction` U8 archive, found in MEM2 or MEM1 by name at most once a second): a white rounded box edged in the
+  icon's darkest colour, with an arrow, a PlayStation shape or the key's name (the box widens up to 104 texels for long
+  names), mapped to the nearest palette colours. The icons are restored from a copy and redrawn when the labels change.
+  The labels follow the last device used (`input::gamepad_in_use`: a pad button or a stick past half sets it, a key or
+  mouse button clears it).
+
 ## Indirect maps left unbound
 
 `render::draw` bound only the maps named by TEV stage orders. A map read only by an indirect stage, such as the
@@ -544,6 +705,20 @@ Status on 2026-11-10, not committed yet. 60 fps is fine. 120 fps works in the ti
   (w row `10393 z + 0.65 w`), right for the background and wrong at any other depth: Pikachu counted as moved and
   went through an inverse with elements near 1e7. `fit_motion` now fits the difference from no motion, so a
   direction the samples do not settle stays the identity.
+- `WP_PROFILE_CPU=<file>` (Windows) samples the game thread the same way, six exe frames per sample. Heavy zone of the
+  user's save at 60 fps (2026-11-14): asleep in `gx::wait_for_interrupt` 43 %, translated code 22 %, quantized loads
+  and stores, `madd_single` and `wp::call` about 11 %, clock reads 8 % (`steady_clock::now` is `gettimeofday` in
+  this MinGW: `audio::update` 3.2 %, `time_base` from `decrementer_imminent` 2.3 %, DSP 1.2 %, all from
+  `poll_interrupts`), DSP 4.7 %, FIFO push 4.5 %.
+- `wp::FastClock` (`fast_clock.cpp`) reads the performance counter, and after one second of it, where the TSC is
+  invariant, the TSC scaled by the rate measured over that second, carrying on from that reading (as PokePark 2
+  Wiicompiled's `ppc_timebase`). Used by the time base, audio, DSP, interrupts, log and Wii Remote timers.
+  `load_quantized` / `store_quantized` are forced inline with only the plain float case (GQR type bit 2 clear),
+  the scaled integer types going to `load_dequantized` / `store_requantized`.
+- Measured, heavy zone, two runs each: game thread busy 58.7/59.2 % -> 49.9/50.4 % at 60 fps, guest idle
+  48.7/51.5 -> 58.3/57.5 %; at 120 fps no clear change (55.4/59.5 -> 56.5/56.8 %), no in-between image lost.
+- Tried and dropped: guest registers kept in C locals per function (Wiicompiled's `regcache.py`): no measurable
+  change, +19 s compile, +13 MB exe. Game code at `-O2`: 2 to 3 points at most, compile 51 s -> 2 min 24.
 - `WP_PROFILE_GPU=<file>` (Windows) samples the GPU thread every millisecond after a warm-up and writes, every five
   seconds, how often each call chain (three return addresses inside the exe) was seen. First zone at 120 fps, scale
   4: flat. `draw_primitive` 43 % by itself and 70 % with what it calls (17,000 draws of about 9 vertices a frame,
@@ -681,6 +856,17 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
   not an aligned address inside guest memory and logs the first such link once (`memory ... links to`). Our hooks had
   not acted before either crash (no wait, no full free list). Whether that link is a real corruption is unknown: if
   the game later crashes inside 0x8037D4A0, the log line gives the heap, the block and the value.
+- It was a real corruption, and the cause of the crash in 0x8037D4A0 that followed it (2 runs in 8 at 240 fps from
+  `switch.txt`, at 20 to 61 s, and once in `pause.txt`; every time block 0x814f9950 of heap 4 linking to
+  0xFFFFFFFF). A hardware write breakpoint on 0x814f9958 (`WP_WATCH` in a debug build, Dr0 set on every thread, a
+  vectored handler mapping the host return addresses to guest functions) caught the allocator itself writing
+  0xFFFFFFFF there: it fills the alignment gap of the block it hands out with 0xFFFFFFFF, and that block was still
+  in the free list. The release of the frees waiting for a token (0x8000E270, which calls the heap's free
+  0x8037D280) runs in the token interrupt, and our interrupts arrive at `WP_POLL` points, which include the loops of
+  0x8037D4A0: a release could land while the allocator walked or split the list. `TempPoolAlloc` (0x8000DF50) and
+  the pool's free (0x8000DF70) call the heap without disabling interrupts, unlike `DeferredFree` (0x8000E0B0,
+  `OSDisableInterrupts`). Both now run with external interrupts masked in the MSR (`without_interrupts`, hook
+  `TempPoolFree` added); a pending interrupt is taken at the next poll after they return.
 - Looked at and ruled out for the gray lines between polygons of moving models: the game changing vertex arrays or
   indexed matrices while the GPU thread still draws from them (0 changes before the frame end over 600,000 samples a
   second, even with the thread stalled 150 ms), and face culling in single precision (wrong for 10,000 to 17,000
@@ -778,7 +964,11 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
   frame when the player changes direction, and the ground's matrix into that picture has rows of very different
   sizes, so the whole-matrix test let it through and the images in between showed shadows half as large again,
   turned 45 degrees around the player. Post matrices go through the same test (they were blended unconditionally);
-  the `runs` log line counts the texture matrices held back this way. A copy of a model that just appeared does not
+  the `runs` log line counts the texture matrices held back this way. A texture matrix of a unit that reads texture
+  coordinates is also held back when its translation moves more than 0.05: the game changes a Pokémon's expression
+  (eyes, mouth) by moving the coordinates into another part of the face texture, and blending that move slid the eyes
+  and mouth across the face on the images in between (user's bug recorder capture, Oshawott). A texture that scrolls
+  and wraps from 1 back to 0 is held back the same way instead of running back over the whole texture. A copy of a model that just appeared does not
   take the previous place of another copy that a later copy is nearer to (`later`, `taken` in `pair_runs`). When more than 8 and a third of the paired runs do that, the frame is a cut and gets no
   images. Unpaired runs and runs whose row layout changed are drawn as in the current frame. The camera motion
   found from the matrices is also given to the processor path (`adopt_run_camera`) when the few draws left there
