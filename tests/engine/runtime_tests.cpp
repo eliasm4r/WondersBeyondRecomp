@@ -46,6 +46,7 @@
 #include "wp/stall_watch.h"
 #include "wp/settings.h"
 #include "wp/ui_text.h"
+#include "wp/update_check.h"
 #include "wp/video.h"
 #include "wp/wiimote.h"
 
@@ -1777,7 +1778,8 @@ void test_options_menu() {
     CHECK((wp::options::tab_keys(1) == std::vector<std::string>{"video.fps", "saves.backups", "system.discord", "stats.play_time"}));
     CHECK((wp::options::tab_keys(2) == std::vector<std::string>{"audio.volume", "audio.mute", "audio.wiimote_speaker"}));
     CHECK((wp::options::tab_keys(4) == std::vector<std::string>{"system.interface_language", "system.language"}));
-    CHECK((wp::options::tab_keys(5) == std::vector<std::string>{"overlay.show", "overlay.level", "overlay.corner", "video.show_fps", "video.custom_textures", "video.dump_textures", "video.bug_recorder"}));
+    CHECK((wp::options::tab_keys(5) == std::vector<std::string>{"overlay.show", "overlay.level", "overlay.corner", "video.show_fps", "video.custom_textures", "video.dump_textures", "video.bug_recorder", "system.update"}));
+    CHECK(wp::options::kind("system.update") == wp::options::Kind::Info);
     std::vector<std::string> keyboard = wp::options::tab_keys(3, wp::options::Device::Keyboard);
     CHECK(keyboard[0] == "controls.device" && keyboard[1] == "input.hide_cursor" && keyboard.back() == "keys.reset");
     CHECK(std::find(keyboard.begin(), keyboard.end(), "keys.overlay") != keyboard.end());
@@ -2145,6 +2147,21 @@ void save_menu_png(const wp::options::Image& image, const std::string& path) {
 
 bool near(double a, double b) {
     return std::fabs(a - b) < 1e-6;
+}
+
+void test_update_check() {
+    using wp::update::newer;
+    using wp::update::tag_of;
+    CHECK(tag_of("{\"url\":\"x\",\"tag_name\": \"v0.2.0-alpha\",\"name\":\"y\"}") == "v0.2.0-alpha");
+    CHECK(tag_of("{\"tag_name\":\"v1.0\"}") == "v1.0");
+    CHECK(tag_of("{\"tag_name\":\"v1<b>\"}").empty() && tag_of("{\"message\":\"Not Found\"}").empty() && tag_of("").empty());
+    CHECK(tag_of("{\"tag_name\":\"v1.0").empty());
+    CHECK(newer("v0.2.0-alpha", "0.1.0-alpha") && newer("v0.1.1", "0.1.0-alpha") && newer("v1.0", "0.9.9"));
+    CHECK(!newer("v0.1.0-alpha", "0.1.0-alpha") && !newer("v0.1.0", "0.1.0-alpha") && !newer("v0.0.9", "0.1.0-alpha"));
+    CHECK(!newer("nightly", "0.1.0-alpha") && !newer("v0.2.0", "custom"));
+    int parts[3];
+    CHECK(wp::update::parse_version(wp::update::version(), parts));
+    CHECK(wp::update::state() == wp::update::State::Off);
 }
 
 void test_frame_pacing() {
@@ -2566,6 +2583,7 @@ int main() {
     test_canvas();
     test_play_time();
     test_frame_pacing();
+    test_update_check();
     test_system_stats();
     test_options_render();
     test_perf_overlay();

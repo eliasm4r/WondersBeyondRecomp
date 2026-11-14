@@ -55,6 +55,19 @@ Every change that alters runtime behavior is recorded here with what was verifie
   the data was ready gave 2.7-5.7 s: with a 2 ms input period the loop often stayed at 60 steps a second.
   Speeding up the video interrupt as well changed nothing.
 
+## Update check
+
+At start (not in headless runs), a thread asks `https://api.github.com/repos/<releases_repository>/releases/latest`
+with WinHTTP (10 s timeouts), reads `tag_name` (only letters, digits, dots and dashes, at most 40) and compares its
+first three numbers with `WP_VERSION` (CMake cache variable, `0.1.0-alpha`; a suffix such as `-alpha` is ignored).
+Options > Advanced shows the version and the result on the "Version" row; when a newer release exists, confirming
+the row opens the release page in the browser. Nothing is downloaded or installed. "Check for updates"
+(`system.check_updates`, on by default) turns it off; turning it back on checks at once. `WP_UPDATE_VERSION=0.0.5`
+checks as if this build were that version. `releases_repository` is in the game's `Description`
+(`eliasm4r/WondersBeyondRecomp`). Other systems than Windows do not check yet and only show the version.
+`WP_VERSION` must be raised with each release, or every build would offer the newer release as an update. The old
+local tags up to `v0.1.19-alpha` come from before the public history and are not the release numbers.
+
 ## IOS reply speed
 
 - Most of the boot time was the game copying data to `/tmp/Pokemon/*.dan` on the NAND, with replies delayed like the real NAND (about 5 ms per 16 KB cluster written).

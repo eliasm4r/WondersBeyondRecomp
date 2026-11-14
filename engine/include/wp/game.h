@@ -19,6 +19,7 @@ struct Description {
     bool sideways_grip;
     // The Application ID from Discord's developer portal for the "playing" status, or "" for none.
     const char* discord_application;
+    const char* releases_repository;
 };
 
 const Description& description();

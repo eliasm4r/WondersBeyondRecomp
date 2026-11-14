@@ -14,10 +14,9 @@ Every change to WondersBeyondRecomp, newest first.
 
 ### Added
 - **Shader preloading.** Shaders compiled while playing are saved on the disk and loaded again at the next start, so arriving in a zone no longer makes the processor compile them again (about 10 s of processor time saved over a play session, more on slower processors).
-
 - **144, 165 and 240 fps.** The frame-rate limit goes up to 240 with in-between frames, never above the screen's refresh rate (240 on a 144 Hz screen shows 144).
-
 - **Faster start.** The hidden start-up screens run four times faster once the park data is loaded: the title appears about 2 seconds sooner.
+- **Update check.** Options > Advanced shows the version and whether a newer release is out on GitHub; confirming it opens the download page. It can be turned off.
 
 ### Changed
 - **Lighter on the processor.** The game's own thread does about 15 % less work at 60 fps: the clock is read through the processor's counter instead of a slow Windows call, and the paired-single loads and stores of plain floats are compiled into the game code.

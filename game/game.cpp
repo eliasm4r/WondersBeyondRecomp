@@ -31,6 +31,7 @@ constexpr Description kDescription = {
     "game/textures",
     true,
     "1569649565127409705",
+    "eliasm4r/WondersBeyondRecomp",
 };
 
 // nsNile::nsSequence::SequencerBoot (vtable 0x80453800), state at +4. The game plays Strap (scene 1), which

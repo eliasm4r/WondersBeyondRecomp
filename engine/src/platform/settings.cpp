@@ -63,6 +63,7 @@ const Option kBaseOptions[] = {
     {"system.widescreen", "1"},
     {"system.options_menu", "1"},
     {"system.discord", "1"},
+    {"system.check_updates", "1"},
     {"system.idle_sleep", "1"},
     {"audio.mute", "0"},
     {"audio.volume", "100"},
