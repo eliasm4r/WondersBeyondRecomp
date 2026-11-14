@@ -42,6 +42,18 @@ Every change that alters runtime behavior is recorded here with what was verifie
 - Strap and Hold cannot be skipped: Strap starts loading the save and the common data, and skipping Hold crashed the sound thread right after the title started (`DVDConvertPathToEntrynum` called with 7 as the path).
 - Change: the update is replaced (`SequencerBootUpdate` in `hle_functions.csv`, handler in `game/game.cpp`). It runs the same scenes, but while Strap and Hold run the engine keeps the screen black (`gx::set_screen_hidden`, no copy to the shown frame) and player 1 taps A (`input::set_auto_confirm`). CheckData is left visible, as it can ask about the save.
 - Verified: headless runs at 1x; frames are black until the title, which appears with its intro; no crash in 40 s.
+- Faster: once `nsDelhi::nsApp::ParkPrepare` (object 0x804bb1e8, state at +0x34, 2 when done; 0x804ba8c8 on the
+  USA disc) has loaded the park's data, the hidden Strap and Hold run 4 times faster: the input alarm (0x804ba4d8),
+  which paces the loop's logic steps, gets a quarter of its period through the game's own setter (0x8000efa0, which
+  cancels and restarts the OSAlarm when the period at +0x40 differs from the one at +0x38), and the frame alarm
+  follows it as usual. The title restores the period. Title reached at 2.9-3.3 s instead of 4.95-5.3 s (5 runs
+  each, hidden window). `WP_BOOT_SPEEDUP=0` turns it off.
+- What was tried: leaving Strap for Hold as soon as ParkPrepare is done, as PokePark-2-Wiicompiled does from
+  `SceneManager::RunBegin`, never finished here: the scene manager (0x80074a90) waits in state 7 until slot 3 of
+  the manager at 0x804ba2c0 is free (`0x800181c0`), and Strap holds that slot until its own end. Speeding Strap up
+  from the very start ended it before the park data was loaded in one run of three at 8 times, and 8 times after
+  the data was ready gave 2.7-5.7 s: with a 2 ms input period the loop often stayed at 60 steps a second.
+  Speeding up the video interrupt as well changed nothing.
 
 ## IOS reply speed
 

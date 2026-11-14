@@ -45,11 +45,61 @@ constexpr uint32_t kSceneHold = 2;
 constexpr uint32_t kSceneCheckData = 3;
 constexpr uint32_t kStay = 0xFFFFFFFF;
 constexpr uint32_t kToTitle = 2;
+constexpr uint32_t kParkPrepareState = 0x804bb21c;
+constexpr uint32_t kParkPrepared = 2;
+constexpr uint32_t kInputAlarm = 0x804BA4D8;
+constexpr uint32_t kAlarmPeriod = 0x38;
+constexpr uint32_t kAlarmPending = 0x40;
+constexpr uint32_t kApplyAlarmPeriod = 0x8000efa0;
+constexpr uint64_t kBootSpeed = 4;
+
+bool g_boot_fast = false;
+
+bool boot_speedup() {
+    static const bool wanted = [] {
+        const char* value = std::getenv("WP_BOOT_SPEEDUP");
+        return !value || *value != '0';
+    }();
+    return wanted;
+}
+
+uint64_t read_u64(uint32_t address) {
+    return (static_cast<uint64_t>(rd32(address)) << 32) | rd32(address + 4);
+}
+
+void write_u64(uint32_t address, uint64_t value) {
+    wr32(address, static_cast<uint32_t>(value >> 32));
+    wr32(address + 4, static_cast<uint32_t>(value));
+}
+
+void pace_boot(Cpu& c, bool fast) {
+    static uint64_t normal = 0;
+    uint64_t period = read_u64(kInputAlarm + kAlarmPeriod);
+    if (fast && normal == 0) {
+        normal = period;
+        log::write("boot", "park data ready, hidden screens run %llu times faster", static_cast<unsigned long long>(kBootSpeed));
+    }
+    if (normal == 0) {
+        return;
+    }
+    uint64_t wanted = fast ? normal / kBootSpeed : normal;
+    if (period != wanted) {
+        write_u64(kInputAlarm + kAlarmPending, wanted);
+        uint32_t saved = c.r[3];
+        c.r[3] = kInputAlarm;
+        call(c, kApplyAlarmPeriod);
+        c.r[3] = saved;
+    }
+    if (!fast) {
+        normal = 0;
+    }
+}
 
 // Strap and Hold also set up the save, the common data and the sound the title needs, so they still run,
 // hidden and confirmed by themselves. CheckData is left as is: it can ask about the save.
 void start_scene(Cpu& c, uint32_t self, uint32_t scene) {
     bool hidden = scene != kSceneCheckData;
+    g_boot_fast = hidden && boot_speedup();
     gx::set_screen_hidden(hidden);
     input::set_auto_confirm(hidden);
     wr32(self + 4, scene);
@@ -62,6 +112,7 @@ void start_scene(Cpu& c, uint32_t self, uint32_t scene) {
 void boot_sequence(Cpu& c) {
     uint32_t self = c.r[3];
     uint32_t state = rd32(self + 4);
+    pace_boot(c, g_boot_fast && (state != kSceneStrap || rd32(kParkPrepareState) == kParkPrepared));
     if (state == kNotStarted) {
         start_scene(c, self, kSceneStrap);
         c.r[3] = kStay;
@@ -75,6 +126,8 @@ void boot_sequence(Cpu& c) {
     if (state == kSceneHold) {
         gx::set_screen_hidden(false);
         input::set_auto_confirm(false);
+        g_boot_fast = false;
+        pace_boot(c, false);
         log::write("boot", "title");
         c.r[3] = kToTitle;
         return;
@@ -101,7 +154,6 @@ const Description& description() {
 // keep 30 fps while their file is being streamed.
 void retrace() {
     next_lookup_retrace();
-    constexpr uint32_t kInputAlarm = 0x804BA4D8;
     constexpr uint32_t kFrameAlarm = 0x804BA548;
     constexpr uint32_t kPeriod = 0x38;
     constexpr uint32_t kPendingPeriod = 0x40;

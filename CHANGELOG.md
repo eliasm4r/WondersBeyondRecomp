@@ -17,6 +17,8 @@ Every change to WondersBeyondRecomp, newest first.
 
 - **144, 165 and 240 fps.** The frame-rate limit goes up to 240 with in-between frames, never above the screen's refresh rate (240 on a 144 Hz screen shows 144).
 
+- **Faster start.** The hidden start-up screens run four times faster once the park data is loaded: the title appears about 2 seconds sooner.
+
 ### Changed
 - **Lighter on the processor.** The game's own thread does about 15 % less work at 60 fps: the clock is read through the processor's counter instead of a slow Windows call, and the paired-single loads and stores of plain floats are compiled into the game code.
 - **Smoother zone arrivals.** The longest freeze when a zone starts, about 0.4 s while its scripts looked up their resources one by one, is down to about 0.1 s, and textures decode several times faster, which removes most of the next freeze (0.18 s).
