@@ -958,7 +958,48 @@ int scaled(int value) {
     return value * g_scale;
 }
 
-bool compile(const char* source, const char* entry, const char* profile, ID3DBlob** blob) {
+struct ShaderCache {
+    std::mutex mutex;
+    std::unordered_map<uint64_t, std::string> code;
+    std::vector<std::string> variants;
+    FILE* file = nullptr;
+    uint32_t compiled = 0;
+    uint32_t reused = 0;
+    double compile_seconds = 0.0;
+};
+ShaderCache g_shader_cache;
+
+uint64_t shader_hash(const char* source, const char* entry, const char* profile) {
+    uint64_t hash = hash_bytes(reinterpret_cast<const uint8_t*>(source), std::strlen(source));
+    hash = (hash ^ hash_bytes(reinterpret_cast<const uint8_t*>(entry), std::strlen(entry))) * 1099511628211ull;
+    return (hash ^ hash_bytes(reinterpret_cast<const uint8_t*>(profile), std::strlen(profile))) * 1099511628211ull;
+}
+
+void store_shader(uint64_t hash, const std::string& variant, const void* code, size_t size) {
+    std::lock_guard<std::mutex> lock(g_shader_cache.mutex);
+    if (!g_shader_cache.code.try_emplace(hash, static_cast<const char*>(code), size).second || !g_shader_cache.file) {
+        return;
+    }
+    const uint32_t sizes[2] = {static_cast<uint32_t>(variant.size()), static_cast<uint32_t>(size)};
+    std::fwrite(&hash, sizeof hash, 1, g_shader_cache.file);
+    std::fwrite(sizes, sizeof sizes, 1, g_shader_cache.file);
+    std::fwrite(variant.data(), 1, variant.size(), g_shader_cache.file);
+    std::fwrite(code, 1, size, g_shader_cache.file);
+    std::fflush(g_shader_cache.file);
+}
+
+bool compile(const char* source, const char* entry, const char* profile, ID3DBlob** blob, const std::string& variant = {}) {
+    uint64_t hash = shader_hash(source, entry, profile);
+    {
+        std::lock_guard<std::mutex> lock(g_shader_cache.mutex);
+        auto found = g_shader_cache.code.find(hash);
+        if (found != g_shader_cache.code.end() && SUCCEEDED(D3DCreateBlob(found->second.size(), blob))) {
+            std::memcpy((*blob)->GetBufferPointer(), found->second.data(), found->second.size());
+            g_shader_cache.reused++;
+            return true;
+        }
+    }
+    auto start = std::chrono::steady_clock::now();
     ID3DBlob* errors = nullptr;
     HRESULT result = D3DCompile(source, std::strlen(source), "gx", nullptr, nullptr, entry, profile, 0, 0, blob, &errors);
     if (FAILED(result)) {
@@ -969,6 +1010,10 @@ bool compile(const char* source, const char* entry, const char* profile, ID3DBlo
         return false;
     }
     release(errors);
+    store_shader(hash, variant, (*blob)->GetBufferPointer(), (*blob)->GetBufferSize());
+    std::lock_guard<std::mutex> lock(g_shader_cache.mutex);
+    g_shader_cache.compiled++;
+    g_shader_cache.compile_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     return true;
 }
 
@@ -1263,6 +1308,68 @@ PixelInput vertex_run(RunInput input) {
 }
 )";
 
+constexpr uint32_t kShaderCacheMagic = 0x43535057;
+constexpr uint32_t kShaderCacheFormat = 1;
+
+void open_shader_cache() {
+    namespace fs = std::filesystem;
+    const char* setting = std::getenv("WP_SHADER_CACHE");
+    if (setting && std::strcmp(setting, "0") == 0) {
+        return;
+    }
+    fs::path path = fs::path(game::description().settings_file).parent_path() / "shaders.bin";
+    uint64_t sources = 0;
+    for (const char* source : {kShaderSource, kRunSource, kPresentShaderSource, kOverlayShaderSource, kClearShaderSource, kCopyShaderSource}) {
+        sources = (sources ^ hash_bytes(reinterpret_cast<const uint8_t*>(source), std::strlen(source))) * 1099511628211ull;
+    }
+    const uint32_t header[4] = {kShaderCacheMagic, kShaderCacheFormat, static_cast<uint32_t>(sources), static_cast<uint32_t>(sources >> 32)};
+    std::string bytes;
+    if (FILE* file = fs::exists(path) ? std::fopen(path.string().c_str(), "rb") : nullptr) {
+        char buffer[1 << 16];
+        size_t read = 0;
+        while ((read = std::fread(buffer, 1, sizeof buffer, file)) > 0) {
+            bytes.append(buffer, read);
+        }
+        std::fclose(file);
+    }
+    size_t good = 0;
+    if (bytes.size() >= sizeof header && std::memcmp(bytes.data(), header, sizeof header) == 0) {
+        good = sizeof header;
+        std::lock_guard<std::mutex> lock(g_shader_cache.mutex);
+        while (bytes.size() - good >= 16) {
+            uint64_t hash = 0;
+            uint32_t sizes[2] = {};
+            std::memcpy(&hash, bytes.data() + good, 8);
+            std::memcpy(sizes, bytes.data() + good + 8, 8);
+            size_t end = good + 16 + static_cast<size_t>(sizes[0]) + sizes[1];
+            if (sizes[1] == 0 || end > bytes.size()) {
+                break;
+            }
+            const char* variant = bytes.data() + good + 16;
+            if (g_shader_cache.code.try_emplace(hash, variant + sizes[0], sizes[1]).second && sizes[0] > 0) {
+                g_shader_cache.variants.emplace_back(variant, sizes[0]);
+            }
+            good = end;
+        }
+    }
+    std::error_code error;
+    if (good == 0) {
+        fs::create_directories(path.parent_path(), error);
+        g_shader_cache.file = std::fopen(path.string().c_str(), "wb");
+        if (g_shader_cache.file) {
+            std::fwrite(header, sizeof header, 1, g_shader_cache.file);
+            std::fflush(g_shader_cache.file);
+        }
+    } else {
+        if (good < bytes.size()) {
+            fs::resize_file(path, good, error);
+        }
+        g_shader_cache.file = error ? nullptr : std::fopen(path.string().c_str(), "ab");
+    }
+    log::write("video", "shader cache %s: %u shaders, %u of them specialised pixel shaders", g_shader_cache.file ? path.string().c_str() : "not writable",
+               static_cast<unsigned>(g_shader_cache.code.size()), static_cast<unsigned>(g_shader_cache.variants.size()));
+}
+
 constexpr uint32_t kRunVertexBytes = 16u << 20;
 constexpr uint32_t kRunIndexBytes = 4u << 20;
 constexpr uint32_t kRunRowCapacity = 1u << 16;
@@ -1523,6 +1630,8 @@ void log_adapter() {
     release(dxgi_device);
 }
 
+void preload_variants();
+
 bool initialize() {
     if (g_device.ready) {
         return true;
@@ -1557,6 +1666,7 @@ bool initialize() {
         info_queue->Release();
         log::write("video", "Direct3D debug layer on");
     }
+    open_shader_cache();
     if (FAILED(result) || !create_target() || !create_pipeline()) {
         std::fputs("cannot initialise the D3D11 renderer\n", stderr);
         g_device.failed = true;
@@ -1564,6 +1674,7 @@ bool initialize() {
     }
     log_adapter();
     prepare_texture_pack();
+    preload_variants();
     g_device.ready = true;
     return true;
 }
@@ -1988,12 +2099,41 @@ void variant_worker() {
         ID3DBlob* code = nullptr;
         ID3D11PixelShader* shader = nullptr;
         // A variant that does not compile stays null: the generic shader keeps drawing it.
-        if (compile(variant_source(job.first).c_str(), "pixel_main", "ps_5_0", &code)) {
+        if (compile(variant_source(job.first).c_str(), "pixel_main", "ps_5_0", &code, job.first)) {
             g_device.device->CreatePixelShader(code->GetBufferPointer(), code->GetBufferSize(), nullptr, &shader);
             release(code);
         }
         job.second->shader = shader;
     }
+}
+
+void start_variant_workers() {
+    [[maybe_unused]] static const bool started = [] {
+        unsigned workers = std::clamp(std::thread::hardware_concurrency() / 2, 1u, 6u);
+        for (unsigned i = 0; i < workers; i++) {
+            std::thread(variant_worker).detach();
+        }
+        return true;
+    }();
+}
+
+void preload_variants() {
+    if (std::getenv("WP_GENERIC_SHADER") || g_shader_cache.variants.empty()) {
+        return;
+    }
+    start_variant_workers();
+    {
+        std::lock_guard<std::mutex> lock(g_variant_mutex);
+        for (auto it = g_shader_cache.variants.rbegin(); it != g_shader_cache.variants.rend(); ++it) {
+            auto [found, inserted] = g_variants.try_emplace(*it);
+            if (inserted) {
+                g_variant_jobs.emplace_back(*it, &found->second);
+            }
+        }
+    }
+    g_variant_wake.notify_all();
+    g_shader_cache.variants.clear();
+    g_shader_cache.variants.shrink_to_fit();
 }
 
 // WP_GENERIC_SHADER=1 draws everything with the generic shader, to tell a specialisation fault from a renderer one.
@@ -2005,13 +2145,7 @@ ID3D11PixelShader* variant_for(const Constants& constants, bool early_depth) {
     std::string key = variant_key(constants, early_depth);
     auto found = g_variants.find(key);
     if (found == g_variants.end()) {
-        [[maybe_unused]] static const bool started = [] {
-            unsigned workers = std::clamp(std::thread::hardware_concurrency() / 2, 1u, 6u);
-            for (unsigned i = 0; i < workers; i++) {
-                std::thread(variant_worker).detach();
-            }
-            return true;
-        }();
+        start_variant_workers();
         found = g_variants.try_emplace(key).first;
         {
             std::lock_guard<std::mutex> lock(g_variant_mutex);
@@ -2677,6 +2811,14 @@ void take_statistics(uint32_t& batches, uint32_t& vertices, double& seconds) {
     g_copy_bytes = 0;
     g_draw_seconds = 0.0;
     g_constants_created = 0;
+    std::lock_guard<std::mutex> lock(g_shader_cache.mutex);
+    if (g_shader_cache.compiled + g_shader_cache.reused > 0) {
+        log::write("shaders", "%u compiled in %.0f ms of processor time, %u taken from the disk cache", g_shader_cache.compiled, g_shader_cache.compile_seconds * 1000.0,
+                   g_shader_cache.reused);
+    }
+    g_shader_cache.compiled = 0;
+    g_shader_cache.reused = 0;
+    g_shader_cache.compile_seconds = 0.0;
 }
 
 void take_copy_statistics(uint32_t& write_backs, double& wait_seconds) {

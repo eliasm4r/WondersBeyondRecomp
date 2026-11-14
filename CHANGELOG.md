@@ -10,6 +10,11 @@ Every change to WondersBeyondRecomp, newest first.
 
 <br>
 
+## Unreleased
+
+### Added
+- **Shader preloading.** Shaders compiled while playing are saved on the disk and loaded again at the next start, so arriving in a zone no longer makes the processor compile them again (about 10 s of processor time saved over a play session, more on slower processors).
+
 ## v0.1.0-alpha · 2026-11-13
 
 > **First public release.** PokéPark 2: Wonders Beyond on Windows at up to 120 fps, installed by a setup that builds the game from your own disc image in about 5 minutes. [Download it here.](https://github.com/eliasm4r/WondersBeyondRecomp/releases/tag/v0.1.0-alpha)

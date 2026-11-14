@@ -97,6 +97,17 @@ into constants so the compiler folds the interpreter away (about 30 ms to compil
 shader draws until the variant is ready). Same scene at 6x: 30 fps. `WP_GENERIC_SHADER=1` turns the variants off.
 The OpenGL renderer still uses the generic shader only.
 
+## Shader cache
+
+Every compiled Direct3D shader is kept in `game/shaders.bin`, keyed by a hash of its source, entry point and
+profile; variants also store their TEV key. At start the file is read, the generic shaders come from it instead of
+the compiler, and every variant seen before is queued to the variant workers, which then only hand the stored
+bytecode to the driver. Headless, 150 s from boot into the heavy zone: 114 shaders compiled for 10.7 s of processor
+time on the first run, none on the second (all 114 from the file in the first second, 1 MB). The header holds a
+hash of all shader sources, so a build that changes any of them starts a new file. A record cut short by a crash
+is dropped and the file truncated after the last whole record. `WP_SHADER_CACHE=0` turns the cache off. Direct3D
+bytecode does not depend on the graphics card, so a filled file could ship with the setup.
+
 ## 60 fps
 
 The main loop is paced by two periodic alarms in the timer manager at 0x804BA4D8 (0x70 bytes each): input at
