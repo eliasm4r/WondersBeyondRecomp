@@ -190,7 +190,7 @@ std::vector<std::string> choices(const std::string& key) {
         return scales;
     }
     if (key == "video.fps") {
-        return {"30", "45", "60", "90", "120"};
+        return {"30", "45", "60", "90", "120", "144", "165", "240"};
     }
     if (key == "video.anisotropy") {
         return {"1", "2", "4", "8", "16"};
@@ -244,7 +244,11 @@ std::string shown_value(const std::string& key, const std::string& value) {
     if (key == "video.fps") {
         int fps = std::atoi(value.c_str());
         int hz = pacing::display_hz();
-        return fps > 60 && !pacing::interpolation_wanted(fps, hz) ? value + " > 60 (" + std::to_string(hz) + " Hz)" : value;
+        if (fps > 60 && !pacing::interpolation_wanted(fps, hz)) {
+            return value + " > 60 (" + std::to_string(hz) + " Hz)";
+        }
+        int shown = pacing::capped_rate(fps, hz);
+        return shown < fps ? value + " > " + std::to_string(shown) + " (" + std::to_string(hz) + " Hz)" : value;
     }
     if (key == "video.anisotropy") {
         return value == "1" ? text.menu_off : value + "x";

@@ -2194,7 +2194,29 @@ void test_frame_pacing() {
     plan = plan_frame(next, 1.0 / 60, 90, 0);
     CHECK(plan.images == 0 && plan.show_real && next == 0);
 
-    CHECK(wp::pacing::interpolation_wanted(120, 0) && wp::pacing::interpolation_wanted(120, 144) && !wp::pacing::interpolation_wanted(120, 90));
+    CHECK(wp::pacing::interpolation_wanted(120, 0) && wp::pacing::interpolation_wanted(120, 144) && wp::pacing::interpolation_wanted(120, 90));
+    CHECK(!wp::pacing::interpolation_wanted(240, 60) && wp::pacing::interpolation_wanted(240, 144) && wp::pacing::capped_rate(240, 144) == 144);
+    CHECK(wp::pacing::capped_rate(165, 0) == 165 && wp::pacing::capped_rate(144, 240) == 144 && wp::pacing::capped_rate(120, 100) == 100);
+
+    next = 0;
+    outputs = 0;
+    real = 0;
+    for (int frame = 0; frame < 600; frame++) {
+        plan = plan_frame(next, 1.0 / 60, 144, 3);
+        outputs += plan.images + (plan.show_real ? 1 : 0);
+        real += plan.show_real ? 1 : 0;
+    }
+    CHECK(outputs == 1440 && real == 120 && near(plan.slot, 1.0 / 144));
+    next = 0;
+    outputs = 0;
+    for (int frame = 0; frame < 600; frame++) {
+        plan = plan_frame(next, 1.0 / 60, 165, 3);
+        outputs += plan.images + (plan.show_real ? 1 : 0);
+    }
+    CHECK(outputs == 1650);
+    next = 0;
+    plan = plan_frame(next, 1.0 / 60, 240, 3);
+    CHECK(plan.images == 3 && near(plan.fractions[0], 0.25) && near(plan.fractions[2], 0.75) && plan.show_real && near(plan.slot, 1.0 / 240));
     CHECK(wp::pacing::interpolation_wanted(90, 0) && wp::pacing::interpolation_wanted(90, 89) && wp::pacing::interpolation_wanted(90, 144));
     CHECK(!wp::pacing::interpolation_wanted(90, 75) && !wp::pacing::interpolation_wanted(60, 144) && !wp::pacing::interpolation_wanted(45, 144) && !wp::pacing::interpolation_wanted(30, 0));
     CHECK(wp::pacing::output_rate(90) == 90 && wp::pacing::output_rate(120) == 120);
@@ -2231,7 +2253,7 @@ void test_frame_pacing() {
     alarm = frame_alarm(0, input, input * 2, 45, false);
     CHECK(alarm.period == input && alarm.pending == input * 2);
 
-    CHECK((wp::options::choices("video.fps") == std::vector<std::string>{"30", "45", "60", "90", "120"}));
+    CHECK((wp::options::choices("video.fps") == std::vector<std::string>{"30", "45", "60", "90", "120", "144", "165", "240"}));
     CHECK(std::string(wp::ui::label("help.video.fps")).find("45") != std::string::npos);
     CHECK(std::string(wp::ui::label("help.video.fps", wp::ui::Language::French)).find("90") != std::string::npos);
     const std::pair<wp::ui::Language, const char*> experimental[] = {
@@ -2239,7 +2261,7 @@ void test_frame_pacing() {
         {wp::ui::Language::Spanish, "experimentales"}, {wp::ui::Language::Galician, "experimentais"}};
     for (const auto& [language, word] : experimental) {
         std::string help = wp::ui::label("help.video.fps", language);
-        CHECK(help.find(word) != std::string::npos && help.find("60") != std::string::npos && help.find("120") != std::string::npos);
+        CHECK(help.find(word) != std::string::npos && help.find("60") != std::string::npos && help.find("240") != std::string::npos);
         for (int height : {720, 1080}) {
             wp::options::Layout frame = wp::options::layout(height, 6, 0);
             wp::options::Rect line = wp::options::help_rect(frame);

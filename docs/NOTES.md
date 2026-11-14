@@ -177,6 +177,19 @@ Three more things were needed:
 
 Measured in the first cave, D3D11: 59.9 to 60.0 fps at 3x and 6x.
 
+## 144, 165 and 240 fps
+
+`video.fps` also takes 144, 165 and 240. The game still runs 60 real frames; the rest are in-between images, at
+most three a frame (`kMaxImages`), which is exactly 240. The output rate is the setting capped at the screen's
+refresh rate (`pacing::capped_rate`, `output_rate`), and in-between images are made when that rate is 85 or more:
+240 on a 144 Hz screen gives 144, 120 on a 90 Hz screen now gives 90 instead of plain 60. The options show
+"240 > 144 (144 Hz)" when the cap applies. `plan_frame` rounds the images per real frame to whole numbers for
+120 and 240, to halves for 90, and to 0.05 otherwise (2.4 at 144, 2.75 at 165), the phase carrying over between
+frames as at 90. Unit tests: 600 frames at 144 give 1,440 images with 120 real frames shown, at 165 1,650.
+Measured with the hidden window on the user's 240 Hz screen, `switch.txt` at the save spot: 143.9-144.8 fps,
+164.8-164.9 fps and 239.8 fps, every frame with its images, 1.9, 2.0 and 2.2-2.3 ms per real frame for the images
+(1.1 ms at 120), GPU thread 37-44 % busy.
+
 ## 45 and 90 fps
 
 - 45 fps (`video.fps=45`): the frame alarm gets 4/3 of the input period. The main loop skips a render when a frame
