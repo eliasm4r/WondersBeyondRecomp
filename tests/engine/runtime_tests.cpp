@@ -1775,7 +1775,7 @@ void test_options_menu() {
                                                                  "video.brightness", "video.contrast", "video.saturation", "video.gamma", "video.colors_reset"}));
     CHECK(std::strcmp(wp::ui::label("video.colors_reset", wp::ui::Language::French), "Couleurs d'origine") == 0);
     CHECK(std::strcmp(wp::ui::label("video.brightness", wp::ui::Language::French), "Luminosité") == 0);
-    CHECK((wp::options::tab_keys(1) == std::vector<std::string>{"video.fps", "game.text_speed", "saves.backups", "system.discord", "stats.play_time"}));
+    CHECK((wp::options::tab_keys(1) == std::vector<std::string>{"video.fps", "game.text_speed", "game.skip_movies", "saves.backups", "system.discord", "stats.play_time"}));
     CHECK((wp::options::tab_keys(2) == std::vector<std::string>{"audio.volume", "audio.mute", "audio.wiimote_speaker"}));
     CHECK((wp::options::tab_keys(4) == std::vector<std::string>{"system.interface_language", "system.language"}));
     CHECK((wp::options::tab_keys(5) == std::vector<std::string>{"overlay.show", "overlay.level", "overlay.corner", "video.show_fps", "video.custom_textures", "video.dump_textures", "video.bug_recorder", "system.update"}));
@@ -1852,9 +1852,12 @@ void test_options_menu() {
     CHECK(menu.handle(wp::options::Action::Next) == "game.text_speed" && menu.handle(wp::options::Action::Next) == "game.text_speed");
     CHECK(wp::settings::number("game.text_speed", nullptr) == 0 && menu.rows()[1].value == "Instant");
     wp::settings::store("game.text_speed", "1");
-    menu.select(4);
     rows = menu.rows();
-    CHECK(rows[4].kind == wp::options::Kind::Info && !rows[4].value.empty() && rows[4].live);
+    CHECK(rows[2].key == "game.skip_movies" && rows[2].kind == wp::options::Kind::Toggle && rows[2].live);
+    CHECK(wp::settings::flag("game.skip_movies", nullptr));
+    menu.select(5);
+    rows = menu.rows();
+    CHECK(rows[5].kind == wp::options::Kind::Info && !rows[5].value.empty() && rows[5].live);
     CHECK(menu.handle(wp::options::Action::Accept).empty() && menu.handle(wp::options::Action::Next).empty());
     CHECK(menu.handle(wp::options::Action::Previous).empty() && !menu.capturing());
 

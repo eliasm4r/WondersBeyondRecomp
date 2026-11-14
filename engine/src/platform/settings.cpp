@@ -63,6 +63,7 @@ const Option kBaseOptions[] = {
     {"system.widescreen", "1"},
     {"video.aspect", "16:9"},
     {"game.text_speed", "1"},
+    {"game.skip_movies", "1"},
     {"system.options_menu", "1"},
     {"system.discord", "1"},
     {"system.check_updates", "1"},

@@ -33,6 +33,7 @@ constexpr const char* kLiveKeys[] = {
     "video.brightness",     "video.contrast",       "video.saturation",      "video.gamma",        "video.colors_reset",
     "camera.free",          "camera.mouse_speed",   "camera.stick_speed",    "camera.invert_y",    "video.bug_recorder",
     "system.check_updates", "system.update",        "video.aspect",          "game.text_speed",
+    "game.skip_movies",
 };
 
 struct Language {
@@ -140,7 +141,7 @@ std::vector<std::string> tab_keys(size_t tab, Device device) {
         return {"video.scale",      "video.fullscreen", "system.widescreen", "video.aspect", "video.vsync", "video.smooth", "video.anisotropy",
                 color::kBrightness.key, color::kContrast.key, color::kSaturation.key, color::kGamma.key, kResetColors};
     case 1:
-        return {"video.fps", "game.text_speed", "saves.backups", "system.discord", kPlayTime};
+        return {"video.fps", "game.text_speed", "game.skip_movies", "saves.backups", "system.discord", kPlayTime};
     case 2:
         return {"audio.volume", "audio.mute", "audio.wiimote_speaker"};
     case 3: {

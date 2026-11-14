@@ -62,5 +62,6 @@ uint32_t keyboard_buttons(const keymap::Bindings& keys, const std::function<bool
 void upgrade_bindings();
 void set_blocked(bool blocked);
 bool gamepad_in_use();
+uint32_t held(uint32_t channel);
 
 }

@@ -28,6 +28,7 @@
 #include "wp/memory.h"
 #include "wp/titlebar.h"
 #include "wp/options.h"
+#include "wp/hint.h"
 #include "wp/perf_overlay.h"
 #include "wp/settings.h"
 #include "wp/video.h"
@@ -702,6 +703,11 @@ struct Device {
     uint64_t hud_version = 0;
     bool hud_visible = false;
     perf::Corner hud_corner = perf::Corner::TopLeft;
+    GLuint hint_texture = 0;
+    uint32_t hint_width = 0;
+    uint32_t hint_height = 0;
+    uint64_t hint_version = 0;
+    bool hint_visible = false;
     GLuint bar_texture = 0;
     uint32_t bar_width = 0;
     uint32_t bar_height = 0;
@@ -1877,10 +1883,18 @@ void draw_overlay(int client_width, int client_height, int bar) {
     if (options::take_overlay(g_device.overlay_version, image, g_device.overlay_visible) && !image.pixels.empty()) {
         upload_image(g_device.overlay_texture, g_device.overlay_width, g_device.overlay_height, image);
     }
+    if (hint::take(g_device.hint_version, image, g_device.hint_visible) && !image.pixels.empty()) {
+        upload_image(g_device.hint_texture, g_device.hint_width, g_device.hint_height, image);
+    }
     if (g_device.hud_visible) {
         options::Rect placed = perf::corner_rect(client_width, client_height - bar, static_cast<int>(g_device.hud_width), static_cast<int>(g_device.hud_height), g_device.hud_corner);
         placed.y += bar;
         draw_image(g_device.hud_texture, placed, client_height);
+    }
+    if (g_device.hint_visible) {
+        options::Rect placed = hint::place(client_width, client_height - bar, static_cast<int>(g_device.hint_width), static_cast<int>(g_device.hint_height));
+        placed.y += bar;
+        draw_image(g_device.hint_texture, placed, client_height);
     }
     if (g_device.overlay_visible) {
         draw_image(g_device.overlay_texture, options::place(client_width, client_height, static_cast<int>(g_device.overlay_width), static_cast<int>(g_device.overlay_height)),

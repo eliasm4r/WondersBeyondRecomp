@@ -27,6 +27,7 @@ constexpr uint32_t kSceneManagerGet = 0x80074a90;
 constexpr uint32_t kEndScene = 0x802076a0;
 constexpr uint32_t kAddSceneParameter = 0x80207730;
 constexpr uint32_t kAttractionIdName = 0x8045394c;
+constexpr uint32_t kMovieName = 0x804b0360;
 constexpr uint32_t kNextSceneParameters = 0xac;
 
 enum Scene : int {
@@ -122,8 +123,9 @@ void scene_manager_run_begin(Cpu& c, HleFunction original) {
     log::write("game", "test: entering attraction %d", request);
     call(c, kSceneManagerGet);
     c.r[3] += kNextSceneParameters;
-    c.r[4] = kAttractionIdName;
-    c.r[5] = static_cast<uint32_t>(request - 1);
+    const char* movie = std::getenv("WP_MOVIE");
+    c.r[4] = movie ? kMovieName : kAttractionIdName;
+    c.r[5] = movie ? static_cast<uint32_t>(std::atoi(movie)) : static_cast<uint32_t>(request - 1);
     call(c, kAddSceneParameter);
     call(c, kSceneManagerGet);
     call(c, kEndScene);

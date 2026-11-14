@@ -39,6 +39,7 @@
 #include "wp/memory.h"
 #include "wp/frame_pacing.h"
 #include "wp/options.h"
+#include "wp/hint.h"
 #include "wp/perf_overlay.h"
 #include "wp/screenshot.h"
 #include "wp/settings.h"
@@ -802,6 +803,12 @@ struct Device {
     uint64_t hud_version = 0;
     bool hud_visible = false;
     perf::Corner hud_corner = perf::Corner::TopLeft;
+    ID3D11Texture2D* hint = nullptr;
+    ID3D11ShaderResourceView* hint_view = nullptr;
+    uint32_t hint_width = 0;
+    uint32_t hint_height = 0;
+    uint64_t hint_version = 0;
+    bool hint_visible = false;
     ID3D11RasterizerState* rasterizer = nullptr;
     std::map<uint32_t, ID3D11BlendState*> blend_states;
     std::map<uint32_t, ID3D11DepthStencilState*> depth_states;
@@ -5105,13 +5112,20 @@ void draw_overlay(const RECT& client) {
     if (options::take_overlay(g_device.overlay_version, image, g_device.overlay_visible) && !image.pixels.empty()) {
         upload_overlay(image, g_device.overlay, g_device.overlay_view, g_device.overlay_width, g_device.overlay_height);
     }
+    if (hint::take(g_device.hint_version, image, g_device.hint_visible) && !image.pixels.empty()) {
+        upload_overlay(image, g_device.hint, g_device.hint_view, g_device.hint_width, g_device.hint_height);
+    }
     bool hud = g_device.hud_visible && g_device.hud_view;
     bool menu = g_device.overlay_visible && g_device.overlay_view;
-    if ((!hud && !menu) || !create_overlay_pipeline()) {
+    bool hint = g_device.hint_visible && g_device.hint_view;
+    if ((!hud && !menu && !hint) || !create_overlay_pipeline()) {
         return;
     }
     if (hud) {
         draw_image(g_device.hud_view, perf::corner_rect(client.right, client.bottom, static_cast<int>(g_device.hud_width), static_cast<int>(g_device.hud_height), g_device.hud_corner));
+    }
+    if (hint) {
+        draw_image(g_device.hint_view, hint::place(client.right, client.bottom, static_cast<int>(g_device.hint_width), static_cast<int>(g_device.hint_height)));
     }
     if (menu) {
         draw_image(g_device.overlay_view, options::place(client.right, client.bottom, static_cast<int>(g_device.overlay_width), static_cast<int>(g_device.overlay_height)));

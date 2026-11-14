@@ -912,6 +912,23 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
   page at once; the pauses for the player are other states and are left alone. Reading the first sign of the beach:
   58 steps for a page at 1, 29 at 2, 1 at once.
 
+## Skipping videos
+
+- `game.skip_movies` (Game tab, live, on by default): holding A or + for a second ends a video scene (the Mobiclip
+  `Movie/*.mo` files, played by `nsNile::nsScene::SceneSpecializerMovie`, vtable 0x80468DF8). Its update
+  (0x8020A9A0, hooked as `MovieSceneUpdate`, r3 = the scene) returns 1 when the scene is over; the movie player is
+  at 0x804CF758 (returned by 0x80077A70), its state byte at +0x35 is 2 when ready, 3 while playing and 5 at the
+  end (set by 0x801873D0 after the last frame). Writing 5 while it plays makes the scene end the usual way: the file
+  stops streaming at once and the game goes on as after the last frame (tested with DmCh1110_01, skipped 8 seconds
+  in, back to the park with no hang).
+- The hold counts in real time from a press made during the scene, so a button held from the scene before does not
+  skip it. The buttons come from `input::held`, the device without the test and blocking side effects of `sample`.
+- While held, `wp::hint` draws a small box with "Hold to skip" and a gauge in the bottom right corner (both
+  renderers, above the game and the statistics, below the options menu); the image is made again only when the
+  gauge moves by a 32nd.
+- Tests: `WP_MOVIE=n` with `WP_ATTRACTION=1,8` gives the scene parameter `Movie` instead of `AttractionId`, which
+  starts movie `n` of the table at 0x80468C28 from the park (2 is DmCh1110_01).
+
 ## Bug recorder and hang report
 
 - `video.bug_recorder` (Advanced tab, off by default, Direct3D 11): every image shown, real or interpolated, is copied

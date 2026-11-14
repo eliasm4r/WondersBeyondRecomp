@@ -420,6 +420,13 @@ bool gamepad_in_use() {
     return g_gamepad_in_use;
 }
 
+uint32_t held(uint32_t channel) {
+    if (g_blocked.load()) {
+        return 0;
+    }
+    return device_sample(channel).buttons & ~kMotionSideways;
+}
+
 void set_blocked(bool blocked) {
     if (!blocked) {
         for (std::atomic<bool>& wait : g_release_wait) {

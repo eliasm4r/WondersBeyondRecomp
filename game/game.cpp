@@ -9,6 +9,7 @@
 #include "wp/game.h"
 #include "wp/gx.h"
 #include "wp/gx_render.h"
+#include "wp/hint.h"
 #include "wp/disc.h"
 #include "wp/frame_pacing.h"
 #include "wp/free_camera.h"
@@ -576,6 +577,60 @@ void dialogue_writer_step(Cpu& c, HleFunction original) {
     }
 }
 
+constexpr uint32_t kMoviePlayer = 0x804cf758;
+constexpr uint32_t kMovieState = 0x35;
+constexpr uint8_t kMoviePlaying = 3;
+constexpr uint8_t kMovieEnded = 5;
+constexpr uint32_t kMovieSceneStarted = 0x1c;
+constexpr uint32_t kSkipButtons = input::kButtonA | input::kButtonPlus;
+constexpr int64_t kSkipHoldMs = 1000;
+
+struct MovieSkip {
+    uint32_t scene = 0;
+    bool armed = false;
+    int64_t since = 0;
+};
+
+MovieSkip g_movie_skip;
+
+int64_t steady_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void movie_scene_update(Cpu& c, HleFunction original) {
+    static const settings::LiveFlag enabled("game.skip_movies", "WP_SKIP_MOVIES");
+    MovieSkip& skip = g_movie_skip;
+    uint32_t scene = c.r[3];
+    if (scene != skip.scene) {
+        skip = MovieSkip{};
+        skip.scene = scene;
+    }
+    bool held = (input::held(0) & kSkipButtons) != 0;
+    if (!held) {
+        skip.armed = true;
+        skip.since = 0;
+    } else if (skip.armed && skip.since == 0) {
+        skip.since = steady_ms();
+    }
+    bool playing = rd8(scene + kMovieSceneStarted) != 0 && rd8(kMoviePlayer + kMovieState) == kMoviePlaying;
+    int64_t held_for = skip.since != 0 ? steady_ms() - skip.since : 0;
+    if (!enabled() || !playing || skip.since == 0) {
+        hint::hide();
+    } else if (held_for >= kSkipHoldMs) {
+        log::write("game", "movie skipped");
+        wr8(kMoviePlayer + kMovieState, kMovieEnded);
+        skip.armed = false;
+        skip.since = 0;
+        hint::hide();
+    } else {
+        hint::show("hint.skip_movie", static_cast<double>(held_for) / kSkipHoldMs);
+    }
+    original(c);
+    if (c.r[3] != 0) {
+        hint::hide();
+    }
+}
+
 void temp_pool_alloc(Cpu& c, HleFunction original) {
     uint32_t pool = c.r[3];
     uint32_t index = c.r[4];
@@ -612,7 +667,7 @@ HookFunction hook(const char* name) {
                    {"AddSceneParameter", add_scene_parameter}, {"PickScene", pick_scene}, {"SceneManagerRunBegin", scene_manager_run_begin},
                    {"DanceFrame", dance_frame}, {"DanceFrameSecondPart", dance_frame_second_part},
                    {"DanceJudge", dance_judge}, {"CullingFrustum", culling_frustum},
-                   {"DialogueWriterStep", dialogue_writer_step}};
+                   {"DialogueWriterStep", dialogue_writer_step}, {"MovieSceneUpdate", movie_scene_update}};
     for (const auto& entry : kHooks) {
         if (std::strcmp(entry.name, name) == 0) {
             return entry.function;
