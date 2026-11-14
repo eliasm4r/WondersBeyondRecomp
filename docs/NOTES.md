@@ -396,7 +396,7 @@ PokePark-2-Wiicompiled (CC0, USA disc), mapped to PAL by function size patterns.
   key's name, a PlayStation shape, or a space bar symbol for Space (used on the dance icons too).
   The shake actions are left out of the key conflict check (`keymap::attraction_only`).
 - Flight of Fancy: the remote is held sideways; the movement keys or the left stick steer up to 90 degrees and climb
-  or dive up to 50, eased by 0.15 a report; the gyroscope adds its tilt from where the pad was on entry.
+  or dive up to 50, eased by 0.15 a report; the pad's own motion is ignored there, as in Cake Contraption.
 - Dance Inferno: the remote is held upright and each move has a key: the screen directions, A (kick) and 2 (poses).
   The chart's cue row is at chart + `0xBCC` (a word a slot, the move then `0x1F` for each further beat, `0` between,
   `0xFF` for none), the tick at +`0x1F4C` / +`0x1F50` and the slot length at +`0x1F54`. A press near a cue swings once

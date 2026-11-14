@@ -337,6 +337,7 @@ constexpr int kBombDiscRadius = 22;
 constexpr int kBombGlyphHalf = 16;
 constexpr int kBombGlyphDarkness = 330;
 constexpr int kBombFont = 34;
+constexpr uint32_t kBombInkMinAlpha = 24;
 
 struct Icons {
     uint32_t dance = 0;
@@ -539,9 +540,9 @@ void draw_shape(canvas::Canvas& target, attraction::Shape shape, int middle_x, i
         target.fill_polygon(ring_points(x, y + 3.0f, 20.0f, 3, -1.5707963f), colour);
         target.fill_polygon(ring_points(x, y + 3.0f, 10.0f, 3, -1.5707963f), hollow);
     } else if (shape == attraction::Shape::SpaceBar) {
-        target.fill(middle_x - 16, middle_y + 3, middle_x + 16, middle_y + 9, colour);
-        target.fill(middle_x - 16, middle_y - 6, middle_x - 10, middle_y + 9, colour);
-        target.fill(middle_x + 10, middle_y - 6, middle_x + 16, middle_y + 9, colour);
+        target.fill_round(middle_x - 16, middle_y + 3, middle_x + 16, middle_y + 9, 3, colour);
+        target.fill_round(middle_x - 16, middle_y - 7, middle_x - 10, middle_y + 9, 3, colour);
+        target.fill_round(middle_x + 10, middle_y - 7, middle_x + 16, middle_y + 9, 3, colour);
     }
 }
 
@@ -706,9 +707,19 @@ void draw_bomb_button(const Picture& picture, const attraction::Label& label) {
     for (int y = 0; y < picture.height; y++) {
         for (int x = 0; x < picture.width; x++) {
             uint32_t pixel = symbol.pixels[static_cast<size_t>(y) * picture.width + x];
-            if ((pixel >> 24) >= 128) {
-                wr8(ci8_byte(picture, x, y), static_cast<uint8_t>(nearest_colour(picture, pixel)));
+            uint32_t alpha = pixel >> 24;
+            if (alpha < kBombInkMinAlpha) {
+                continue;
             }
+            uint32_t at = ci8_byte(picture, x, y);
+            const uint8_t* below = picture.rgba[rd8(at)];
+            uint32_t mixed = 0xff000000u;
+            for (int channel = 0; channel < 3; channel++) {
+                uint32_t ink_part = pixel >> (16 - 8 * channel) & 0xff;
+                uint32_t value = (ink_part * alpha + below[channel] * (255 - alpha) + 127) / 255;
+                mixed |= value << (16 - 8 * channel);
+            }
+            wr8(at, static_cast<uint8_t>(nearest_colour(picture, mixed)));
         }
     }
 }

@@ -126,8 +126,6 @@ struct State {
     uint32_t motion_held = 0;
     uint32_t reports = 0;
     bool flying = false;
-    bool neutral_valid = false;
-    double neutral[3] = {};
     double steer = 0.0;
     double climb = 0.0;
     KeyPair steer_keys;
@@ -369,20 +367,12 @@ double key_pair(KeyPair& pair, uint32_t held, uint32_t plus, uint32_t minus) {
     return pair.side;
 }
 
-double tilt_angle(double value) {
-    return std::asin(std::clamp(value, -1.0, 1.0));
-}
-
 void fly_motion(State& state, const input::Sample& sample, double accel[3]) {
     uint32_t moves = screen_moves(sample.buttons);
     if (!state.flying) {
         state.flying = true;
         state.steer = 0.0;
         state.climb = 0.0;
-        state.neutral_valid = sample.motion_valid;
-        for (int i = 0; i < 3; i++) {
-            state.neutral[i] = sample.accel[i];
-        }
     }
     double steer = key_pair(state.steer_keys, moves, attraction::kMoveLeft, attraction::kMoveRight);
     double climb = key_pair(state.climb_keys, moves, attraction::kMoveDown, attraction::kMoveUp);
@@ -394,10 +384,6 @@ void fly_motion(State& state, const input::Sample& sample, double accel[3]) {
     }
     double steer_target = steer * kFlySteer;
     double climb_target = climb * kFlyClimb;
-    if (sample.motion_valid && state.neutral_valid) {
-        steer_target += tilt_angle(sample.accel[1]) - tilt_angle(state.neutral[1]);
-        climb_target += tilt_angle(sample.accel[0]) - tilt_angle(state.neutral[0]);
-    }
     steer_target = std::clamp(steer_target, -kFlySteer, kFlySteer);
     climb_target = std::clamp(climb_target, -kFlyClimb, kFlyClimb);
     state.steer += (steer_target - state.steer) * kFlyEase;

@@ -17,7 +17,7 @@ Every change to WondersBeyondRecomp, newest first.
   - **Cake Contraption:** the mouse aims by itself and left click throws. On a gamepad, the left stick aims and A or RT throws; whichever of the mouse and the gamepad moved last aims.
   - **Dance Inferno:** one key per move, drawn on the move's icon (arrows, E for the kick, a space bar for the poses, or the gamepad's buttons and PlayStation shapes when you play with a gamepad). Press it as the icon reaches the diamond, and hold it for moves that last several beats. Poses pressed on time now score GREAT.
   - **Power Bash:** each press of Q or E (LB or RB on a gamepad) strikes, and shaking the gamepad strikes for as long as you shake it, from the first jolt. Space drops the bomb, and the A on the bombs now shows the key or button that drops them (a space bar, or the gamepad's button).
-  - **Flight of Fancy:** the movement keys or the left stick tilt gradually (up climbs, down dives), the gyroscope too, and Space flies faster.
+  - **Flight of Fancy:** the movement keys or the left stick tilt gradually (up climbs, down dives), and Space flies faster; tilting the gamepad no longer steers.
 
 ### Changed
 - **The mouse cursor is hidden over the game by default.** Turn it back on with **Hide the mouse cursor** in the options. Settings saved by an earlier build keep their choice.
