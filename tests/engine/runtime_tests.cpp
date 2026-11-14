@@ -52,6 +52,7 @@
 namespace wp::gx::render {
 uint64_t hash_bytes(const uint8_t* data, size_t size);
 std::vector<uint32_t> decode_texture(const uint8_t* data, uint32_t width, uint32_t height, uint32_t format, const uint8_t* tlut, uint32_t tlut_format);
+std::vector<uint8_t> cmpr_to_bc1(const uint8_t* data, uint32_t width, uint32_t height);
 }
 
 namespace {
@@ -945,6 +946,52 @@ void test_texture_decoder_matches_reference() {
                             wrong++;
                         }
                     }
+                }
+            }
+        }
+    }
+    CHECK(wrong == 0);
+}
+
+void test_cmpr_to_bc1_matches_decoder() {
+    std::mt19937 random(5);
+    std::vector<uint8_t> data(16 * 1024);
+    for (uint8_t& byte : data) {
+        byte = static_cast<uint8_t>(random());
+    }
+    auto e5 = [](uint32_t v) { return v << 3 | v >> 2; };
+    auto e6 = [](uint32_t v) { return v << 2 | v >> 4; };
+    int wrong = 0;
+    for (auto size : {std::pair<uint32_t, uint32_t>{8, 8}, {4, 4}, {16, 8}, {12, 20}, {64, 32}}) {
+        uint32_t width = size.first;
+        uint32_t height = size.second;
+        std::vector<uint32_t> pixels = wp::gx::render::decode_texture(data.data(), width, height, 14, nullptr, 0);
+        std::vector<uint8_t> blocks = wp::gx::render::cmpr_to_bc1(data.data(), width, height);
+        CHECK(blocks.size() == static_cast<size_t>((width + 3) / 4) * ((height + 3) / 4) * 8);
+        for (uint32_t y = 0; y < height; y++) {
+            for (uint32_t x = 0; x < width; x++) {
+                const uint8_t* block = blocks.data() + (static_cast<size_t>(y / 4) * ((width + 3) / 4) + x / 4) * 8;
+                uint32_t a = block[0] | block[1] << 8;
+                uint32_t b = block[2] | block[3] << 8;
+                uint32_t pick = block[4 + y % 4] >> (2 * (x % 4)) & 3;
+                uint32_t r0 = e5(a >> 11 & 31), g0 = e6(a >> 5 & 63), b0 = e5(a & 31);
+                uint32_t r1 = e5(b >> 11 & 31), g1 = e6(b >> 5 & 63), b1 = e5(b & 31);
+                uint32_t r = 0, g = 0, bl = 0, alpha = 255;
+                if (pick == 0) {
+                    r = r0, g = g0, bl = b0;
+                } else if (pick == 1) {
+                    r = r1, g = g1, bl = b1;
+                } else if (a > b) {
+                    r = pick == 2 ? (2 * r0 + r1) / 3 : (r0 + 2 * r1) / 3;
+                    g = pick == 2 ? (2 * g0 + g1) / 3 : (g0 + 2 * g1) / 3;
+                    bl = pick == 2 ? (2 * b0 + b1) / 3 : (b0 + 2 * b1) / 3;
+                } else if (pick == 2) {
+                    r = (r0 + r1) / 2, g = (g0 + g1) / 2, bl = (b0 + b1) / 2;
+                } else {
+                    alpha = 0;
+                }
+                if (pixels[y * width + x] != (r | g << 8 | bl << 16 | alpha << 24)) {
+                    wrong++;
                 }
             }
         }
@@ -2475,6 +2522,7 @@ int main() {
     test_fit_motion();
     test_texture_hash_sees_every_byte();
     test_texture_decoder_matches_reference();
+    test_cmpr_to_bc1_matches_decoder();
     test_key_names();
     test_key_defaults();
     test_bindings_upgrade();

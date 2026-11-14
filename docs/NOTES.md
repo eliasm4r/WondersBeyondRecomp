@@ -131,6 +131,15 @@ over 33 ms. The 30 fps of the title and menus (frames of 33-34 ms) are the game'
   `test_texture_decoder_matches_reference` against a per-pixel reference, every format, odd sizes). That frame
   became two of 48 and 56 ms: the first is texture creation in the driver, the second a wait for a copy read back
   from the GPU (`complete_write_backs`).
+- At 120 fps with the hidden window (`WP_HEADLESS=window`), the frame after the scripts created 178 textures of
+  12 million texels in all: 14-15 ms decoding and 20-22 ms in `CreateTexture2D` (51-55 ms in all). CMPR is the
+  Wii's form of BC1 (DXT1): 8x8 tiles of four 4x4 blocks, big-endian colours, the first texel in the high bits of
+  each index byte. `cmpr_to_bc1` reorders the blocks, swaps the colours and reverses the 2-bit indices, and CMPR
+  textures whose width and height are multiples of 4 are made `DXGI_FORMAT_BC1_UNORM` (8 times fewer bytes than
+  RGBA8) unless textures are being dumped. That frame: decoding 2.8 ms, creation 10.1 ms, 28 ms in all.
+  `test_cmpr_to_bc1_matches_decoder` decodes the blocks with the BC1 rules and compares them with the CMPR decoder
+  (same formulas, so equal). Picture, frame 900 of `still.txt` at 60 fps: 0.04 % of the pixels differ by more than 8
+  between BC1 and RGBA8, against 8.5 % between two RGBA8 runs (the game's own timing). `WP_BC1=0` keeps RGBA8.
 
 ## 60 fps
 

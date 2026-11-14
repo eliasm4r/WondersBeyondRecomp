@@ -1858,10 +1858,26 @@ ID3D11ShaderResourceView* texture_for(uint32_t map) {
         entry.custom = true;
         return finish();
     }
-    std::vector<std::vector<uint32_t>> pixels = decode_levels(request);
+    static const bool block_compression = [] {
+        const char* setting = std::getenv("WP_BC1");
+        return !setting || std::atoi(setting) != 0;
+    }();
+    bool compressed = block_compression && format == 14 && !(named && g_pack.dump) && width % 4 == 0 && height % 4 == 0;
+    std::vector<std::vector<uint32_t>> pixels;
+    std::vector<std::vector<uint8_t>> blocks;
     std::vector<D3D11_SUBRESOURCE_DATA> initial(levels);
-    for (uint32_t level = 0; level < levels; level++) {
-        initial[level] = {pixels[level].data(), std::max(width >> level, 1u) * 4, 0};
+    if (compressed) {
+        blocks.resize(levels);
+        for (uint32_t level = 0; level < levels; level++) {
+            uint32_t level_width = std::max(width >> level, 1u);
+            blocks[level] = cmpr_to_bc1(source + request.offsets[level], level_width, std::max(height >> level, 1u));
+            initial[level] = {blocks[level].data(), (level_width + 3) / 4 * 8, 0};
+        }
+    } else {
+        pixels = decode_levels(request);
+        for (uint32_t level = 0; level < levels; level++) {
+            initial[level] = {pixels[level].data(), std::max(width >> level, 1u) * 4, 0};
+        }
     }
     if (named && g_pack.dump) {
         dump_texture(name, pixels, width, height);
@@ -1877,7 +1893,7 @@ ID3D11ShaderResourceView* texture_for(uint32_t map) {
     description.Height = height;
     description.MipLevels = levels;
     description.ArraySize = 1;
-    description.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    description.Format = compressed ? DXGI_FORMAT_BC1_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM;
     description.SampleDesc.Count = 1;
     description.Usage = D3D11_USAGE_IMMUTABLE;
     description.BindFlags = D3D11_BIND_SHADER_RESOURCE;

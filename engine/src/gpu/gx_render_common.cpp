@@ -1,6 +1,7 @@
 #include "gx_render_common.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 
@@ -247,6 +248,36 @@ std::vector<uint32_t> decode_texture(const uint8_t* data, uint32_t width, uint32
         std::memcpy(&cropped[static_cast<size_t>(y) * width], &pixels[static_cast<size_t>(y) * padded_width], width * sizeof(uint32_t));
     }
     return cropped;
+}
+
+std::vector<uint8_t> cmpr_to_bc1(const uint8_t* data, uint32_t width, uint32_t height) {
+    static const auto reversed = [] {
+        std::array<uint8_t, 256> table{};
+        for (uint32_t value = 0; value < 256; value++) {
+            table[value] = static_cast<uint8_t>((value >> 6 & 3) | (value >> 2 & 12) | (value << 2 & 48) | (value << 6 & 192));
+        }
+        return table;
+    }();
+    uint32_t across = (width + 3) / 4;
+    uint32_t down = (height + 3) / 4;
+    uint32_t large_across = (width + 7) / 8;
+    std::vector<uint8_t> blocks(static_cast<size_t>(across) * down * 8);
+    uint8_t* out = blocks.data();
+    for (uint32_t by = 0; by < down; by++) {
+        for (uint32_t bx = 0; bx < across; bx++) {
+            const uint8_t* in = data + (static_cast<size_t>(by / 2) * large_across + bx / 2) * 32 + ((by & 1) * 2 + (bx & 1)) * 8;
+            out[0] = in[1];
+            out[1] = in[0];
+            out[2] = in[3];
+            out[3] = in[2];
+            out[4] = reversed[in[4]];
+            out[5] = reversed[in[5]];
+            out[6] = reversed[in[6]];
+            out[7] = reversed[in[7]];
+            out += 8;
+        }
+    }
+    return blocks;
 }
 
 uint64_t hash_bytes(const uint8_t* data, size_t size) {
