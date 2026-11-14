@@ -10,7 +10,9 @@ Every change to WondersBeyondRecomp, newest first.
 
 <br>
 
-## Unreleased
+## v0.2.0-alpha · 2026-11-14
+
+> **Smoother and faster.** Up to 240 fps, shorter freezes when a zone appears, a faster start, an update check and controls made for the four attractions. [Download it here.](https://github.com/eliasm4r/WondersBeyondRecomp/releases/tag/v0.2.0-alpha)
 
 ### Added
 - **Shader preloading.** Shaders compiled while playing are saved on the disk and loaded again at the next start, so arriving in a zone no longer makes the processor compile them again (about 10 s of processor time saved over a play session, more on slower processors).
