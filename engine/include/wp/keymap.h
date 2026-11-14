@@ -30,6 +30,8 @@ enum class Action {
     TiltRight,
     TiltUp,
     TiltDown,
+    ShakeLeft,
+    ShakeRight,
     Screenshot,
     MouseMotion,
     Pointer,

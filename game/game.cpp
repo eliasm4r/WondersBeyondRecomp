@@ -4,6 +4,7 @@
 #include <cstring>
 #include <vector>
 
+#include "attractions.h"
 #include "wp/cpu.h"
 #include "wp/game.h"
 #include "wp/gx.h"
@@ -566,7 +567,10 @@ HookFunction hook(const char* name) {
     } kHooks[] = {{"FieldCameraUpdate", field_camera}, {"DeferredFree", deferred_free}, {"ReleaseDeferredFrees", release_deferred_frees}, {"TempPoolAlloc", temp_pool_alloc},
                    {"FindResourceByName", find_resource_by_name},
                    {"FindResourceByNameOther", find_resource_by_name},
-                   {"FindResourceByNumber", find_resource_by_number}};
+                   {"FindResourceByNumber", find_resource_by_number},
+                   {"AddSceneParameter", add_scene_parameter}, {"PickScene", pick_scene}, {"SceneManagerRunBegin", scene_manager_run_begin},
+                   {"DanceFrame", dance_frame}, {"DanceFrameSecondPart", dance_frame_second_part},
+                   {"DanceJudge", dance_judge}};
     for (const auto& entry : kHooks) {
         if (std::strcmp(entry.name, name) == 0) {
             return entry.function;

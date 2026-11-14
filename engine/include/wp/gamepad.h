@@ -26,6 +26,8 @@ struct State {
     float pointer_y = 0.0f;
     bool motion_valid = false;
     float accel[3] = {0.0f, 0.0f, 1.0f};
+    float stick_x = 0.0f;
+    float stick_y = 0.0f;
 };
 
 bool connected(uint32_t slot);

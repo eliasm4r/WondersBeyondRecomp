@@ -17,11 +17,17 @@ Every change to WondersBeyondRecomp, newest first.
 - **144, 165 and 240 fps.** The frame-rate limit goes up to 240 with in-between frames, never above the screen's refresh rate (240 on a 144 Hz screen shows 144).
 - **Faster start.** The hidden start-up screens run four times faster once the park data is loaded: the title appears about 2 seconds sooner.
 - **Update check.** Options > Advanced shows the version and whether a newer release is out on GitHub; confirming it opens the download page. It can be turned off.
+- **Controls for the four attractions.** Each attraction now plays with the keyboard, the mouse or a gamepad, without hunting for the Wii Remote motion keys.
+  - **Cake Contraption:** the mouse aims by itself and left click throws. On a gamepad, the left stick aims and A or RT throws; whichever of the mouse and the gamepad moved last aims.
+  - **Dance Inferno:** one key per move, drawn on the move's icon (arrows, E for the kick, a space bar for the poses, or the gamepad's buttons and PlayStation shapes when you play with a gamepad). Press it as the icon reaches the diamond, and hold it for moves that last several beats. Poses pressed on time now score GREAT.
+  - **Power Bash:** each press of Q or E (LB or RB on a gamepad) strikes, and shaking the gamepad strikes for as long as you shake it, from the first jolt. Space drops the bomb, and the A on the bombs now shows the key or button that drops them (a space bar, or the gamepad's button).
+  - **Flight of Fancy:** the movement keys or the left stick tilt gradually (up climbs, down dives), and Space flies faster; tilting the gamepad no longer steers.
 
 ### Changed
 - **Lighter on the processor.** The game's own thread does about 15 % less work at 60 fps: the clock is read through the processor's counter instead of a slow Windows call, and the paired-single loads and stores of plain floats are compiled into the game code.
 - **Smoother zone arrivals.** The longest freeze when a zone starts, about 0.4 s while its scripts looked up their resources one by one, is down to about 0.1 s, and textures decode several times faster, which removes most of the next freeze (0.18 s).
 - **Compressed textures.** The game's compressed textures stay compressed on the graphics card (8 times less memory and upload), which halves the stutter when a zone appears.
+- **The mouse cursor is hidden over the game by default.** Turn it back on with **Hide the mouse cursor** in the options. Settings saved by an earlier build keep their choice.
 
 ## v0.1.0-alpha · 2026-11-13
 

@@ -36,8 +36,8 @@ enum Physical {
 enum class Family { Xbox, Xbox360, PlayStation3, PlayStation4, PlayStation5, Switch };
 
 constexpr size_t kButtonActionCount = 7;
-constexpr size_t kActionCount = 15;
-constexpr size_t kPointerAction = 14;
+constexpr size_t kActionCount = 17;
+constexpr size_t kPointerAction = 16;
 
 struct Pressed {
     std::array<bool, kPhysicalCount> held{};

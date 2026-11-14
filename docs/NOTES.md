@@ -461,6 +461,60 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
   The test used two temporary switches (a camera log line, a forced spin) that are not kept.
 - Not seen yet in game: scenes that move this same camera themselves would be overridden too.
 
+## Attractions
+
+Each of the four attractions gets its own controls, chosen by `game/attractions.cpp` and applied by the engine
+(`wp/attraction.h`, `engine/src/input/wiimote.cpp`, `input.cpp`). The approach and the dance tables come from
+PokePark-2-Wiicompiled (CC0, USA disc), mapped to PAL by function size patterns.
+
+- PAL addresses: `SceneManager::Get` `0x80074A90`, `EndScene` `0x802076A0`, `AddSceneParameter` `0x80207730` (hooked),
+  the scene picker `0x80210F80` (hooked, r3 = scene), `SceneManager` run begin `0x802073E0` (hooked), the dance frames
+  `0x801B8230` and `0x801B8910` (hooked, r3 = the dance), the dance judgement `0x801B9950` (hooked) and the
+  `"AttractionId"` string `0x8045394C`. Scenes: 0 park, 4 attraction, 5 lobby. `AttractionId` 0 to 3 = Cake
+  Contraption, Dance Inferno, Power Bash, Flight of Fancy. The mode is set in scene 4 only.
+- `WP_ATTRACTION=n[,seconds]` (1 to 4) adds the parameter and ends the park scene once the park has run that long,
+  which opens the attraction's lobby. `WP_DANCE_AUTO=1` plays the dance's moves by itself (tests).
+- Cake Contraption: the mouse aims without the pointer key and its buttons stay as bound; on a pad, the left stick
+  aims (the right stick and the gyroscope do not, the player found them awkward there), and 2 or B (pad south, RT)
+  also press A. The pad takes the aim while the left stick is pushed past 0.2, or once its pointer has moved 0.03 (of
+  the half screen) since the cursor last moved; the mouse takes it back as soon as the cursor moves.
+  The pad's motion sensors are not passed on there: the game ignores the pointer unless the remote lies flat toward
+  the screen, so the remote is kept level whatever way the pad is held.
+- Power Bash: targets come up in front of Pikachu and a shake strikes them (PERFECT or GOOD by timing); bombs marked
+  A must be dropped with A instead, striking one stuns Pikachu, and a strike is ignored while Pikachu recovers. Each
+  press of `keys.shake_left`, `keys.shake_right` (Q/E, LB/RB) or `keys.shake` gives a 120 ms back-and-forth shake
+  (four 30 ms bursts of 2.5 g on all three axes, alternating): a single 30 ms burst was often lost (24 strikes against
+  33 for presses every 350 ms). While the pad is being shaken (`kMotionShake`, set by a jolt and held 250 ms) the
+  same shake goes on without a break, from the first jolt; the pad's raw motion and the generic shake wave are not
+  passed on there, since the game recognised a real shake late. 2 (Space, pad south) is A, the bomb.
+- The A drawn by the bombs is `AtAButton00.tpl` (CI8 57x56, layout `MnAtBomAButton`, in the same `MenuAttraction`
+  archive). While Power Bash runs (checked from the `SceneManager` run begin hook), the 33x33 middle of its disc is
+  repainted row by row with the disc's colour near its edge, then the bomb key is drawn in the letter's colour: the
+  key's name, a PlayStation shape, or a space bar symbol for Space (used on the dance icons too).
+- The archives holding the dance icons and the bomb button are found by searching guest RAM for the file name,
+  4 MB a frame (MEM2 then MEM1, then again a second later if absent). Searching all 88 MB at once took a 58-59 ms
+  frame when Power Bash started, again every second until the archive was loaded; with the chunks no frame there
+  goes over 40 ms, and the button is found about 0.4 s later, long before the first bomb.
+  The shake actions are left out of the key conflict check (`keymap::attraction_only`).
+- Flight of Fancy: the remote is held sideways; the movement keys or the left stick steer up to 90 degrees and climb
+  or dive up to 50, eased by 0.15 a report; the pad's own motion is ignored there, as in Cake Contraption.
+- Dance Inferno: the remote is held upright and each move has a key: the screen directions, A (kick) and 2 (poses).
+  The chart's cue row is at chart + `0xBCC` (a word a slot, the move then `0x1F` for each further beat, `0` between,
+  `0xFF` for none), the tick at +`0x1F4C` / +`0x1F50` and the slot length at +`0x1F54`. A press near a cue swings once
+  if it is that cue's key, and held, swings again on each further beat of the move. A, 2 and the d-pad are hidden from
+  the game while the song plays.
+- Poses: the judgement (`0x801B9950`: r4 player, r5 cues, r6 swung, r7 still, r8 tick) counts a pose's swing only in
+  the first half of its slot (before the icon reaches the diamond, about 0.25 s early), then wants the remote still
+  before +`0x1F38` ticks (10) for GREAT. A swing up to half a slot late is counted at +`0x5294` (+4 per player) by the
+  hook, and when it came within the moves' window (+`0x1F34`, 8 ticks) the still window is widened for that slot, so a
+  pose pressed on the icon scores GREAT (all ten poses of the first part, on time or 6 ticks late).
+- The bound key is drawn in the lower right corner of each move icon (`At01UIDanceIcon00-07.tpl`, CI8 160x160 in the
+  `MenuAttraction` U8 archive, found in MEM2 or MEM1 by name at most once a second): a white rounded box edged in the
+  icon's darkest colour, with an arrow, a PlayStation shape or the key's name (the box widens up to 104 texels for long
+  names), mapped to the nearest palette colours. The icons are restored from a copy and redrawn when the labels change.
+  The labels follow the last device used (`input::gamepad_in_use`: a pad button or a stick past half sets it, a key or
+  mouse button clears it).
+
 ## Indirect maps left unbound
 
 `render::draw` bound only the maps named by TEV stage orders. A map read only by an indirect stage, such as the

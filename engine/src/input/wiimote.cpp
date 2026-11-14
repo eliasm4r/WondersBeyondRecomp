@@ -14,6 +14,7 @@
 #include <cstring>
 #include <numeric>
 
+#include "wp/attraction.h"
 #include "wp/audio.h"
 #include "wp/gamepad.h"
 #include "wp/input.h"
@@ -81,12 +82,24 @@ constexpr double kShakeTravel = 0.10;
 constexpr double kSwingSeconds = 0.2;
 constexpr double kSwingAcceleration = 2.5;
 constexpr int kAccelMax = 1023;
+constexpr double kAttractionSwing = 2.5;
+constexpr uint32_t kAttractionSwingReports = 6;
+constexpr uint32_t kPressShakeBursts = 4;
+constexpr double kFlySteer = kPi / 2.0;
+constexpr double kFlyClimb = 50.0 * kPi / 180.0;
+constexpr double kFlyEase = 0.15;
+constexpr double kFlyDeadZone = 0.2;
 
 struct ReadRequest {
     uint8_t space = 0;
     uint8_t slave = 0;
     uint16_t address = 0;
     uint16_t size = 0;
+};
+
+struct KeyPair {
+    uint32_t last = 0;
+    int side = 0;
 };
 
 struct State {
@@ -112,6 +125,13 @@ struct State {
     double swing_time = kSwingSeconds;
     double swing_direction = 0.0;
     uint32_t motion_held = 0;
+    uint32_t reports = 0;
+    bool flying = false;
+    double steer = 0.0;
+    double climb = 0.0;
+    KeyPair steer_keys;
+    KeyPair climb_keys;
+    uint32_t shake_end = 0;
     std::array<uint16_t, 3> accel{};
     std::array<uint16_t, 3> reported_accel{};
 };
@@ -323,33 +343,136 @@ double approach(double current, double target, double step) {
     return std::max(current - step, target);
 }
 
+uint32_t screen_moves(uint32_t held) {
+    bool sideways = (held & input::kMotionSideways) != 0;
+    uint32_t moves = 0;
+    moves |= (held & (sideways ? input::kButtonUp : input::kButtonLeft)) ? attraction::kMoveLeft : 0;
+    moves |= (held & (sideways ? input::kButtonDown : input::kButtonRight)) ? attraction::kMoveRight : 0;
+    moves |= (held & (sideways ? input::kButtonRight : input::kButtonUp)) ? attraction::kMoveUp : 0;
+    moves |= (held & (sideways ? input::kButtonLeft : input::kButtonDown)) ? attraction::kMoveDown : 0;
+    return moves;
+}
+
+double key_pair(KeyPair& pair, uint32_t held, uint32_t plus, uint32_t minus) {
+    uint32_t pressed = held & ~pair.last;
+    pair.last = held;
+    if (!(held & minus)) {
+        pair.side = (held & plus) ? 1 : 0;
+    } else if (!(held & plus)) {
+        pair.side = -1;
+    } else if (pressed & plus) {
+        pair.side = 1;
+    } else if (pressed & minus) {
+        pair.side = -1;
+    }
+    return pair.side;
+}
+
+void fly_motion(State& state, const input::Sample& sample, double accel[3]) {
+    uint32_t moves = screen_moves(sample.buttons);
+    if (!state.flying) {
+        state.flying = true;
+        state.steer = 0.0;
+        state.climb = 0.0;
+    }
+    double steer = key_pair(state.steer_keys, moves, attraction::kMoveLeft, attraction::kMoveRight);
+    double climb = key_pair(state.climb_keys, moves, attraction::kMoveDown, attraction::kMoveUp);
+    if (std::fabs(sample.stick_x) > kFlyDeadZone) {
+        steer = -sample.stick_x;
+    }
+    if (std::fabs(sample.stick_y) > kFlyDeadZone) {
+        climb = sample.stick_y;
+    }
+    double steer_target = steer * kFlySteer;
+    double climb_target = climb * kFlyClimb;
+    steer_target = std::clamp(steer_target, -kFlySteer, kFlySteer);
+    climb_target = std::clamp(climb_target, -kFlyClimb, kFlyClimb);
+    state.steer += (steer_target - state.steer) * kFlyEase;
+    state.climb += (climb_target - state.climb) * kFlyEase;
+    accel[0] = std::sin(state.climb);
+    accel[1] = std::sin(state.steer);
+    double across = std::sqrt(accel[0] * accel[0] + accel[1] * accel[1]);
+    if (across > 1.0) {
+        accel[0] /= across;
+        accel[1] /= across;
+        across = 1.0;
+    }
+    accel[2] = std::sqrt(1.0 - across * across);
+}
+
+void dance_motion(State& state, const input::Sample& sample, double accel[3]) {
+    uint32_t held = sample.buttons;
+    uint32_t moves = screen_moves(held) | ((held & input::kButtonA) ? attraction::kMoveKick : 0) | ((held & input::kButtonTwo) ? attraction::kMovePose : 0);
+    accel[0] = 0.0;
+    accel[1] = 1.0;
+    accel[2] = 0.0;
+    accel[2] += attraction::dance_swing(moves, state.reports) * kAttractionSwing;
+    if (attraction::dance_playing()) {
+        state.buttons = static_cast<uint16_t>(state.buttons & ~(input::kButtonA | input::kButtonTwo | input::kButtonUp | input::kButtonDown | input::kButtonLeft | input::kButtonRight));
+    }
+}
+
+void shake_on_press(State& state, uint32_t held, uint32_t pressed, double accel[3]) {
+    uint32_t length = kAttractionSwingReports * kPressShakeBursts;
+    bool started = (pressed & (input::kMotionShakeLeft | input::kMotionShakeRight | input::kMotionShake)) != 0;
+    bool shaking = (held & input::kMotionShake) != 0 && static_cast<int32_t>(state.shake_end - state.reports) <= 0;
+    if (started || shaking) {
+        state.shake_end = state.reports + length;
+    }
+    int32_t left = static_cast<int32_t>(state.shake_end - state.reports);
+    if (left > 0) {
+        uint32_t burst = (length - static_cast<uint32_t>(left)) / kAttractionSwingReports;
+        double sign = burst % 2 == 0 ? 1.0 : -1.0;
+        for (int i = 0; i < 3; i++) {
+            accel[i] += sign * kAttractionSwing;
+        }
+    }
+}
+
 void update_motion(State& state, const input::Sample& sample) {
     uint32_t held = sample.buttons;
     uint32_t pressed = held & ~state.motion_held;
     state.motion_held = held;
-    double side = 0.0;
-    double far = 0.0;
-    if (held & input::kMotionTiltLeft) {
-        side -= kMaxTilt;
+    state.reports++;
+    attraction::Mode mode = attraction::mode();
+    if (mode != attraction::Mode::Fly) {
+        state.flying = false;
     }
-    if (held & input::kMotionTiltRight) {
-        side += kMaxTilt;
-    }
-    if (held & input::kMotionTiltUp) {
-        far += kMaxTilt;
-    }
-    if (held & input::kMotionTiltDown) {
-        far -= kMaxTilt;
-    }
-    bool sideways = (held & input::kMotionSideways) != 0;
-    double roll_target = sideways ? -far : side;
-    double pitch_target = sideways ? side : far;
-    state.roll = approach(state.roll, roll_target, kTiltSpeed * kReportSeconds);
-    state.pitch = approach(state.pitch, pitch_target, kTiltSpeed * kReportSeconds);
-    double accel[3] = {std::sin(state.roll) * std::cos(state.pitch), std::sin(state.pitch), std::cos(state.roll) * std::cos(state.pitch)};
-    if (sample.motion_valid) {
-        for (int i = 0; i < 3; i++) {
-            accel[i] = sample.accel[i];
+    double accel[3] = {0.0, 0.0, 1.0};
+    if (mode == attraction::Mode::Fly) {
+        fly_motion(state, sample, accel);
+    } else if (mode == attraction::Mode::Dance) {
+        dance_motion(state, sample, accel);
+    } else {
+        double side = 0.0;
+        double far = 0.0;
+        if (held & input::kMotionTiltLeft) {
+            side -= kMaxTilt;
+        }
+        if (held & input::kMotionTiltRight) {
+            side += kMaxTilt;
+        }
+        if (held & input::kMotionTiltUp) {
+            far += kMaxTilt;
+        }
+        if (held & input::kMotionTiltDown) {
+            far -= kMaxTilt;
+        }
+        bool sideways = (held & input::kMotionSideways) != 0;
+        double roll_target = sideways ? -far : side;
+        double pitch_target = sideways ? side : far;
+        state.roll = approach(state.roll, roll_target, kTiltSpeed * kReportSeconds);
+        state.pitch = approach(state.pitch, pitch_target, kTiltSpeed * kReportSeconds);
+        accel[0] = std::sin(state.roll) * std::cos(state.pitch);
+        accel[1] = std::sin(state.pitch);
+        accel[2] = std::cos(state.roll) * std::cos(state.pitch);
+        if (sample.motion_valid && mode != attraction::Mode::Aim && mode != attraction::Mode::Shake) {
+            for (int i = 0; i < 3; i++) {
+                accel[i] = sample.accel[i];
+            }
+        }
+        if (mode == attraction::Mode::Shake) {
+            shake_on_press(state, held, pressed, accel);
         }
     }
     if (pressed & (input::kMotionSwingUp | input::kMotionSwingDown)) {
@@ -361,7 +484,7 @@ void update_motion(State& state, const input::Sample& sample) {
         accel[2] += sign * state.swing_direction * kSwingAcceleration;
         state.swing_time += kReportSeconds;
     }
-    if (held & input::kMotionShake) {
+    if ((held & input::kMotionShake) && mode != attraction::Mode::Shake) {
         double omega = 2.0 * kPi * kShakeFrequency;
         double amplitude = omega * omega * (kShakeTravel / 2.0) / kGravity;
         double value = amplitude * std::sin(state.shake_phase);
