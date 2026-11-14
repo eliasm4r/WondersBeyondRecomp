@@ -59,7 +59,7 @@ Every change that alters runtime behavior is recorded here with what was verifie
 
 At start (not in headless runs), a thread asks `https://api.github.com/repos/<releases_repository>/releases/latest`
 with WinHTTP (10 s timeouts), reads `tag_name` (only letters, digits, dots and dashes, at most 40) and compares its
-first three numbers with `WP_VERSION` (CMake cache variable, `0.1.0-alpha`; a suffix such as `-alpha` is ignored).
+first three numbers with `WP_VERSION` (CMake cache variable, `0.2.0-alpha`; a suffix such as `-alpha` is ignored).
 Options > Advanced shows the version and the result on the "Version" row; when a newer release exists, confirming
 the row opens the release page in the browser. Nothing is downloaded or installed. "Check for updates"
 (`system.check_updates`, on by default) turns it off; turning it back on checks at once. `WP_UPDATE_VERSION=0.0.5`
