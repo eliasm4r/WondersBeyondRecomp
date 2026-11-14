@@ -377,8 +377,10 @@ PokePark-2-Wiicompiled (CC0, USA disc), mapped to PAL by function size patterns.
   Contraption, Dance Inferno, Power Bash, Flight of Fancy. The mode is set in scene 4 only.
 - `WP_ATTRACTION=n[,seconds]` (1 to 4) adds the parameter and ends the park scene once the park has run that long,
   which opens the attraction's lobby. `WP_DANCE_AUTO=1` plays the dance's moves by itself (tests).
-- Cake Contraption: the mouse aims without the pointer key and its buttons stay as bound; on a pad, the right stick
-  and the gyroscope aim, and 2 or B (pad south, RT) also press A.
+- Cake Contraption: the mouse aims without the pointer key and its buttons stay as bound; on a pad, both sticks and
+  the gyroscope aim, and 2 or B (pad south, RT) also press A. The pad takes the aim once its pointer has moved 0.03
+  (of the half screen) since the cursor last moved, and the mouse takes it back as soon as the cursor moves, so the
+  gyroscope's drift does not steal it.
 - Power Bash: `keys.shake_left` / `keys.shake_right` (Q/E, LB/RB) shake by turns: each press after the other key's
   gives a 30 ms burst of 2.5 g on all three axes, so the faster, the stronger. 2 (Space, pad south) is A, the bomb.
   The shake actions are left out of the key conflict check (`keymap::attraction_only`).

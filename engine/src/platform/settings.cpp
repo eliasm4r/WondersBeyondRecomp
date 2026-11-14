@@ -46,7 +46,7 @@ const Option kBaseOptions[] = {
     {"input.real_wiimotes", "1"},
     {"input.real_wiimote_mouse", "1"},
     {"input.wake_on_mouse", "1"},
-    {"input.hide_cursor", "0"},
+    {"input.hide_cursor", "1"},
     {"input.player1_keyboard_only", "0"},
     {"input.ignored_gamepads", ""},
     {"input.gamepad_players", ""},

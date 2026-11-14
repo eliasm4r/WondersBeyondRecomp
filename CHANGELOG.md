@@ -14,10 +14,13 @@ Every change to WondersBeyondRecomp, newest first.
 
 ### Added
 - **Controls for the four attractions.** Each attraction now plays with the keyboard, the mouse or a gamepad, without hunting for the Wii Remote motion keys.
-  - **Cake Contraption:** the mouse aims by itself and left click throws. On a gamepad, the right stick or the gyroscope aims and A or RT throws.
+  - **Cake Contraption:** the mouse aims by itself and left click throws. On a gamepad, either stick or the gyroscope aims and A or RT throws; whichever of the mouse and the gamepad moved last aims.
   - **Dance Inferno:** one key per move, drawn on the move's icon (arrows, E for the kick, Space for the poses, or the gamepad's buttons and PlayStation shapes when you play with a gamepad). Press it as the icon reaches the diamond, and hold it for moves that last several beats. Poses pressed on time now score GREAT.
   - **Power Bash:** press Q and E by turns (LB and RB on a gamepad): the faster, the stronger. Space drops the bomb.
   - **Flight of Fancy:** the movement keys or the left stick tilt gradually (up climbs, down dives), the gyroscope too, and Space flies faster.
+
+### Changed
+- **The mouse cursor is hidden over the game by default.** Turn it back on with **Hide the mouse cursor** in the options. Settings saved by an earlier build keep their choice.
 
 ## v0.1.0-alpha · 2026-11-13
 

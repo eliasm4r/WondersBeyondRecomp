@@ -36,6 +36,7 @@ std::atomic<int64_t> g_wheel_down{0};
 std::atomic<bool> g_blocked{false};
 std::atomic<bool> g_auto_confirm{false};
 std::atomic<bool> g_gamepad_in_use{false};
+constexpr float kPadAimMove = 0.03f;
 constexpr int64_t kConfirmPeriod = 500;
 constexpr int64_t kConfirmLength = 100;
 std::atomic<bool> g_release_wait[4] = {};
@@ -382,7 +383,22 @@ Sample device_sample(uint32_t channel) {
     video::cursor_position(cursor_x, cursor_y);
     static MouseMotionState mouse_state;
     result.buttons |= mouse_motion(mouse_state, focused && any_pressed(keys.of(keymap::Action::MouseMotion)), cursor_x, cursor_y, now);
-    if (mouse_aims && video::cursor_on_image(result.pointer_x, result.pointer_y)) {
+    static long last_cursor_x = 0;
+    static long last_cursor_y = 0;
+    static float pad_anchor_x = 0.0f;
+    static float pad_anchor_y = 0.0f;
+    static bool pad_aims = false;
+    if (cursor_x != last_cursor_x || cursor_y != last_cursor_y || !pad.pointer_valid) {
+        pad_aims = false;
+        pad_anchor_x = pad.pointer_x;
+        pad_anchor_y = pad.pointer_y;
+    } else if (std::fabs(pad.pointer_x - pad_anchor_x) > kPadAimMove || std::fabs(pad.pointer_y - pad_anchor_y) > kPadAimMove) {
+        pad_aims = true;
+    }
+    last_cursor_x = cursor_x;
+    last_cursor_y = cursor_y;
+    bool pad_wins = free_aim && pad_aims && pad.pointer_valid;
+    if (mouse_aims && !pad_wins && video::cursor_on_image(result.pointer_x, result.pointer_y)) {
         result.pointer_valid = true;
     } else if (pad.pointer_valid) {
         result.pointer_valid = true;

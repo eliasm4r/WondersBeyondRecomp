@@ -286,7 +286,8 @@ Snapshot read(Pad& pad, float dt) {
     float right_y = axis(handle, SDL_GAMEPAD_AXIS_RIGHTY);
     snapshot.right_x = right_x;
     snapshot.right_y = right_y;
-    bool aiming = padmap::held(padmap::current_mapping()[padmap::kPointerAction], physical_state(snapshot)) || attraction::mode() == attraction::Mode::Aim;
+    bool free_aim = attraction::mode() == attraction::Mode::Aim;
+    bool aiming = padmap::held(padmap::current_mapping()[padmap::kPointerAction], physical_state(snapshot)) || free_aim;
     if (aiming && !pad.aiming) {
         pad.pointer_x = 0.0f;
         pad.pointer_y = 0.0f;
@@ -297,6 +298,10 @@ Snapshot read(Pad& pad, float dt) {
     if (aiming && !motion_mode && (std::fabs(right_x) > kStickDeadZone || std::fabs(right_y) > kStickDeadZone)) {
         pad.pointer_x += right_x * kStickPointerSpeed * dt;
         pad.pointer_y += right_y * kStickPointerSpeed * dt;
+    }
+    if (free_aim && (std::fabs(snapshot.left_x) > kStickDeadZone || std::fabs(snapshot.left_y) > kStickDeadZone)) {
+        pad.pointer_x += snapshot.left_x * kStickPointerSpeed * dt;
+        pad.pointer_y += snapshot.left_y * kStickPointerSpeed * dt;
     }
     if (pad.has_accel) {
         snapshot.has_accel = SDL_GetGamepadSensorData(handle, SDL_SENSOR_ACCEL, snapshot.accel, 3);
