@@ -61,5 +61,6 @@ const keymap::Bindings& bindings();
 uint32_t keyboard_buttons(const keymap::Bindings& keys, const std::function<bool(int code)>& down, bool aiming);
 void upgrade_bindings();
 void set_blocked(bool blocked);
+bool gamepad_in_use();
 
 }

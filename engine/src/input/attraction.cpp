@@ -2,6 +2,12 @@
 
 #include <atomic>
 
+#include "wp/control_names.h"
+#include "wp/gamepad.h"
+#include "wp/input.h"
+#include "wp/keymap.h"
+#include "wp/padmap.h"
+
 namespace wp::attraction {
 
 namespace {
@@ -33,6 +39,38 @@ int dance_swing(uint32_t moves, uint32_t report) {
 bool dance_playing() {
     DancePlaying playing = g_playing;
     return playing && playing();
+}
+
+Label move_label(uint32_t move) {
+    Label label;
+    Arrow arrow = move == kMoveLeft ? Arrow::Left : move == kMoveUp ? Arrow::Up : move == kMoveDown ? Arrow::Down : move == kMoveRight ? Arrow::Right : Arrow::None;
+    if (input::gamepad_in_use()) {
+        if (arrow != Arrow::None) {
+            label.arrow = arrow;
+            return label;
+        }
+        padmap::Binding binding = padmap::current_mapping()[move == kMoveKick ? 0 : 3];
+        if (!binding.empty()) {
+            label.text = control_names::pad_binding({binding.front()}, gamepad::shown_family());
+        }
+        return label;
+    }
+    keymap::Action action = arrow == Arrow::Left    ? keymap::Action::Left
+                            : arrow == Arrow::Up    ? keymap::Action::Up
+                            : arrow == Arrow::Down  ? keymap::Action::Down
+                            : arrow == Arrow::Right ? keymap::Action::Right
+                            : move == kMoveKick     ? keymap::Action::A
+                                                    : keymap::Action::Two;
+    std::vector<int> codes = input::bindings().of(action);
+    if (codes.empty()) {
+        return label;
+    }
+    std::string name = keymap::key_name(codes.front());
+    label.arrow = name == "Left" ? Arrow::Left : name == "Up" ? Arrow::Up : name == "Down" ? Arrow::Down : name == "Right" ? Arrow::Right : Arrow::None;
+    if (label.arrow == Arrow::None) {
+        label.text = control_names::key(codes.front());
+    }
+    return label;
 }
 
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace wp::attraction {
 
@@ -27,5 +28,14 @@ Mode mode();
 void set_dance(DanceSwing swing, DancePlaying playing);
 int dance_swing(uint32_t moves, uint32_t report);
 bool dance_playing();
+
+enum class Arrow : int { None, Left, Up, Down, Right };
+
+struct Label {
+    Arrow arrow = Arrow::None;
+    std::string text;
+};
+
+Label move_label(uint32_t move);
 
 }

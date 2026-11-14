@@ -1,11 +1,19 @@
 #include "attractions.h"
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "wp/attraction.h"
+#include "wp/canvas.h"
 #include "wp/log.h"
 #include "wp/memory.h"
 
@@ -301,6 +309,287 @@ int dance_swing(uint32_t held, uint32_t report) {
     return static_cast<int32_t>(swing_end - report) > 0 ? sign : 0;
 }
 
+constexpr int kIconCount = 8;
+constexpr int kIconSize = 160;
+constexpr int kBadge = 58;
+constexpr int kBadgeEdge = 5;
+constexpr int kBadgeInset = 10;
+constexpr int kBadgeWide = 104;
+constexpr int kBadgeFont = 32;
+constexpr uint32_t kArchiveMagic = 0x55aa382d;
+constexpr uint32_t kTplMagic = 0x0020af30;
+constexpr uint32_t kFormatCi8 = 9;
+constexpr int64_t kSearchPeriodMs = 1000;
+
+struct Icons {
+    uint32_t dance = 0;
+    uint32_t archive = 0;
+    int64_t searched = 0;
+    uint32_t tpl[kIconCount] = {};
+    std::vector<uint8_t> original[kIconCount];
+    std::string drawn;
+};
+
+Icons g_icons;
+
+bool is_archive(uint32_t header) {
+    return header && rd32(header) == kArchiveMagic && rd32(header + 4) == 0x20;
+}
+
+uint32_t find_archive() {
+    struct Range {
+        uint32_t base;
+        uint32_t size;
+    };
+    constexpr Range kRam[] = {{0x90000000u, 0x04000000u}, {0x80000000u, 0x01800000u}};
+    static const std::string kName = "At01UIDanceIcon00.tpl";
+    for (const Range& range : kRam) {
+        const char* start = reinterpret_cast<const char*>(host(range.base));
+        const char* end = start + range.size;
+        std::boyer_moore_horspool_searcher searcher(kName.begin(), kName.end());
+        for (const char* at = std::search(start, end, searcher); at != end; at = std::search(at + 1, end, searcher)) {
+            uint32_t name = range.base + static_cast<uint32_t>(at - start);
+            if (at + kName.size() >= end || at[kName.size()] != 0) {
+                continue;
+            }
+            for (uint32_t header = (name & ~3u) - 4; header > range.base && header + 0x40000 > name; header -= 4) {
+                if (!is_archive(header)) {
+                    continue;
+                }
+                uint32_t count = rd32(header + 0x28);
+                uint32_t names = header + 0x20 + count * 12;
+                if (count > 1 && count < 10000 && name >= names && name < header + 0x20 + rd32(header + 8)) {
+                    return header;
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+uint32_t archive_file(uint32_t header, const char* name) {
+    uint32_t count = rd32(header + 0x28);
+    uint32_t names = header + 0x20 + count * 12;
+    for (uint32_t i = 1; i < count; i++) {
+        uint32_t node = header + 0x20 + i * 12;
+        if (rd8(node) == 0 && guest_text_is(names + (rd32(node) & 0xffffff), name)) {
+            return header + rd32(node + 4);
+        }
+    }
+    return 0;
+}
+
+uint32_t tpl_at(uint32_t tpl, uint32_t value) {
+    uint32_t address = value >= 0x80000000u ? value : tpl + value;
+    return address >= tpl && address - tpl < 0x40000u ? address : 0;
+}
+
+struct Picture {
+    uint32_t image = 0;
+    int colours = 0;
+    uint8_t rgba[256][4] = {};
+};
+
+bool picture(uint32_t tpl, Picture& result) {
+    if (rd32(tpl) != kTplMagic || rd32(tpl + 4) != 1) {
+        return false;
+    }
+    uint32_t table = tpl_at(tpl, rd32(tpl + 8));
+    uint32_t image = table ? tpl_at(tpl, rd32(table)) : 0;
+    uint32_t palette = table ? tpl_at(tpl, rd32(table + 4)) : 0;
+    if (!image || !palette || rd16(image) != kIconSize || rd16(image + 2) != kIconSize || rd32(image + 4) != kFormatCi8) {
+        return false;
+    }
+    result.image = tpl_at(tpl, rd32(image + 8));
+    uint32_t colours = tpl_at(tpl, rd32(palette + 8));
+    if (!result.image || !colours) {
+        return false;
+    }
+    result.colours = std::min<int>(rd16(palette), 256);
+    uint32_t format = rd32(palette + 4);
+    for (int i = 0; i < result.colours; i++) {
+        uint32_t v = rd16(colours + 2 * static_cast<uint32_t>(i));
+        uint8_t* c = result.rgba[i];
+        if (format == 2 && (v & 0x8000)) {
+            c[0] = static_cast<uint8_t>((v >> 10 & 31) * 255 / 31);
+            c[1] = static_cast<uint8_t>((v >> 5 & 31) * 255 / 31);
+            c[2] = static_cast<uint8_t>((v & 31) * 255 / 31);
+            c[3] = 255;
+        } else if (format == 2) {
+            c[0] = static_cast<uint8_t>((v >> 8 & 15) * 17);
+            c[1] = static_cast<uint8_t>((v >> 4 & 15) * 17);
+            c[2] = static_cast<uint8_t>((v & 15) * 17);
+            c[3] = static_cast<uint8_t>((v >> 12 & 7) * 255 / 7);
+        } else if (format == 1) {
+            c[0] = static_cast<uint8_t>((v >> 11 & 31) * 255 / 31);
+            c[1] = static_cast<uint8_t>((v >> 5 & 63) * 255 / 63);
+            c[2] = static_cast<uint8_t>((v & 31) * 255 / 31);
+            c[3] = 255;
+        } else {
+            c[0] = c[1] = c[2] = static_cast<uint8_t>(v);
+            c[3] = static_cast<uint8_t>(v >> 8);
+        }
+    }
+    return result.colours > 0;
+}
+
+uint32_t ci8_byte(uint32_t image, int x, int y) {
+    return image + static_cast<uint32_t>(((y / 4) * (kIconSize / 8) + x / 8) * 32 + (y % 4) * 8 + x % 8);
+}
+
+int nearest_colour(const Picture& picture, uint32_t argb) {
+    int r = argb >> 16 & 0xff;
+    int g = argb >> 8 & 0xff;
+    int b = argb & 0xff;
+    int best = 0;
+    long best_distance = -1;
+    for (int i = 0; i < picture.colours; i++) {
+        const uint8_t* c = picture.rgba[i];
+        long da = (255 - c[3]) * 2;
+        long dr = c[0] - r;
+        long dg = c[1] - g;
+        long db = c[2] - b;
+        long distance = da * da + dr * dr + dg * dg + db * db;
+        if (best_distance < 0 || distance < best_distance) {
+            best_distance = distance;
+            best = i;
+        }
+    }
+    return best;
+}
+
+uint32_t darkest_colour(const Picture& picture) {
+    int best = 0;
+    int darkness = -1;
+    for (int i = 0; i < picture.colours; i++) {
+        const uint8_t* c = picture.rgba[i];
+        int value = c[3] == 255 ? 765 - c[0] - c[1] - c[2] : -1;
+        if (value > darkness) {
+            darkness = value;
+            best = i;
+        }
+    }
+    const uint8_t* c = picture.rgba[best];
+    return 0xff000000u | static_cast<uint32_t>(c[0]) << 16 | static_cast<uint32_t>(c[1]) << 8 | c[2];
+}
+
+void draw_arrow(canvas::Canvas& badge, attraction::Arrow arrow, uint32_t colour) {
+    float centre = kBadge / 2.0f;
+    float half = kBadge / 2.0f - kBadgeEdge - 8.0f;
+    std::vector<std::array<float, 2>> shape = {{-half, 0.0f},         {0.0f, -half},        {0.0f, -half * 0.45f}, {half, -half * 0.45f},
+                                                {half, half * 0.45f}, {0.0f, half * 0.45f}, {0.0f, half}};
+    for (std::array<float, 2>& point : shape) {
+        float x = point[0];
+        float y = point[1];
+        if (arrow == attraction::Arrow::Right) {
+            x = -x;
+        } else if (arrow == attraction::Arrow::Up) {
+            std::swap(x, y);
+        } else if (arrow == attraction::Arrow::Down) {
+            std::swap(x, y);
+            y = -y;
+        }
+        point = {centre + x, centre + y};
+    }
+    badge.fill_polygon(shape, colour);
+}
+
+void draw_badge(const Picture& picture, const attraction::Label& label) {
+    uint32_t dark = darkest_colour(picture);
+    int padding = kBadgeEdge + 4;
+    int size = kBadgeFont;
+    canvas::Face face = canvas::make_face(canvas::FontId::Heavy, size);
+    int width = kBadge;
+    if (label.arrow == attraction::Arrow::None) {
+        int wanted = static_cast<int>(canvas::text_width(face, label.text)) + 2 * padding;
+        width = std::clamp(wanted, kBadge, kBadgeWide);
+        while (size > 12 && canvas::text_width(face, label.text) > width - 2 * padding) {
+            face = canvas::make_face(canvas::FontId::Heavy, --size);
+        }
+    }
+    canvas::Canvas badge;
+    badge.width = width;
+    badge.height = kBadge;
+    badge.pixels.assign(static_cast<size_t>(width) * kBadge, 0);
+    badge.fill_round(0, 0, width, kBadge, 14, dark);
+    badge.fill_round(kBadgeEdge, kBadgeEdge, width - kBadgeEdge, kBadge - kBadgeEdge, 10, 0xffffffffu);
+    if (label.arrow != attraction::Arrow::None) {
+        draw_arrow(badge, label.arrow, dark);
+    } else {
+        badge.text(face, dark, label.text, padding, kBadgeEdge, width - padding, kBadge - kBadgeEdge, canvas::Align::Center, true);
+    }
+    int left = kIconSize - width - kBadgeInset;
+    int top = kIconSize - kBadge - kBadgeInset;
+    for (int y = 0; y < kBadge; y++) {
+        for (int x = 0; x < width; x++) {
+            uint32_t pixel = badge.pixels[static_cast<size_t>(y) * width + x];
+            if ((pixel >> 24) >= 128) {
+                wr8(ci8_byte(picture.image, left + x, top + y), static_cast<uint8_t>(nearest_colour(picture, pixel)));
+            }
+        }
+    }
+}
+
+void forget_icons() {
+    g_icons.archive = 0;
+    for (int i = 0; i < kIconCount; i++) {
+        g_icons.tpl[i] = 0;
+        g_icons.original[i].clear();
+    }
+    g_icons.drawn.clear();
+}
+
+void label_icons(uint32_t dance) {
+    if (dance != g_icons.dance) {
+        g_icons.dance = dance;
+        forget_icons();
+    }
+    if (!is_archive(g_icons.archive) || !g_icons.tpl[0] || rd32(g_icons.tpl[0]) != kTplMagic) {
+        int64_t now = now_ms();
+        if (now - g_icons.searched < kSearchPeriodMs) {
+            return;
+        }
+        g_icons.searched = now;
+        forget_icons();
+        g_icons.archive = find_archive();
+        if (!g_icons.archive) {
+            return;
+        }
+        for (int i = 0; i < kIconCount; i++) {
+            char name[32];
+            std::snprintf(name, sizeof name, "At01UIDanceIcon%02d.tpl", i);
+            g_icons.tpl[i] = archive_file(g_icons.archive, name);
+        }
+        log::write("game", "dance icons at %08x", g_icons.archive);
+    }
+    attraction::Label labels[kMoveCount];
+    std::string key;
+    for (int m = 0; m < kMoveCount; m++) {
+        labels[m] = attraction::move_label(kMoves[m].move);
+        key += std::to_string(static_cast<int>(labels[m].arrow)) + labels[m].text + '\n';
+    }
+    if (key == g_icons.drawn) {
+        return;
+    }
+    g_icons.drawn = key;
+    for (int m = 0; m < kMoveCount; m++) {
+        int icon = kMoves[m].icon;
+        Picture current;
+        if (!g_icons.tpl[icon] || !picture(g_icons.tpl[icon], current)) {
+            continue;
+        }
+        std::vector<uint8_t>& original = g_icons.original[icon];
+        uint8_t* pixels = host(current.image);
+        if (original.empty()) {
+            original.assign(pixels, pixels + kIconSize * kIconSize);
+        }
+        std::memcpy(pixels, original.data(), original.size());
+        if (labels[m].arrow != attraction::Arrow::None || !labels[m].text.empty()) {
+            draw_badge(current, labels[m]);
+        }
+    }
+}
+
 void note_dance(Cpu& c, int part) {
     static bool registered = false;
     if (!registered) {
@@ -315,6 +604,7 @@ void note_dance(Cpu& c, int part) {
     g_dance_vtable = rd32(dance);
     g_dance_part = part;
     g_dance_seen = now_ms();
+    label_icons(dance);
 }
 
 }

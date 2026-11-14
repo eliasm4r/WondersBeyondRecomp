@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -34,6 +35,7 @@ std::atomic<int64_t> g_wheel_up{0};
 std::atomic<int64_t> g_wheel_down{0};
 std::atomic<bool> g_blocked{false};
 std::atomic<bool> g_auto_confirm{false};
+std::atomic<bool> g_gamepad_in_use{false};
 constexpr int64_t kConfirmPeriod = 500;
 constexpr int64_t kConfirmLength = 100;
 std::atomic<bool> g_release_wait[4] = {};
@@ -337,6 +339,7 @@ Sample device_sample(uint32_t channel) {
     if (focused) {
         result.buttons |= keyboard_buttons(keys, pressed, mouse_aims);
     }
+    uint32_t from_keys = result.buttons;
     bool sideways = sideways_grip();
     if (sideways) {
         uint32_t keys_held = result.buttons;
@@ -350,6 +353,11 @@ Sample device_sample(uint32_t channel) {
         pad.buttons = (pad.buttons & ~(kButtonTwo | kButtonB)) | kButtonA;
     }
     result.buttons |= pad.buttons;
+    if ((pad.buttons & ~kMotionSideways) != 0 || std::abs(pad.stick_x) > 0.5f || std::abs(pad.stick_y) > 0.5f) {
+        g_gamepad_in_use = true;
+    } else if (from_keys != 0) {
+        g_gamepad_in_use = false;
+    }
     if (mode == attraction::Mode::Shake) {
         uint32_t bomb = (result.buttons & kButtonTwo) ? kButtonA : 0;
         result.buttons = (result.buttons & ~(kButtonA | kButtonTwo)) | bomb;
@@ -386,6 +394,10 @@ Sample device_sample(uint32_t channel) {
 
 void set_auto_confirm(bool enabled) {
     g_auto_confirm = enabled;
+}
+
+bool gamepad_in_use() {
+    return g_gamepad_in_use;
 }
 
 void set_blocked(bool blocked) {
