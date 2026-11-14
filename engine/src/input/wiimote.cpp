@@ -83,6 +83,7 @@ constexpr double kSwingAcceleration = 2.5;
 constexpr int kAccelMax = 1023;
 constexpr double kAttractionSwing = 2.5;
 constexpr uint32_t kAttractionSwingReports = 6;
+constexpr uint32_t kPressShakeBursts = 4;
 constexpr double kFlySteer = kPi / 2.0;
 constexpr double kFlyClimb = 50.0 * kPi / 180.0;
 constexpr double kFlyEase = 0.15;
@@ -131,7 +132,6 @@ struct State {
     double climb = 0.0;
     KeyPair steer_keys;
     KeyPair climb_keys;
-    int shake_sign = 1;
     uint32_t shake_end = 0;
     std::array<uint16_t, 3> accel{};
     std::array<uint16_t, 3> reported_accel{};
@@ -425,14 +425,19 @@ void dance_motion(State& state, const input::Sample& sample, double accel[3]) {
     }
 }
 
-void shake_on_press(State& state, uint32_t pressed, double accel[3]) {
-    if (pressed & (input::kMotionShakeLeft | input::kMotionShakeRight | input::kMotionShake)) {
-        state.shake_sign = -state.shake_sign;
-        state.shake_end = state.reports + kAttractionSwingReports;
+void shake_on_press(State& state, uint32_t held, uint32_t pressed, double accel[3]) {
+    uint32_t length = kAttractionSwingReports * kPressShakeBursts;
+    bool started = (pressed & (input::kMotionShakeLeft | input::kMotionShakeRight | input::kMotionShake)) != 0;
+    bool shaking = (held & input::kMotionShake) != 0 && static_cast<int32_t>(state.shake_end - state.reports) <= 0;
+    if (started || shaking) {
+        state.shake_end = state.reports + length;
     }
-    if (static_cast<int32_t>(state.shake_end - state.reports) > 0) {
+    int32_t left = static_cast<int32_t>(state.shake_end - state.reports);
+    if (left > 0) {
+        uint32_t burst = (length - static_cast<uint32_t>(left)) / kAttractionSwingReports;
+        double sign = burst % 2 == 0 ? 1.0 : -1.0;
         for (int i = 0; i < 3; i++) {
-            accel[i] += state.shake_sign * kAttractionSwing;
+            accel[i] += sign * kAttractionSwing;
         }
     }
 }
@@ -480,7 +485,7 @@ void update_motion(State& state, const input::Sample& sample) {
             }
         }
         if (mode == attraction::Mode::Shake) {
-            shake_on_press(state, pressed, accel);
+            shake_on_press(state, held, pressed, accel);
         }
     }
     if (pressed & (input::kMotionSwingUp | input::kMotionSwingDown)) {
