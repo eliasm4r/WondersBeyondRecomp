@@ -413,6 +413,11 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
   1.4.4 matched it on the user's disc (redump.org did not answer); the size is left out, not checked against Redump.
 - Open: the launcher runs the setup step after the first install and when the player picks another copy. An update
   unpacks the new sources over the folder, and nothing says it runs the step again: until it does, the old build stays.
+- A folder built in one place and then moved (a friend built the v0.2.0 zip in Downloads, then put it in
+  `C:/Recomp Library`) stopped the setup at the configure step: CMake refuses a `build/out` whose cache names another
+  source folder. `configure` now reads `CMAKE_HOME_DIRECTORY` in `build/out/CMakeCache.txt` (`built_elsewhere`), and
+  when it is another folder, notes it in `install.log`, deletes `build/out` and configures again. Tested by moving an
+  installed folder and running `--prepare` in the new place: 94 s, game rebuilt.
 
 ## Color settings
 

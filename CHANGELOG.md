@@ -10,6 +10,11 @@ Every change to WondersBeyondRecomp, newest first.
 
 <br>
 
+## Unreleased
+
+### Fixed
+- The setup stopped with a CMake error when an installed folder had been moved, for example from Downloads into the RecompLauncher library. It now builds again in the new place.
+
 ## v0.2.0-alpha · 2026-11-14
 
 > **Smoother and faster.** Up to 240 fps, shorter freezes when a zone appears, a faster start, an update check and controls made for the four attractions. [Download it here.](https://github.com/eliasm4r/WondersBeyondRecomp/releases/tag/v0.2.0-alpha)

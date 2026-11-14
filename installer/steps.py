@@ -88,6 +88,18 @@ def free_gigabytes(folder):
         return NEEDED_GIGABYTES
 
 
+def built_elsewhere(root):
+    try:
+        cache = (Path(root) / "build" / "out" / "CMakeCache.txt").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    for line in cache.splitlines():
+        if line.startswith("CMAKE_HOME_DIRECTORY:INTERNAL="):
+            made = line.split("=", 1)[1].strip()
+            return os.path.normcase(os.path.realpath(made)) != os.path.normcase(os.path.realpath(root))
+    return False
+
+
 def compile_jobs():
     cores = os.cpu_count() or 1
 
@@ -362,6 +374,9 @@ class Install:
             raise Failure(self.texts["disc_other"].format(found=found, wanted=DISC_ID))
 
     def configure(self, move):
+        if built_elsewhere(self.root):
+            self.note("build/out was configured in another folder, configuring again")
+            shutil.rmtree(self.root / "build" / "out", ignore_errors=True)
         self.run([self.program("cmake"), "-S", ".", "-B", "build/out", "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release"])
 
     def build(self, move):
