@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <iterator>
 #include <string>
 #include <utility>
 #include <vector>
@@ -332,6 +333,13 @@ constexpr uint32_t kArchiveMagic = 0x55aa382d;
 constexpr uint32_t kTplMagic = 0x0020af30;
 constexpr uint32_t kFormatCi8 = 9;
 constexpr int64_t kSearchPeriodMs = 1000;
+constexpr size_t kSearchChunk = 4 << 20;
+
+struct ArchiveSearch {
+    size_t range = 0;
+    uint32_t offset = 0;
+    int64_t resume = 0;
+};
 constexpr const char* kBombButtonName = "AtAButton00.tpl";
 constexpr int kBombDiscRadius = 22;
 constexpr int kBombGlyphHalf = 16;
@@ -342,7 +350,7 @@ constexpr uint32_t kBombInkMinAlpha = 24;
 struct Icons {
     uint32_t dance = 0;
     uint32_t archive = 0;
-    int64_t searched = 0;
+    ArchiveSearch search;
     uint32_t tpl[kIconCount] = {};
     std::vector<uint8_t> original[kIconCount];
     std::string drawn;
@@ -354,32 +362,54 @@ bool is_archive(uint32_t header) {
     return header && rd32(header) == kArchiveMagic && rd32(header + 4) == 0x20;
 }
 
-uint32_t find_archive(const std::string& name_wanted) {
-    struct Range {
-        uint32_t base;
-        uint32_t size;
-    };
-    constexpr Range kRam[] = {{0x90000000u, 0x04000000u}, {0x80000000u, 0x01800000u}};
-    const std::string& kName = name_wanted;
-    for (const Range& range : kRam) {
-        const char* start = reinterpret_cast<const char*>(host(range.base));
-        const char* end = start + range.size;
-        std::boyer_moore_horspool_searcher searcher(kName.begin(), kName.end());
-        for (const char* at = std::search(start, end, searcher); at != end; at = std::search(at + 1, end, searcher)) {
-            uint32_t name = range.base + static_cast<uint32_t>(at - start);
-            if (at + kName.size() >= end || at[kName.size()] != 0) {
-                continue;
-            }
-            for (uint32_t header = (name & ~3u) - 4; header > range.base && header + 0x40000 > name; header -= 4) {
-                if (!is_archive(header)) {
-                    continue;
-                }
-                uint32_t count = rd32(header + 0x28);
-                uint32_t names = header + 0x20 + count * 12;
-                if (count > 1 && count < 10000 && name >= names && name < header + 0x20 + rd32(header + 8)) {
-                    return header;
-                }
-            }
+struct RamRange {
+    uint32_t base;
+    uint32_t size;
+};
+
+constexpr RamRange kRam[] = {{0x90000000u, 0x04000000u}, {0x80000000u, 0x01800000u}};
+
+uint32_t archive_holding(const RamRange& range, uint32_t name) {
+    for (uint32_t header = (name & ~3u) - 4; header > range.base && header + 0x40000 > name; header -= 4) {
+        if (!is_archive(header)) {
+            continue;
+        }
+        uint32_t count = rd32(header + 0x28);
+        uint32_t names = header + 0x20 + count * 12;
+        if (count > 1 && count < 10000 && name >= names && name < header + 0x20 + rd32(header + 8)) {
+            return header;
+        }
+    }
+    return 0;
+}
+
+uint32_t search_archive(ArchiveSearch& search, const std::string& wanted) {
+    int64_t now = now_ms();
+    if (now < search.resume) {
+        return 0;
+    }
+    const RamRange& range = kRam[search.range];
+    const char* start = reinterpret_cast<const char*>(host(range.base));
+    const char* end = start + range.size;
+    const char* from = start + search.offset;
+    const char* to = std::min(end, from + kSearchChunk);
+    const char* limit = std::min(end, to + wanted.size());
+    std::boyer_moore_horspool_searcher searcher(wanted.begin(), wanted.end());
+    for (const char* at = std::search(from, limit, searcher); at < to; at = std::search(at + 1, limit, searcher)) {
+        if (at + wanted.size() >= end || at[wanted.size()] != 0) {
+            continue;
+        }
+        if (uint32_t header = archive_holding(range, range.base + static_cast<uint32_t>(at - start))) {
+            search = ArchiveSearch{};
+            return header;
+        }
+    }
+    search.offset = static_cast<uint32_t>(to - start);
+    if (to == end) {
+        search.offset = 0;
+        search.range = (search.range + 1) % std::size(kRam);
+        if (search.range == 0) {
+            search.resume = now + kSearchPeriodMs;
         }
     }
     return 0;
@@ -599,16 +629,12 @@ void label_icons(uint32_t dance) {
         forget_icons();
     }
     if (!is_archive(g_icons.archive) || !g_icons.tpl[0] || rd32(g_icons.tpl[0]) != kTplMagic) {
-        int64_t now = now_ms();
-        if (now - g_icons.searched < kSearchPeriodMs) {
-            return;
-        }
-        g_icons.searched = now;
         forget_icons();
-        g_icons.archive = find_archive("At01UIDanceIcon00.tpl");
+        g_icons.archive = search_archive(g_icons.search, "At01UIDanceIcon00.tpl");
         if (!g_icons.archive) {
             return;
         }
+        g_icons.search.resume = now_ms() + kSearchPeriodMs;
         for (int i = 0; i < kIconCount; i++) {
             char name[32];
             std::snprintf(name, sizeof name, "At01UIDanceIcon%02d.tpl", i);
@@ -647,7 +673,7 @@ void label_icons(uint32_t dance) {
 struct BombButton {
     uint32_t archive = 0;
     uint32_t tpl = 0;
-    int64_t searched = 0;
+    ArchiveSearch search;
     std::vector<uint8_t> original;
     std::string drawn;
 };
@@ -727,16 +753,14 @@ void draw_bomb_button(const Picture& picture, const attraction::Label& label) {
 void label_bomb_button() {
     BombButton& state = g_bomb_button;
     if (!is_archive(state.archive) || !state.tpl || rd32(state.tpl) != kTplMagic) {
-        int64_t now = now_ms();
-        if (now - state.searched < kSearchPeriodMs) {
-            return;
-        }
-        state.searched = now;
         state.original.clear();
         state.drawn.clear();
-        state.archive = find_archive(kBombButtonName);
+        state.archive = search_archive(state.search, kBombButtonName);
         state.tpl = state.archive ? archive_file(state.archive, kBombButtonName) : 0;
         if (!state.tpl) {
+            if (state.archive) {
+                state.search.resume = now_ms() + kSearchPeriodMs;
+            }
             return;
         }
         log::write("game", "bomb button at %08x", state.tpl);

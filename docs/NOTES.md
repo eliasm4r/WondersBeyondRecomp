@@ -394,6 +394,10 @@ PokePark-2-Wiicompiled (CC0, USA disc), mapped to PAL by function size patterns.
   archive). While Power Bash runs (checked from the `SceneManager` run begin hook), the 33x33 middle of its disc is
   repainted row by row with the disc's colour near its edge, then the bomb key is drawn in the letter's colour: the
   key's name, a PlayStation shape, or a space bar symbol for Space (used on the dance icons too).
+- The archives holding the dance icons and the bomb button are found by searching guest RAM for the file name,
+  4 MB a frame (MEM2 then MEM1, then again a second later if absent). Searching all 88 MB at once took a 58-59 ms
+  frame when Power Bash started, again every second until the archive was loaded; with the chunks no frame there
+  goes over 40 ms, and the button is found about 0.4 s later, long before the first bomb.
   The shake actions are left out of the key conflict check (`keymap::attraction_only`).
 - Flight of Fancy: the remote is held sideways; the movement keys or the left stick steer up to 90 degrees and climb
   or dive up to 50, eased by 0.15 a report; the pad's own motion is ignored there, as in Cake Contraption.
