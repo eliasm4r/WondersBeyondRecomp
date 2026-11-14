@@ -903,6 +903,15 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
   see past 2000 by the canvas's shape: 21:9 at 240 fps x3 drew 21.9 million vertices a second instead of 21.3, still
   at 239.8 fps.
 
+## Text speed
+
+- `game.text_speed` (Game tab, live): `1` (the game's), `2`, `3`, or `0` for a whole page at once. Idea from the rival
+  PP2 recomp (`hle_modifiers.c`). The dialogue writer's step (`MenuMessagePuncherImpl`, 0x801485A0 here, 0x80148520
+  in the US game: the functions around it sit 0x80 later in this release) returns 1 while it writes; its caller keeps
+  that state at +0x0C. `DialogueWriterStep` calls it again while both stay 1, up to the speed, or 4000 times for a
+  page at once; the pauses for the player are other states and are left alone. Reading the first sign of the beach:
+  58 steps for a page at 1, 29 at 2, 1 at once.
+
 ## Bug recorder and hang report
 
 - `video.bug_recorder` (Advanced tab, off by default, Direct3D 11): every image shown, real or interpolated, is copied

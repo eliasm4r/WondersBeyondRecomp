@@ -32,7 +32,7 @@ constexpr const char* kLiveKeys[] = {
     "overlay.show",         "overlay.level",        "overlay.corner",        "controls.device",    "stats.play_time",
     "video.brightness",     "video.contrast",       "video.saturation",      "video.gamma",        "video.colors_reset",
     "camera.free",          "camera.mouse_speed",   "camera.stick_speed",    "camera.invert_y",    "video.bug_recorder",
-    "system.check_updates", "system.update",        "video.aspect",
+    "system.check_updates", "system.update",        "video.aspect",          "game.text_speed",
 };
 
 struct Language {
@@ -140,7 +140,7 @@ std::vector<std::string> tab_keys(size_t tab, Device device) {
         return {"video.scale",      "video.fullscreen", "system.widescreen", "video.aspect", "video.vsync", "video.smooth", "video.anisotropy",
                 color::kBrightness.key, color::kContrast.key, color::kSaturation.key, color::kGamma.key, kResetColors};
     case 1:
-        return {"video.fps", "saves.backups", "system.discord", kPlayTime};
+        return {"video.fps", "game.text_speed", "saves.backups", "system.discord", kPlayTime};
     case 2:
         return {"audio.volume", "audio.mute", "audio.wiimote_speaker"};
     case 3: {
@@ -223,6 +223,9 @@ std::vector<std::string> choices(const std::string& key) {
     if (key == "video.aspect") {
         return {"16:9", "16:10", "21:9", "32:9", "auto"};
     }
+    if (key == "game.text_speed") {
+        return {"1", "2", "3", "0"};
+    }
     if (key == "overlay.level") {
         return {"minimal", "standard", "full"};
     }
@@ -283,6 +286,9 @@ std::string shown_value(const std::string& key, const std::string& value) {
     }
     if (key == "video.aspect") {
         return value == "auto" ? ui::label("menu.aspect.auto") : value == "16:9" ? ui::label("menu.aspect.original") : value;
+    }
+    if (key == "game.text_speed") {
+        return value == "1" ? ui::label("menu.text_speed.original") : value == "0" ? ui::label("menu.text_speed.instant") : value + "x";
     }
     if (key == "overlay.level" || key == "overlay.corner" || key == kDevice) {
         std::string prefix = key == "overlay.level" ? "menu.level." : key == "overlay.corner" ? "menu.corner." : "menu.device.";

@@ -561,6 +561,21 @@ void culling_frustum(Cpu& c, HleFunction original) {
     original(c);
 }
 
+constexpr uint32_t kWriterState = 0x0C;
+constexpr uint32_t kWriting = 1;
+constexpr int kPageAtOnce = 4000;
+
+void dialogue_writer_step(Cpu& c, HleFunction original) {
+    static const settings::LiveNumber speed("game.text_speed", "WP_TEXT_SPEED");
+    uint32_t writer = c.r[3];
+    int steps = speed() > 0 ? speed() : kPageAtOnce;
+    original(c);
+    while (--steps > 0 && c.r[3] == kWriting && rd32(writer + kWriterState) == kWriting) {
+        c.r[3] = writer;
+        original(c);
+    }
+}
+
 void temp_pool_alloc(Cpu& c, HleFunction original) {
     uint32_t pool = c.r[3];
     uint32_t index = c.r[4];
@@ -596,7 +611,8 @@ HookFunction hook(const char* name) {
                    {"FindResourceByNumber", find_resource_by_number},
                    {"AddSceneParameter", add_scene_parameter}, {"PickScene", pick_scene}, {"SceneManagerRunBegin", scene_manager_run_begin},
                    {"DanceFrame", dance_frame}, {"DanceFrameSecondPart", dance_frame_second_part},
-                   {"DanceJudge", dance_judge}, {"CullingFrustum", culling_frustum}};
+                   {"DanceJudge", dance_judge}, {"CullingFrustum", culling_frustum},
+                   {"DialogueWriterStep", dialogue_writer_step}};
     for (const auto& entry : kHooks) {
         if (std::strcmp(entry.name, name) == 0) {
             return entry.function;

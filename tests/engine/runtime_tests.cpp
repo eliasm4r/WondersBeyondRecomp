@@ -1775,7 +1775,7 @@ void test_options_menu() {
                                                                  "video.brightness", "video.contrast", "video.saturation", "video.gamma", "video.colors_reset"}));
     CHECK(std::strcmp(wp::ui::label("video.colors_reset", wp::ui::Language::French), "Couleurs d'origine") == 0);
     CHECK(std::strcmp(wp::ui::label("video.brightness", wp::ui::Language::French), "Luminosité") == 0);
-    CHECK((wp::options::tab_keys(1) == std::vector<std::string>{"video.fps", "saves.backups", "system.discord", "stats.play_time"}));
+    CHECK((wp::options::tab_keys(1) == std::vector<std::string>{"video.fps", "game.text_speed", "saves.backups", "system.discord", "stats.play_time"}));
     CHECK((wp::options::tab_keys(2) == std::vector<std::string>{"audio.volume", "audio.mute", "audio.wiimote_speaker"}));
     CHECK((wp::options::tab_keys(4) == std::vector<std::string>{"system.interface_language", "system.language"}));
     CHECK((wp::options::tab_keys(5) == std::vector<std::string>{"overlay.show", "overlay.level", "overlay.corner", "video.show_fps", "video.custom_textures", "video.dump_textures", "video.bug_recorder", "system.update"}));
@@ -1844,9 +1844,17 @@ void test_options_menu() {
 
     CHECK(menu.handle(wp::options::Action::TabNext).empty());
     CHECK(menu.tab() == 1 && menu.selection() == 0);
-    menu.select(3);
     rows = menu.rows();
-    CHECK(rows[3].kind == wp::options::Kind::Info && !rows[3].value.empty() && rows[3].live);
+    CHECK(rows[1].key == "game.text_speed" && rows[1].kind == wp::options::Kind::Choice && rows[1].live && rows[1].value == "Original");
+    menu.select(1);
+    CHECK(menu.handle(wp::options::Action::Next) == "game.text_speed" && wp::settings::number("game.text_speed", nullptr) == 2);
+    CHECK(menu.rows()[1].value == "2x");
+    CHECK(menu.handle(wp::options::Action::Next) == "game.text_speed" && menu.handle(wp::options::Action::Next) == "game.text_speed");
+    CHECK(wp::settings::number("game.text_speed", nullptr) == 0 && menu.rows()[1].value == "Instant");
+    wp::settings::store("game.text_speed", "1");
+    menu.select(4);
+    rows = menu.rows();
+    CHECK(rows[4].kind == wp::options::Kind::Info && !rows[4].value.empty() && rows[4].live);
     CHECK(menu.handle(wp::options::Action::Accept).empty() && menu.handle(wp::options::Action::Next).empty());
     CHECK(menu.handle(wp::options::Action::Previous).empty() && !menu.capturing());
 
