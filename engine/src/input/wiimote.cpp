@@ -478,7 +478,7 @@ void update_motion(State& state, const input::Sample& sample) {
         accel[0] = std::sin(state.roll) * std::cos(state.pitch);
         accel[1] = std::sin(state.pitch);
         accel[2] = std::cos(state.roll) * std::cos(state.pitch);
-        if (sample.motion_valid) {
+        if (sample.motion_valid && mode != attraction::Mode::Aim) {
             for (int i = 0; i < 3; i++) {
                 accel[i] = sample.accel[i];
             }

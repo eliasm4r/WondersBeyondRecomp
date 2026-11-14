@@ -381,6 +381,8 @@ PokePark-2-Wiicompiled (CC0, USA disc), mapped to PAL by function size patterns.
   aims (the right stick and the gyroscope do not, the player found them awkward there), and 2 or B (pad south, RT)
   also press A. The pad takes the aim while the left stick is pushed past 0.2, or once its pointer has moved 0.03 (of
   the half screen) since the cursor last moved; the mouse takes it back as soon as the cursor moves.
+  The pad's motion sensors are not passed on there: the game ignores the pointer unless the remote lies flat toward
+  the screen, so the remote is kept level whatever way the pad is held.
 - Power Bash: `keys.shake_left` / `keys.shake_right` (Q/E, LB/RB) shake by turns: each press after the other key's
   gives a 30 ms burst of 2.5 g on all three axes, so the faster, the stronger. 2 (Space, pad south) is A, the bomb.
   The shake actions are left out of the key conflict check (`keymap::attraction_only`).
