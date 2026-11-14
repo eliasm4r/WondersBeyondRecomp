@@ -86,6 +86,7 @@ struct Pad {
 
 std::mutex g_mutex;
 std::array<Snapshot, kSlots> g_snapshots;
+std::array<std::atomic<bool>, kSlots> g_connected{};
 std::array<std::atomic<bool>, kSlots> g_rumble{};
 std::array<std::atomic<int>, kSlots> g_player{};
 std::once_flag g_started;
@@ -479,17 +480,26 @@ void worker() {
             std::lock_guard<std::mutex> lock(g_mutex);
             g_snapshots = snapshots;
         }
+        for (size_t slot = 0; slot < kSlots; slot++) {
+            g_connected[slot].store(snapshots[slot].connected, std::memory_order_relaxed);
+        }
         std::this_thread::sleep_for(kPollInterval);
     }
 }
 
+std::atomic<bool> g_running{false};
+
 void start() {
+    if (g_running.load(std::memory_order_acquire)) {
+        return;
+    }
     std::call_once(g_started, [] {
         for (size_t slot = 0; slot < kSlots; slot++) {
             g_player[slot] = -1;
         }
         std::thread(worker).detach();
     });
+    g_running.store(true, std::memory_order_release);
 }
 
 Snapshot snapshot(uint32_t slot) {
@@ -504,7 +514,11 @@ Snapshot snapshot(uint32_t slot) {
 }
 
 bool connected(uint32_t slot) {
-    return snapshot(slot).connected;
+    if (slot >= kSlots || !enabled()) {
+        return false;
+    }
+    start();
+    return g_connected[slot].load(std::memory_order_relaxed);
 }
 
 bool camera_stick(float& x, float& y) {

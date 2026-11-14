@@ -140,6 +140,21 @@ over 33 ms. The 30 fps of the title and menus (frames of 33-34 ms) are the game'
   `test_cmpr_to_bc1_matches_decoder` decodes the blocks with the BC1 rules and compares them with the CMPR decoder
   (same formulas, so equal). Picture, frame 900 of `still.txt` at 60 fps: 0.04 % of the pixels differ by more than 8
   between BC1 and RGBA8, against 8.5 % between two RGBA8 runs (the game's own timing). `WP_BC1=0` keeps RGBA8.
+- Zone arrival at 120 fps with the hidden window, two runs each, frames over 25 ms: with `WP_NATIVE_LOOKUP=0
+  WP_BC1=0` (the new decoder still on) 380 + 50 and 372 + 50 ms; now 93 + 27 and 94 + 28 ms. Before the decoder
+  change the second frame was 175-180 ms.
+- Plain headless runs (`WP_HEADLESS=1`) present nothing, so the driver sends queued work to the GPU only when a
+  copy is read back: they showed a 56-86 ms wait in `complete_write_backs` after the texture frame and at the start
+  of an attraction that does not happen with the window. Measure frame times with `WP_HEADLESS=window`.
+- Entering an attraction's lobby (scene 5) takes 80-91 ms in one frame, half of it with every guest thread waiting;
+  the screen is black then. Starting the attraction (scene 4) is under 40 ms, except Power Bash on the `attractions`
+  branch, where redrawing the bomb button took about 20 ms of a 60 ms frame.
+- The pause menu showed no frame over 40 ms.
+- What is left in the 93 ms frame is the zone's scripts (the callers of the lookups, `0x80234240` and below),
+  spread over many guest functions, and about 15 % of waiting. Each poll of the interrupts read `steady_clock`
+  (a slow `gettimeofday` in this MinGW) for the module list and copied a whole gamepad snapshot under a mutex
+  after a `call_once`; the module watch now reads `FastClock` and `gamepad::connected` an atomic flag per slot
+  (guest idle about 2 points higher in the heavy zone at 120 fps, 52-53 % -> 53-56 %).
 
 ## 60 fps
 
