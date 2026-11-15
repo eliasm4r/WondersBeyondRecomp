@@ -46,8 +46,9 @@
   "settings": [
     {
       "id": "resolution", "label": "Resolution",
-      "help": "Draws the game at a multiple of the Wii's resolution: sharper, but heavier on the graphics card.",
+      "help": "Draws the game at a multiple of the Wii's resolution: sharper, but heavier on the graphics card. Auto picks the lowest one that stays sharp on your screen (4x in 1080p).",
       "choices": [
+        { "label": "Auto", "set": { "video/scale": "0" } },
         { "label": "Native", "set": { "video/scale": "1" } },
         { "label": "2x", "set": { "video/scale": "2" } },
         { "label": "3x", "set": { "video/scale": "3" } },
@@ -55,7 +56,7 @@
         { "label": "5x", "set": { "video/scale": "5" } },
         { "label": "6x", "set": { "video/scale": "6" } }
       ],
-      "defaults": { "video/scale": "1" }
+      "defaults": { "video/scale": "0" }
     },
     {
       "id": "frame_rate", "label": "Frame rate",

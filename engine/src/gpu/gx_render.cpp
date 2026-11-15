@@ -953,6 +953,8 @@ uint64_t g_frame = 0;
 constexpr uint64_t kWriteBackFrames = 2;
 uint64_t g_texture_epoch = 0;
 int g_scale = 1;
+int g_auto_scale = 4;
+constexpr double kAutoScaleMargin = 1.25;
 Canvas g_canvas;
 int g_canvas_kind = kInPicture;
 std::atomic<uint32_t> g_shared_margins{0};
@@ -1635,7 +1637,8 @@ void prepare_texture_pack() {
 
 int requested_scale() {
     static const settings::LiveNumber scale("video.scale", "WP_SCALE");
-    return std::clamp(scale(), 1, 6);
+    int wanted = scale();
+    return std::clamp(wanted == 0 ? g_auto_scale : wanted, 1, 6);
 }
 
 IDXGIAdapter* fastest_adapter() {
@@ -2640,6 +2643,10 @@ void service_deferred();
 
 const char* api_name() {
     return "Direct3D 11";
+}
+
+int current_scale() {
+    return g_device.ready ? g_scale : 0;
 }
 
 bool interpolating() {
@@ -5168,6 +5175,9 @@ bool present_view(HWND window, double aspect, ID3D11ShaderResourceView* view) {
     }
     D3D11_VIEWPORT viewport{static_cast<float>((client.right - width) / 2), static_cast<float>((client.bottom - height) / 2),
                             static_cast<float>(width), static_cast<float>(height), 0.0f, 1.0f};
+    double across = kAutoScaleMargin * width / canvas_width();
+    double down = kAutoScaleMargin * height / (kPictureHeight + 2 * g_canvas.margin_y);
+    g_auto_scale = std::clamp(static_cast<int>(std::ceil(std::max(across, down) - 0.01)), 1, 6);
     context->RSSetViewports(1, &viewport);
     context->RSSetState(g_device.present_rasterizer);
     context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);

@@ -10,6 +10,11 @@ Every change to WondersBeyondRecomp, newest first.
 
 <br>
 
+## Unreleased
+
+### Added
+- **Auto internal resolution**, now the default: the game picks the lowest scale that draws at least 1.25 times the picture's size on screen, across and down, so the smoothing has pixels to spare (4x on a 1080p screen, 3x at 720p, 5x at 1440p, 6x above). It follows the window when it is resized or goes fullscreen, and the options menu shows the scale in use (Auto (4x)). Settings saved by an earlier build keep their choice.
+
 ## v0.3.0-alpha · 2026-11-15
 
 > **Wider and quicker.** 16:10, 21:9 and 32:9 screens, faster text, skippable cutscenes, your own keys and buttons drawn in the game, every texture in HD with one button, and 240 fps at 6x. [Download it here.](https://github.com/eliasm4r/WondersBeyondRecomp/releases/tag/v0.3.0-alpha)

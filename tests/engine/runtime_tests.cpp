@@ -1514,7 +1514,7 @@ void test_settings_file_keys() {
     wp::settings::load(path);
     CHECK(wp::settings::text("keys.a", nullptr) == "K, MouseX1");
     CHECK(wp::settings::text("keys.screenshot", nullptr) == "F9");
-    CHECK(wp::settings::text("video.scale", nullptr) == "1");
+    CHECK(wp::settings::text("video.scale", nullptr) == "0");
     std::ifstream file(path, std::ios::binary);
     std::stringstream contents;
     contents << file.rdbuf();
@@ -1522,7 +1522,7 @@ void test_settings_file_keys() {
     CHECK(text.find("[keys]\n") != std::string::npos);
     CHECK(text.find("a=K, MouseX1\n") != std::string::npos);
     CHECK(text.find("unknown") == std::string::npos);
-    CHECK(text.find("[video]\nscale=1\n") == 0);
+    CHECK(text.find("[video]\nscale=0\n") == 0);
     for (size_t i = 0; i < wp::keymap::kActionCount; i++) {
         std::string line = "\n" + std::string(wp::keymap::action(i).name) + "=";
         CHECK(text.find(line, text.find("[keys]")) != std::string::npos);
@@ -1583,7 +1583,7 @@ void test_live_settings() {
     wp::settings::LiveFlag mute("audio.mute", nullptr);
     wp::settings::LiveNumber scale("video.scale", nullptr);
     CHECK(!mute());
-    CHECK(scale() == 1);
+    CHECK(scale() == 0);
     uint32_t revision = wp::settings::revision();
     wp::settings::store("audio.mute", "1");
     wp::settings::store("video.scale", "3");
@@ -1614,7 +1614,7 @@ void test_live_settings() {
     CHECK(wp::settings::flag("system.options_menu", nullptr));
     wp::settings::load("");
     CHECK(!mute());
-    CHECK(scale() == 1);
+    CHECK(scale() == 0);
     std::remove(path);
 }
 
@@ -1993,9 +1993,9 @@ void test_options_menu() {
     wp::options::Menu menu;
     menu.set_open(true);
     std::vector<wp::options::Row> rows = menu.rows();
-    CHECK(rows[0].key == "video.scale" && rows[0].value == "Native" && rows[0].live);
+    CHECK(rows[0].key == "video.scale" && rows[0].value == "Auto" && rows[0].live);
     CHECK(menu.handle(wp::options::Action::Next) == "video.scale");
-    CHECK(wp::settings::number("video.scale", nullptr) == 2);
+    CHECK(wp::settings::number("video.scale", nullptr) == 1);
     CHECK(menu.handle(wp::options::Action::Previous) == "video.scale");
     CHECK(menu.handle(wp::options::Action::Previous) == "video.scale");
     CHECK(wp::settings::number("video.scale", nullptr) == 6);

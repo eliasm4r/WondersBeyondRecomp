@@ -13,6 +13,7 @@
 #include "wp/frame_pacing.h"
 #include "wp/game.h"
 #include "wp/gamepad.h"
+#include "wp/gx_render.h"
 #include "wp/hd_textures.h"
 #include "wp/keymap.h"
 #include "wp/padmap.h"
@@ -252,7 +253,7 @@ bool live(const std::string& key) {
 
 std::vector<std::string> choices(const std::string& key) {
     if (key == "video.scale") {
-        std::vector<std::string> scales;
+        std::vector<std::string> scales = {"0"};
         for (int scale = 1; scale <= kMaxScale; scale++) {
             scales.push_back(std::to_string(scale));
         }
@@ -314,6 +315,10 @@ std::vector<std::string> choices(const std::string& key) {
 std::string shown_value(const std::string& key, const std::string& value) {
     const ui::Text& text = ui::text();
     if (key == "video.scale") {
+        if (value == "0") {
+            int scale = gx::render::current_scale();
+            return scale > 0 ? std::string(ui::label("menu.scale.auto")) + " (" + std::to_string(scale) + "x)" : ui::label("menu.scale.auto");
+        }
         return value == "1" ? text.menu_native : value + "x";
     }
     if (key == "video.fps") {

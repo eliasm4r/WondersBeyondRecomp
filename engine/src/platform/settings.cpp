@@ -23,7 +23,7 @@ struct Option {
 };
 
 const Option kBaseOptions[] = {
-    {"video.scale", "1"},
+    {"video.scale", "0"},
     {"video.fps", "60"},
     {"video.fullscreen", "0"},
     {"video.vsync", "0"},
