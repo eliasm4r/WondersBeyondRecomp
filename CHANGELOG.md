@@ -13,7 +13,7 @@ Every change to WondersBeyondRecomp, newest first.
 ## Unreleased
 
 ### Added
-- Photos saved in the game are also written as PNG files, at the internal resolution (1920x1050 at 3x, 3840x2100 at 6x), to a `photos` folder next to the game, named with the date and time. Photos you choose not to save are not written. Turn it off with Options > Game > Save photos as PNG.
+- Photos saved in the game are also written as PNG files, at the internal resolution (1920x1050 at 3x, 3840x2100 at 6x), to a `photos` folder next to the game, named with the date and time. Photos you choose not to save are not written. The Pad and its album then show these photos from the PNG instead of the game's small JPEG, so they look sharp too. Turn both off with Options > Game > Save photos as PNG.
 
 ## v0.3.0-alpha · 2026-11-15
 

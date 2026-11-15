@@ -975,7 +975,9 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
 - The Pad camera copies the picture into RAM as 640x350 RGBA8 (EFB copy format 6), and the game stores it as a JPEG of up to 100 KB in a slot of `data/Pic0` or `Pic1` (one file per save slot, slots 0x19000 bytes apart) once "Save Photo data?" is answered yes.
 - `copy_to_texture` reads back the copy's internal-resolution texture for every one-off copy of that size and format (`keep_photo`, the picture's part only, so wide shapes give the same framing as the game's photo) and hands it to `screenshot::photo_taken`.
 - The PNG is written only when the game writes bytes that differ from the file's into a `Pic` file within two minutes of the copy (`changes` in nand.cpp, compared only while a photo waits). Answering no writes nothing to `Pic`, so no PNG; a photo is written once. Checked with `photo1.txt` (yes: 1920x1050 PNG at 3x) and the same script without its left press (no: no file). Colour settings are applied like on screenshots.
-- Option `game.save_photos` (`WP_SAVE_PHOTOS`), Game tab, on by default. Only the Direct3D renderer keeps the photo.
+- The album and the Pad's main page decode the JPEG into a 640x350 RGBA8 texture (not a copy). Its hash cannot be known when the photo is saved, so each saved PNG gets a line in `game/photos.txt`: its path and a 16x9 grid of average colours taken before the colour settings. When a 640x350 RGBA8 texture is made from memory, its grid is compared with every line, and the closest PNG under a mean difference of 6 (out of 255) that still exists is drawn instead (`photo_matching`, `custom_texture` now also takes a file path). Checked: the Pad's page showed the PNG of the photo just taken (log `photo shown from`).
+- The Pad's main page shows a random saved photo; old photos saved while the photo copy never reached memory (before the fix in "60 fps") are black with pink streaks in the save itself, which is not a rendering bug.
+- Option `game.save_photos` (`WP_SAVE_PHOTOS`), Game tab, on by default, covers both. Only the Direct3D renderer keeps and shows the photos.
 
 ## Text speed
 

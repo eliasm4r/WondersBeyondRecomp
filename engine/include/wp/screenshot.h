@@ -10,6 +10,7 @@ namespace wp::screenshot {
 
 constexpr const char* kFolder = "screenshots";
 constexpr const char* kPhotoFolder = "photos";
+constexpr const char* kPhotoIndex = "game/photos.txt";
 constexpr uint32_t kPhotoWidth = 640;
 constexpr uint32_t kPhotoHeight = 350;
 
@@ -25,5 +26,7 @@ std::string recent_name(size_t index, bool between);
 void photo_taken(std::vector<uint32_t> pixels, uint32_t width, uint32_t height);
 bool photo_pending();
 std::string photo_stored();
+std::vector<uint8_t> photo_signature(const uint32_t* pixels, uint32_t width, uint32_t height, bool red_low);
+std::string photo_matching(const std::vector<uint8_t>& signature);
 
 }

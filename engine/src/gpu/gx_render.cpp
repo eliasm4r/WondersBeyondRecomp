@@ -1737,6 +1737,11 @@ void note_texture(uint32_t map, uint32_t address, uint32_t width, uint32_t heigh
     std::fprintf(g_texture_notes, "map %u address %08x %ux%u format %u: %s\n", map, address, width, height, format, source);
 }
 
+bool keep_photos() {
+    static const settings::LiveFlag enabled("game.save_photos", "WP_SAVE_PHOTOS");
+    return enabled();
+}
+
 ID3D11ShaderResourceView* custom_texture(const std::string& key, bool mipmaps) {
     auto [found, inserted] = g_pack.loaded.try_emplace(key);
     CustomTexture& custom = found->second;
@@ -1744,6 +1749,11 @@ ID3D11ShaderResourceView* custom_texture(const std::string& key, bool mipmaps) {
         return custom.view;
     }
     const std::filesystem::path* path = g_pack.index.find(key);
+    std::filesystem::path direct(key);
+    std::error_code error;
+    if (!path && std::filesystem::is_regular_file(direct, error)) {
+        path = &direct;
+    }
     std::vector<std::vector<uint32_t>> images(1);
     uint32_t width = 0;
     uint32_t height = 0;
@@ -1875,6 +1885,14 @@ ID3D11ShaderResourceView* texture_for(uint32_t map) {
             if (!resolved.empty()) {
                 custom = custom_texture(resolved, mipmaps);
             }
+        }
+    }
+    if (format == 6 && width == screenshot::kPhotoWidth && height == screenshot::kPhotoHeight && levels == 1 && copied == g_device.copies.end() && !custom && keep_photos()) {
+        std::vector<std::vector<uint32_t>> photo = decode_levels(request);
+        std::string path = screenshot::photo_matching(screenshot::photo_signature(photo[0].data(), width, height, true));
+        if (!path.empty()) {
+            custom = custom_texture(path, false);
+            log::write("photo", "shown from %s", path.c_str());
         }
     }
     if (custom && !g_pack.dump) {
@@ -3195,11 +3213,6 @@ void prune_twins() {
 }
 
 bool read_texture(ID3D11Texture2D* texture, std::vector<uint32_t>& pixels, uint32_t& width, uint32_t& height);
-
-bool keep_photos() {
-    static const settings::LiveFlag enabled("game.save_photos", "WP_SAVE_PHOTOS");
-    return enabled();
-}
 
 void keep_photo(ID3D11Texture2D* texture, int x, int y, int width, int height, int canvas_width, int canvas_height) {
     std::vector<uint32_t> pixels;
