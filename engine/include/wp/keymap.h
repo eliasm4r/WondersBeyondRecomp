@@ -36,6 +36,7 @@ enum class Action {
     MouseMotion,
     Pointer,
     Overlay,
+    FlyCamera,
     Count,
 };
 

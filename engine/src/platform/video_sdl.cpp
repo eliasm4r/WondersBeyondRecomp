@@ -177,6 +177,9 @@ void note_press(int code) {
     if (code != 0 && input::bindings().has(keymap::Action::Screenshot, code)) {
         g_screenshot_requested = true;
     }
+    if (code != 0 && input::bindings().has(keymap::Action::FlyCamera, code)) {
+        free_camera::toggle_fly();
+    }
 }
 
 void apply_option(SDL_Window* window, const std::string& key) {
@@ -396,7 +399,7 @@ void window_thread(bool visible) {
         }
         apply_option(window, options::poll_gamepads(window));
         perf::update();
-        bool capture = free_camera::current().enabled && free_camera::driving() && (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) &&
+        bool capture = (free_camera::current().enabled || free_camera::flying()) && free_camera::driving() && (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) &&
                        !options::menu_open() && !free_camera::pointer_held();
         if (capture != SDL_GetWindowRelativeMouseMode(window)) {
             SDL_SetWindowRelativeMouseMode(window, capture);

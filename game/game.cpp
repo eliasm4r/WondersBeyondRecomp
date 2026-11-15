@@ -18,10 +18,12 @@
 #include "wp/free_camera.h"
 #include "wp/gamepad.h"
 #include "wp/input.h"
+#include "wp/keymap.h"
 #include "wp/log.h"
 #include "wp/memory.h"
 #include "wp/runtime.h"
 #include "wp/settings.h"
+#include "wp/video.h"
 #include "lookup.h"
 
 namespace wp::game {
@@ -324,6 +326,52 @@ bool collision_between(Cpu& c, const float start[3], const float extent[3], floa
     return found;
 }
 
+constexpr float kFlySpeed = 20.0f;
+constexpr float kFlyFast = 4.0f;
+constexpr float kFlyPitch = 1.5f;
+constexpr int kKeyShift = 0x10;
+constexpr int kKeyRise = 0x20;
+constexpr int kKeySink = 'C';
+
+float fly_key(keymap::Action action) {
+    for (int code : input::bindings().of(action)) {
+        if (code > 0 && code < 0x100 && video::key_down(code)) {
+            return 1.0f;
+        }
+    }
+    return 0.0f;
+}
+
+void fly(uint32_t camera, bool start, float mouse_x, float mouse_y, float seconds, float eye[3], float target[3]) {
+    static float yaw = 0.0f;
+    static float pitch = 0.0f;
+    if (start) {
+        float look[3];
+        for (uint32_t i = 0; i < 3; i++) {
+            eye[i] = rdf32(camera + kCameraEye + 4 * i);
+            look[i] = rdf32(camera + kCameraTarget + 4 * i) - eye[i];
+        }
+        free_camera::View view = free_camera::from_offset(look[0], look[1], look[2]);
+        yaw = view.yaw;
+        pitch = view.elevation;
+        log::write("camera", "fly from %.0f %.0f %.0f", eye[0], eye[1], eye[2]);
+    }
+    free_camera::Turn turn = free_camera::turn(mouse_x, mouse_y, 0.0f, 0.0f, seconds, free_camera::current());
+    yaw = free_camera::wrap(yaw + turn.yaw);
+    pitch = std::clamp(pitch - turn.pitch, -kFlyPitch, kFlyPitch);
+    float forward[3];
+    free_camera::to_offset({yaw, pitch, 1.0f}, forward);
+    float right[3] = {-std::cos(yaw), 0.0f, std::sin(yaw)};
+    float along = fly_key(keymap::Action::Up) - fly_key(keymap::Action::Down);
+    float side = fly_key(keymap::Action::Right) - fly_key(keymap::Action::Left);
+    float rise = (video::key_down(kKeyRise) ? 1.0f : 0.0f) - (video::key_down(kKeySink) ? 1.0f : 0.0f);
+    float step = kFlySpeed * seconds * (video::key_down(kKeyShift) ? kFlyFast : 1.0f);
+    for (int i = 0; i < 3; i++) {
+        eye[i] += (forward[i] * along + right[i] * side + (i == 1 ? rise : 0.0f)) * step;
+        target[i] = eye[i] + forward[i];
+    }
+}
+
 void field_camera(Cpu& c, HleFunction original) {
     static free_camera::Orbit orbit;
     static uint32_t owner = 0;
@@ -354,6 +402,25 @@ void field_camera(Cpu& c, HleFunction original) {
     float mouse_y = 0.0f;
     free_camera::take_mouse(mouse_x, mouse_y);
     bool recenter = free_camera::take_recenter();
+    static bool flew = false;
+    if (free_camera::flying()) {
+        for (uint32_t i = 0; i < 3; i++) {
+            game_eye[i] = rdf32(camera + kCameraEye + 4 * i);
+            game_target[i] = rdf32(camera + kCameraTarget + 4 * i);
+        }
+        float seconds = flew && camera == owner ? std::min(std::chrono::duration<float>(now - last).count(), 0.1f) : 0.0f;
+        fly(camera, !flew || camera != owner, mouse_x, mouse_y, seconds, our_eye, our_target);
+        flew = true;
+        owner = camera;
+        last = now;
+        write_vector(camera + kCameraEye, our_eye);
+        write_vector(camera + kCameraShownEye, our_eye);
+        write_vector(camera + kCameraTarget, our_target);
+        wrote = true;
+        free_camera::note_driving();
+        return;
+    }
+    flew = false;
     if (!settings.enabled) {
         owner = 0;
         return;

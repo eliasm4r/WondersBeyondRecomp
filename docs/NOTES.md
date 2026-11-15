@@ -324,6 +324,11 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
   Pokémon going through the movement update shares one table (`0x8044F330`, 7 accessors in the park) and Pikachu
   (`0x80B3EEE4`, from the camera's follow handle) is not among them; with no battle in the test scripts, a wrong guess
   could not be caught, and would make the enemies the invincible ones.
+- Fly camera (`keys.fly_camera`, F6): in the field camera hook, after the game's own update, the eye starts where the
+  game's is and turns with the mouse (pitch within 1.5 rad); move keys go along the look, Space and C up and down, 20
+  units a second (4 times with Shift; Pikachu is about 4 tall). The game's eye and target are put back before its next
+  update, as for the orbit camera, so its own camera keeps following Pikachu. While flying and the hook runs (the
+  300 ms driving window) game input reads nothing. Space and C, not E and Q, so it is the same on AZERTY.
 
 ## Options menu, play time and performance overlay
 

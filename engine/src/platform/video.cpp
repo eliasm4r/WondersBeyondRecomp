@@ -66,7 +66,7 @@ bool hide_cursor() {
 std::atomic<bool> g_captured{false};
 
 void update_capture(HWND window) {
-    bool capture = free_camera::current().enabled && free_camera::driving() && GetForegroundWindow() == window && !IsIconic(window) &&
+    bool capture = (free_camera::current().enabled || free_camera::flying()) && free_camera::driving() && GetForegroundWindow() == window && !IsIconic(window) &&
                    !options::menu_open() && !free_camera::pointer_held();
     RECT client{};
     if (capture && GetClientRect(window, &client)) {
@@ -153,6 +153,9 @@ void note_press(int code, int side = 0) {
     const keymap::Bindings& keys = input::bindings();
     if (keys.has(keymap::Action::Screenshot, code) || (side != 0 && keys.has(keymap::Action::Screenshot, side))) {
         g_screenshot_requested = true;
+    }
+    if (keys.has(keymap::Action::FlyCamera, code) || (side != 0 && keys.has(keymap::Action::FlyCamera, side))) {
+        free_camera::toggle_fly();
     }
 }
 

@@ -32,6 +32,7 @@ std::atomic<bool> g_recenter{false};
 std::atomic<uint32_t> g_last_buttons{0};
 std::atomic<bool> g_pointer{false};
 std::atomic<int64_t> g_driven{0};
+std::atomic<bool> g_fly{false};
 
 float speed(const settings::LiveNumber& number) {
     return static_cast<float>(std::clamp(number(), kMinSpeed, kMaxSpeed)) / 100.0f;
@@ -173,6 +174,14 @@ void note_driving() {
 
 bool driving() {
     return now_ms() - g_driven.load() < kDrivingWindow.count();
+}
+
+void toggle_fly() {
+    g_fly = !g_fly.load();
+}
+
+bool flying() {
+    return g_fly.load();
 }
 
 }

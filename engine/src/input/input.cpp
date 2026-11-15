@@ -422,8 +422,16 @@ bool gamepad_in_use() {
     return g_gamepad_in_use;
 }
 
+namespace {
+
+bool blocked() {
+    return g_blocked.load() || (free_camera::flying() && free_camera::driving());
+}
+
+}
+
 uint32_t held(uint32_t channel) {
-    if (g_blocked.load()) {
+    if (blocked()) {
         return 0;
     }
     return device_sample(channel).buttons & ~kMotionSideways;
@@ -442,7 +450,7 @@ Sample sample(uint32_t channel) {
     Sample result = device_sample(channel);
     uint32_t held = result.buttons & ~kMotionSideways;
     bool waiting = channel < 4 && g_release_wait[channel].load();
-    if (g_blocked.load() || (waiting && held != 0)) {
+    if (blocked() || (waiting && held != 0)) {
         result.buttons &= kMotionSideways;
         return result;
     }
