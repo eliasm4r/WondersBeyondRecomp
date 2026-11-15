@@ -4980,6 +4980,10 @@ void follow_decals(const std::vector<uint32_t>& partner, const std::vector<uint8
     }
 }
 
+bool in_perspective(const std::array<float, 4>& position) {
+    return !std::isnan(position[0]) && position[3] > 0.0f && position[3] != 1.0f;
+}
+
 constexpr size_t kMaxPlacedCopies = 64;
 constexpr float kFarthestCopyStep = 0.2f;
 std::vector<uint8_t> g_placed;
@@ -4993,8 +4997,8 @@ void pair_copies_by_place(std::vector<uint32_t>& partner, const std::vector<uint
     for (uint32_t d = 0; d < partner.size(); d++) {
         const RecordedDraw& draw = g_record.draws[d];
         size_t camera = camera_of(draw.camera);
-        if ((kind[d] == kSameCount || kind[d] == kCountChanged) && partner[d] != kUnmatched && draw.positions != 0 && draw.key != 0 && camera < kMaxCameras &&
-            g_cameras[camera].known) {
+        bool seen = draw.positions != 0 && (camera < kMaxCameras || in_perspective(g_record.positions[draw.first_position]));
+        if ((kind[d] == kSameCount || kind[d] == kCountChanged) && partner[d] != kUnmatched && draw.key != 0 && seen) {
             copies.push_back(d);
             g_placed[d] = 1;
         }
@@ -5033,11 +5037,14 @@ void pair_copies_by_place(std::vector<uint32_t>& partner, const std::vector<uint
         partners.clear();
         for (size_t i = first; i < last && usable; i++) {
             uint32_t d = copies[i];
-            const CameraMotion& camera = g_cameras[camera_of(g_record.draws[d].camera)];
+            size_t known = camera_of(g_record.draws[d].camera);
             const std::array<float, 4>& b = g_record.positions[g_record.draws[d].first_position];
-            float p[4];
-            for (int r = 0; r < 4; r++) {
-                p[r] = camera.back[r][0] * b[0] + camera.back[r][1] * b[1] + camera.back[r][2] * b[2] + camera.back[r][3] * b[3];
+            float p[4] = {b[0], b[1], b[2], b[3]};
+            if (known < kMaxCameras) {
+                const CameraMotion& camera = g_cameras[known];
+                for (int r = 0; r < 4; r++) {
+                    p[r] = camera.back[r][0] * b[0] + camera.back[r][1] * b[1] + camera.back[r][2] * b[2] + camera.back[r][3] * b[3];
+                }
             }
             usable = p[3] > 0.0f && std::isfinite(p[0]) && std::isfinite(p[1]);
             now.push_back({p[0] / p[3], p[1] / p[3]});
@@ -5127,10 +5134,10 @@ void pair_frame() {
         if (pair && camera < kMaxCameras && kind[d] != kOnly && fixed_on_screen(draw, g_previous.draws[partner[d]])) {
             target[d] = partner[d];
             column[d] = 1;
-        } else if (camera < kMaxCameras && !(pair && (kind[d] == kOnly || (kind[d] == kSameCount && (g_placed[d] || near_camera_path(draw, g_previous.draws[partner[d]], g_cameras[camera])))))) {
+        } else if (camera < kMaxCameras && !(pair && (kind[d] == kOnly || g_placed[d] || (kind[d] == kSameCount && near_camera_path(draw, g_previous.draws[partner[d]], g_cameras[camera]))))) {
             target[d] = kByCamera + static_cast<uint32_t>(camera);
             column[d] = 5;
-        } else if (pair && camera == kMaxCameras && kind[d] != kOnly) {
+        } else if (pair && camera == kMaxCameras && kind[d] != kOnly && !g_placed[d]) {
             column[d] = 2;
         } else if (pair) {
             target[d] = partner[d];
@@ -5140,6 +5147,11 @@ void pair_frame() {
         }
     });
     follow_decals(partner, kind, column, target);
+    for (size_t d = 0; d < partner.size(); d++) {
+        if (kind[d] != kOnly && target[d] != g_color_partner[d]) {
+            g_color_partner[d] = kUnmatched;
+        }
+    }
     g_matches.clear();
     for (size_t d = 0; d < partner.size(); d++) {
         if (column[d] == kNoDraw) {
@@ -5151,6 +5163,28 @@ void pair_frame() {
         }
     }
     g_camera_cut = moved_too_far > 8 && moved_too_far * 3 > g_matches.size();
+    if (g_pair_notes_wanted) {
+        std::string& note = g_pair_notes[g_frame % g_pair_notes.size()];
+        for (size_t d = 0; d < partner.size() && note.size() < 16000; d++) {
+            if (column[d] == kNoDraw || (column[d] < 2 && kind[d] == kOnly)) {
+                continue;
+            }
+            const RecordedDraw& draw = g_record.draws[d];
+            const std::array<float, 4>& b = g_record.positions[draw.first_position];
+            float ax = NAN;
+            float ay = NAN;
+            uint32_t p = partner[d] < kRejected ? partner[d] : g_color_partner[d];
+            if (p < g_previous.draws.size() && g_previous.draws[p].positions != 0) {
+                const std::array<float, 4>& a = g_previous.positions[g_previous.draws[p].first_position];
+                ax = a[0] / a[3];
+                ay = a[1] / a[3];
+            }
+            char part[200];
+            std::snprintf(part, sizeof part, " | draw %zu %04x kind %d col %d p %d placed %d at %.2f %.2f w %.1f from %.2f %.2f n %u", d, static_cast<unsigned>(draw.key & 0xFFFF), kind[d], column[d],
+                          partner[d] < kRejected ? static_cast<int>(partner[d]) : partner[d] == kRejected ? -2 : -1, g_placed[d], b[0] / b[3], b[1] / b[3], b[3], ax, ay, draw.positions);
+            note += part;
+        }
+    }
     g_time_pairing += std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
 }
 
