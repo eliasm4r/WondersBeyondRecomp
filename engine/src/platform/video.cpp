@@ -198,6 +198,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
     case WM_CLOSE:
     case WM_DESTROY:
         play_time::save();
+        log::flush();
         std::_Exit(0);
     case kTitleMessage: {
         std::string title;
@@ -573,6 +574,7 @@ void save_recent_images() {
     }
     std::string folder = std::string(screenshot::kFolder) + "/" + screenshot::recent_folder(game::description().short_name, local_time());
     std::thread([images = std::move(images), folder] {
+        SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN);
         std::error_code error;
         std::filesystem::create_directories(folder, error);
         for (size_t i = 0; i < images.size(); i++) {
