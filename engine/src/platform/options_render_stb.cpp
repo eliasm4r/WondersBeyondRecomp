@@ -8,6 +8,9 @@
 #include <vector>
 
 #include "wp/canvas.h"
+#include "wp/control_names.h"
+#include "wp/gamepad.h"
+#include "wp/input.h"
 #include "wp/ui_text.h"
 
 namespace wp::options {
@@ -128,22 +131,61 @@ void key_cap(Canvas& canvas, const Face& face, const std::string& cap, int x, in
         triangle(canvas, cx, cy, half, -1, kWhite);
     } else if (cap == "right") {
         triangle(canvas, cx, cy, half, 1, kWhite);
+    } else if (cap == "pad.cross") {
+        canvas.cross(static_cast<int>(cx), static_cast<int>(cy), static_cast<int>(half), std::max(2, height / 10), kWhite);
+    } else if (cap == "pad.circle") {
+        int r = static_cast<int>(half * 1.1f);
+        int line = std::max(2, height / 10);
+        canvas.fill_round(static_cast<int>(cx) - r, static_cast<int>(cy) - r, static_cast<int>(cx) + r, static_cast<int>(cy) + r, r, kWhite);
+        canvas.fill_round(static_cast<int>(cx) - r + line, static_cast<int>(cy) - r + line, static_cast<int>(cx) + r - line, static_cast<int>(cy) + r - line, r - line, kInk);
     } else {
         canvas.text(face, kWhite, cap, x, y, x + width, y + height, Align::Center, false);
     }
 }
 
 int cap_width(const Face& face, const std::string& cap, int height) {
-    if (cap == "up" || cap == "down" || cap == "left" || cap == "right") {
+    if (cap == "up" || cap == "down" || cap == "left" || cap == "right" || cap == "pad.cross" || cap == "pad.circle") {
         return height;
     }
     return std::max(height, static_cast<int>(std::ceil(canvas::text_width(face, cap))) + height / 2);
 }
 
-void draw_hints(Canvas& canvas, const Rect& area, int unit) {
+std::string pad_cap(int physical, padmap::Family family) {
+    bool shapes = family == padmap::Family::PlayStation3 || family == padmap::Family::PlayStation4 || family == padmap::Family::PlayStation5;
+    if (shapes && physical == padmap::kSouth) {
+        return "pad.cross";
+    }
+    if (shapes && physical == padmap::kEast) {
+        return "pad.circle";
+    }
+    return control_names::pad_button(physical, family);
+}
+
+std::vector<Hint> hints_for(bool pad, bool accepts) {
+    if (!pad) {
+        std::vector<Hint> hints = {{{"up", "down"}, "hint.choose"}, {{"left", "right"}, "hint.change"}};
+        if (accepts) {
+            hints.push_back({{ui::label("hint.enter")}, "hint.select"});
+        }
+        hints.push_back({{"Q", "E"}, "hint.tab"});
+        hints.push_back({{ui::label("hint.escape")}, "hint.close"});
+        return hints;
+    }
+    padmap::Family family = gamepad::shown_family();
+    bool nintendo = family == padmap::Family::Switch;
+    std::vector<Hint> hints = {{{"up", "down"}, "hint.choose"}, {{"left", "right"}, "hint.change"}};
+    if (accepts) {
+        hints.push_back({{pad_cap(nintendo ? padmap::kEast : padmap::kSouth, family)}, "hint.select"});
+    }
+    hints.push_back({{pad_cap(padmap::kLeftShoulder, family), pad_cap(padmap::kRightShoulder, family)}, "hint.tab"});
+    hints.push_back({{pad_cap(nintendo ? padmap::kSouth : padmap::kEast, family)}, "hint.close"});
+    return hints;
+}
+
+void draw_hints(Canvas& canvas, const Rect& area, int unit, bool accepts) {
     Face cap_face = canvas::make_face(FontId::Body, unit * 3 / 4);
     Face word_face = canvas::make_face(FontId::Body, unit * 17 / 20, kRowSpacing);
-    const Hint hints[] = {{{"up", "down"}, "hint.choose"}, {{"left", "right"}, "hint.change"}, {{"Q", "E"}, "hint.tab"}, {{ui::label("hint.escape")}, "hint.close"}};
+    const std::vector<Hint> hints = hints_for(input::gamepad_in_use(), accepts);
     int cap_height = unit * 6 / 5;
     int inner = std::max(2, unit / 5);
     int after_caps = unit / 3;
@@ -336,7 +378,8 @@ Image render(const Menu& menu, int client_height) {
             canvas.text(help_face, kHelpInk, lines[i], text_left, top, help.x + help.width, top + line_height, Align::Left, true);
         }
     }
-    draw_hints(canvas, hints_rect(frame), unit);
+    bool accepts = menu.selection() < rows.size() && (rows[menu.selection()].kind == Kind::Key || rows[menu.selection()].kind == Kind::Pad || rows[menu.selection()].kind == Kind::Button);
+    draw_hints(canvas, hints_rect(frame), unit, accepts);
 
     image.width = static_cast<uint32_t>(frame.width);
     image.height = static_cast<uint32_t>(frame.height);

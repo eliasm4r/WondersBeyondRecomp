@@ -15,6 +15,9 @@ Every change to WondersBeyondRecomp, newest first.
 ### Added
 - Photos saved in the game are also written as PNG files, at the internal resolution (1920x1050 at 3x, 3840x2100 at 6x), to a `photos` folder next to the game, named with the date and time. Photos you choose not to save are not written. The Pad and its album then show these photos from the PNG instead of the game's small JPEG, so they look sharp too. Turn both off with Options > Game > Save photos as PNG.
 
+### Changed
+- The options menu's bottom bar follows the device used last: with a gamepad it shows its own buttons (Xbox, PlayStation shapes or Switch) for confirming, changing tab and closing, and it adds "select" (Enter or A) on rows that need it, like key bindings and buttons.
+
 ## v0.3.0-alpha · 2026-11-15
 
 > **Wider and quicker.** 16:10, 21:9 and 32:9 screens, faster text, skippable cutscenes, your own keys and buttons drawn in the game, every texture in HD with one button, and 240 fps at 6x. [Download it here.](https://github.com/eliasm4r/WondersBeyondRecomp/releases/tag/v0.3.0-alpha)

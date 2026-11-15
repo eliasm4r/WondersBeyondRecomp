@@ -299,6 +299,9 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
   is 60 units wide, and its orange edge, `max(3, unit * 3 / 5)` pixels, is the outline polygon drawn once offset in
   orange and once in place in the panel colour. Tabs sit in a column on the left, skewed by 12 degrees; rows on the
   right, then a help line and the key hints.
+- The key hints follow `input::gamepad_in_use()`: on a gamepad they name the buttons of `gamepad::shown_family()`
+  (confirm is East and close South on Switch, as `gamepad::menu_buttons` reads them; PlayStation cross and circle are
+  drawn as shapes), and "select" is added only on rows that need a press (key, button and action rows).
 - Palette: panel `#F8F8F6`, orange `#F27D0C`, ink `#3B3531`, selected row `#FFEBD2`, red marker `#E2343B`.
 - Font: Nunito ExtraBold and Black (SIL Open Font License, `third_party/fonts/nunito`), embedded in the executable with
   `.incbin` so the menu looks the same everywhere. The performance overlay uses Consolas, or DejaVu Sans Mono.
