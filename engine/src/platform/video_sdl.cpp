@@ -234,6 +234,7 @@ void handle_event(SDL_Window* window, const SDL_Event& event) {
     case SDL_EVENT_QUIT:
     case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
         play_time::save();
+        log::flush();
         std::_Exit(0);
     case SDL_EVENT_KEY_DOWN: {
         int vk = vk_for(event.key.scancode);

@@ -461,13 +461,17 @@ int32_t open(const std::string& path, uint32_t mode) {
     if (path.rfind("/dev/", 0) != 0) {
         int32_t file = nand::open(path, mode);
         if (file < 0) {
-            std::fprintf(stderr, "IOS open %s failed (%d)\n", path.c_str(), file);
+            if (!log::enabled()) {
+                std::fprintf(stderr, "IOS open %s failed (%d)\n", path.c_str(), file);
+            }
             log::write("ios", "open %s failed (%d)", path.c_str(), file);
             return file;
         }
         device.file = file;
     }
-    std::fprintf(stderr, "IOS open %s\n", path.c_str());
+    if (!log::enabled()) {
+        std::fprintf(stderr, "IOS open %s\n", path.c_str());
+    }
     log::write("ios", "open %s", path.c_str());
     int32_t descriptor = kFirstDescriptor;
     while (g_devices.count(descriptor) != 0) {
