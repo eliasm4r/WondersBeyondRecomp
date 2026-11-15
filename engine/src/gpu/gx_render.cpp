@@ -957,13 +957,15 @@ int g_auto_scale = 4;
 constexpr double kAutoScaleMargin = 1.25;
 
 int scale_for_screen(HMONITOR monitor) {
-    MONITORINFO info{};
+    MONITORINFOEXA info{};
     info.cbSize = sizeof info;
-    if (!monitor || !GetMonitorInfoA(monitor, &info)) {
+    DEVMODEA mode{};
+    mode.dmSize = sizeof mode;
+    if (!monitor || !GetMonitorInfoA(monitor, &info) || !EnumDisplaySettingsA(info.szDevice, ENUM_CURRENT_SETTINGS, &mode)) {
         return 4;
     }
-    double width = info.rcMonitor.right - info.rcMonitor.left;
-    double height = std::min<double>(info.rcMonitor.bottom - info.rcMonitor.top, width * 9.0 / 16.0);
+    double width = mode.dmPelsWidth;
+    double height = std::min<double>(mode.dmPelsHeight, width * 9.0 / 16.0);
     double needed = kAutoScaleMargin * std::max(height * 16.0 / 9.0 / kEfbWidth, height / kPictureHeight);
     return std::clamp(static_cast<int>(std::ceil(needed - 0.01)), 1, 6);
 }

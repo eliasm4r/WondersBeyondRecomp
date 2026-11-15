@@ -311,7 +311,7 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
 
 ## Options menu, play time and performance overlay
 
-- Auto internal resolution (`video.scale=0`, the default): `scale_for_screen` takes the monitor's resolution (the
+- Auto internal resolution (`video.scale=0`, the default): `scale_for_screen` takes the monitor's display mode (real pixels: the game is not DPI aware, so `rcMonitor` would be shrunk by Windows scaling) (the
   primary one at start, then the window's), fits a 16:9 picture in it and returns `ceil(1.25 * size / logical size)`
   across (640) and down (456), the larger of the two, 1 to 6: 4 at 1080p, 3 at 720p, 5 at 1440p, 6 above. A first
   version measured the picture's box in the window every frame: at start, while the window went fullscreen and the
