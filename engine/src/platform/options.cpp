@@ -180,22 +180,22 @@ const char* tab_label(size_t tab) {
 std::vector<std::string> tab_keys(size_t tab, Device device) {
     switch (tab) {
     case 0:
-        return {"video.scale",      "video.fullscreen", "system.widescreen", "video.aspect", "video.vsync", "video.smooth", "video.anisotropy",
+        return {"video.scale",      "video.fullscreen", "video.aspect", "system.widescreen", "video.fps", "video.vsync", "video.smooth", "video.anisotropy",
                 color::kBrightness.key, color::kContrast.key, color::kSaturation.key, color::kGamma.key, kResetColors};
     case 1:
-        return {"video.fps", "game.text_speed", "game.skip_movies", "game.button_icons", "game.save_photos", "saves.backups", "system.discord", kPlayTime};
+        return {"game.text_speed", "game.skip_movies", "game.button_icons", "game.save_photos", "saves.backups", "system.discord", kPlayTime};
     case 2:
         return {"audio.volume", "audio.mute", "audio.wiimote_speaker"};
     case 3: {
         if (device == Device::Keyboard) {
-            std::vector<std::string> keys = {kDevice, "input.hide_cursor", "camera.free", "camera.mouse_speed", "camera.invert_y"};
+            std::vector<std::string> keys = {kDevice, "camera.free", "camera.mouse_speed", "camera.invert_y", "input.hide_cursor"};
             for (size_t i = 0; i < keymap::kActionCount; i++) {
                 keys.push_back(keymap::setting_key(i));
             }
             keys.push_back(kResetKeys);
             return keys;
         }
-        std::vector<std::string> keys = {kDevice, "input.gamepads", "input.rumble", "input.stick_deadzone", "camera.free", "camera.stick_speed", "camera.invert_y"};
+        std::vector<std::string> keys = {kDevice, "camera.free", "camera.stick_speed", "camera.invert_y", "input.gamepads", "input.rumble", "input.stick_deadzone"};
         for (size_t i = 0; i < padmap::kActionCount; i++) {
             keys.push_back(padmap::setting_key(i));
         }
@@ -217,7 +217,7 @@ std::vector<std::string> tab_keys(size_t tab, Device device) {
         return keys;
     }
     case 6:
-        return {"cheats.berries", "cheats.prices", "cheats.chase_speed", kFlyCamera};
+        return {kFlyCamera, "cheats.berries", "cheats.prices", "cheats.chase_speed"};
     default:
         return {};
     }
