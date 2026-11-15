@@ -218,6 +218,7 @@ constexpr float kHeightRate = 10.0f;
 constexpr float kFloorRiseRate = 16.0f;
 constexpr float kFloorFallRate = 8.0f;
 constexpr auto kCameraIdle = std::chrono::milliseconds(500);
+constexpr float kCameraStepSeconds = 1.0f / 59.94f;
 constexpr auto kPlaceLogPeriod = std::chrono::seconds(2);
 
 void write_vector(uint32_t address, const float value[3]) {
@@ -330,6 +331,24 @@ constexpr float kFlySpeed = 20.0f;
 constexpr float kFlyFast = 4.0f;
 constexpr float kFlyPitch = 1.5f;
 constexpr float kFlyLowest = -70.0f;
+constexpr float kFlyNewPlace = 40.0f;
+constexpr uint32_t kCameraFollowed = 0xb8;
+constexpr uint32_t kNobodyFollowed = 0xFFFFFFFF;
+
+uint32_t g_flown_camera = 0;
+
+void camera_view(Cpu& c, HleFunction original) {
+    uint32_t camera = c.r[3];
+    if (camera == 0 || camera != g_flown_camera || !free_camera::flying()) {
+        original(c);
+        return;
+    }
+    uint32_t followed = rd32(camera + kCameraFollowed);
+    wr32(camera + kCameraFollowed, kNobodyFollowed);
+    original(c);
+    wr32(camera + kCameraFollowed, followed);
+}
+
 constexpr int kKeyShift = 0x10;
 constexpr int kKeyRise = 0x20;
 constexpr int kKeySink = 'C';
@@ -420,12 +439,15 @@ void field_camera(Cpu& c, HleFunction original) {
     bool recenter = free_camera::take_recenter();
     static bool flew = false;
     if (free_camera::flying()) {
+        float moved = 0.0f;
         for (uint32_t i = 0; i < 3; i++) {
+            float target = rdf32(camera + kCameraTarget + 4 * i);
+            moved += (target - game_target[i]) * (target - game_target[i]);
             game_eye[i] = rdf32(camera + kCameraEye + 4 * i);
-            game_target[i] = rdf32(camera + kCameraTarget + 4 * i);
+            game_target[i] = target;
         }
-        float seconds = flew && camera == owner ? std::min(std::chrono::duration<float>(now - last).count(), 0.1f) : 0.0f;
-        fly(c, camera, !flew || camera != owner, mouse_x, mouse_y, seconds, our_eye, our_target);
+        bool start = !flew || (camera != owner && moved > kFlyNewPlace * kFlyNewPlace);
+        fly(c, camera, start, mouse_x, mouse_y, start ? 0.0f : kCameraStepSeconds, our_eye, our_target);
         flew = true;
         owner = camera;
         last = now;
@@ -433,15 +455,17 @@ void field_camera(Cpu& c, HleFunction original) {
         write_vector(camera + kCameraShownEye, our_eye);
         write_vector(camera + kCameraTarget, our_target);
         wrote = true;
+        g_flown_camera = camera;
         free_camera::note_driving();
         return;
     }
     flew = false;
+    g_flown_camera = 0;
     if (!settings.enabled) {
         owner = 0;
         return;
     }
-    float seconds = fresh ? 0.0f : std::min(std::chrono::duration<float>(now - last).count(), 0.1f);
+    float seconds = fresh ? 0.0f : kCameraStepSeconds;
     float offset[3];
     for (uint32_t i = 0; i < 3; i++) {
         game_eye[i] = rdf32(camera + kCameraEye + 4 * i);
@@ -917,7 +941,7 @@ HookFunction hook(const char* name) {
                    {"FindResourceByNumber", find_resource_by_number},
                    {"AddSceneParameter", add_scene_parameter}, {"PickScene", pick_scene}, {"SceneManagerRunBegin", scene_manager_run_begin},
                    {"DanceFrame", dance_frame}, {"DanceFrameSecondPart", dance_frame_second_part},
-                   {"DanceJudge", dance_judge}, {"CullingFrustum", culling_frustum},
+                   {"DanceJudge", dance_judge}, {"CullingFrustum", culling_frustum}, {"CameraView", camera_view},
                    {"DialogueWriterStep", dialogue_writer_step}, {"MovieSceneUpdate", movie_scene_update},
                    {"FontResource", font_resource}, {"TextureBind", texture_bind}, {"MessageUpdate", message_update}, {"LayoutDraw", layout_draw},
                    {"KineticEnergyUpdate", kinetic_energy_update}, {"ChaseStep", chase_step}};

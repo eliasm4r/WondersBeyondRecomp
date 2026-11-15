@@ -332,6 +332,18 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
 - Flying down along the look went under the cliffs and the sea (surface near y -75 by the ice beach, where the eye
   sees the sky's lower half mirrored, then grey): each step now probes the ground from the step's length above the eye,
   so a floor crossed in that step lifts the eye back on it (walls stay open), and the eye stays above y -70.
+- User report: the fly camera "teleported" when an obstacle stood between it and the Pokémon, and when flown far.
+  The eye and target written by the hook are not what the picture uses: `0x80019B20` (hooked as `CameraView`, called
+  later through `0x8001A090` with the target at +0x28 and the eye at +0x0C) builds the view from them and keeps the
+  final eye at +0xCC, the final target at +0xD8 and the view matrix at +0x48. When the camera follows someone (+0xB8,
+  -1 for nobody) it casts the field collision from the followed position to the eye and, if met (+0xE8 set to 1), puts
+  the eye at the point met. Flying backward out of the town, the final eye stayed on the hill's edge at 384, 49, 308
+  while the target went on to 567, 92, 376, so the view turned around and seemed frozen on a tree. While flying,
+  `CameraView` on the flown camera now runs with +0xB8 set to -1 and put back after: the final eye follows the fly
+  eye through the hill and past it (headless run, 22 seconds backward from Pikachu in the town).
+- A change of camera object while flying only starts the flight over from the game's eye when the game's target moved
+  more than 40 units (a new place), not on every change. The fly and orbit steps use one game frame (1 / 59.94 s)
+  instead of the real time between updates, which came 11 to 25 ms apart and made the turn vary by -35 to +45 %.
 - On a gamepad it is only turned on from the keyboard key or the Cheats tab's button, as the user asked; the sticks,
   triggers and RB are read straight from player 1's pad, since the game's input is blocked.
 - R3 put the pad's pointer back to the centre and showed it even when not aiming, so pressing it quickly flashed the

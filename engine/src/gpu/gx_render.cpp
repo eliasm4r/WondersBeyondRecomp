@@ -5284,6 +5284,7 @@ bool present_view(HWND window, double aspect, ID3D11ShaderResourceView* view) {
     static double shortest = 1e9;
     static double total = 0.0;
     static uint32_t shown = 0;
+    static uint32_t held = 0;
     auto now = std::chrono::steady_clock::now();
     double interval = std::chrono::duration<double, std::milli>(now - last).count();
     last = now;
@@ -5291,8 +5292,12 @@ bool present_view(HWND window, double aspect, ID3D11ShaderResourceView* view) {
     shortest = std::min(shortest, interval);
     total += interval;
     shown++;
+    if (interval > g_slot * 1500.0) {
+        held++;
+    }
     if (now - report >= std::chrono::seconds(1)) {
-        log::write("present", "%u frames shown, %.1f ms apart on average, from %.1f to %.1f ms", shown, total / shown, shortest, longest);
+        log::write("present", "%u frames shown, %.1f ms apart on average, from %.1f to %.1f ms, %u held over 1.5 slots", shown, total / shown, shortest, longest, held);
+        held = 0;
         report = now;
         longest = 0.0;
         shortest = 1e9;
