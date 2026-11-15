@@ -352,7 +352,7 @@
     },
     {
       "id": "custom_textures", "label": "Custom textures",
-      "help": "Uses the replacement textures installed in the textures folder, such as the HD copies made by tools/hd_textures.py.",
+      "help": "Uses the replacement textures installed in the textures folder, such as the HD copies made in the game by Options > Advanced > Make every texture HD (Real-ESRGAN, an AI upscaler running locally, not generative AI). Turn it off to play with the original look.",
       "choices": [
         { "label": "Off", "set": { "video/custom_textures": "0" } },
         { "label": "On", "set": { "video/custom_textures": "1" } }
