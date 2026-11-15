@@ -1925,7 +1925,7 @@ void test_options_menu() {
         }
     }
     wp::ui::set_language(wp::ui::Language::English);
-    CHECK(wp::options::kTabCount == 6);
+    CHECK(wp::options::kTabCount == 7);
     CHECK(std::strcmp(wp::ui::label("tab.screen", wp::ui::Language::French), "Écran") == 0);
     CHECK(std::strcmp(wp::ui::label("tab.advanced", wp::ui::Language::English), "Advanced") == 0);
     CHECK(std::strcmp(wp::ui::label("tab.controls", wp::ui::Language::Galician), "Controls") != 0);
@@ -2175,7 +2175,7 @@ void test_options_layout() {
     wp::options::Rect fitted = wp::options::place(640, 480, small.width, small.height);
     CHECK(fitted.x >= 0 && fitted.y >= 0 && fitted.x + fitted.width <= 640 && fitted.y + fitted.height <= 480);
 
-    CHECK(wp::options::hit_test(frame, placed, placed.x + last_tab.x + 4, placed.y + last_tab.y + 4).tab == 5);
+    CHECK(wp::options::hit_test(frame, placed, placed.x + last_tab.x + 4, placed.y + last_tab.y + 4).tab == wp::options::kTabCount - 1);
     auto centre = [&](const wp::options::Rect& r, int dx = 0) {
         return wp::options::hit_test(frame, placed, placed.x + r.x + r.width / 2 + dx, placed.y + r.y + r.height / 2);
     };

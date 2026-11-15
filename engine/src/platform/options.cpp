@@ -35,7 +35,7 @@ constexpr const char* kLiveKeys[] = {
     "video.brightness",     "video.contrast",       "video.saturation",      "video.gamma",        "video.colors_reset",
     "camera.free",          "camera.mouse_speed",   "camera.stick_speed",    "camera.invert_y",    "video.bug_recorder",
     "system.check_updates", "system.update",        "video.aspect",          "game.text_speed",
-    "game.skip_movies",     "game.button_icons",    "video.hd_textures",   "game.save_photos",
+    "game.skip_movies",     "game.button_icons",    "video.hd_textures",   "game.save_photos",     "cheats.berries",       "cheats.prices",        "cheats.chase_speed",
 };
 
 struct Language {
@@ -68,7 +68,7 @@ constexpr Slider kSliders[] = {{"audio.volume", 0, 300, 5},
                                {color::kSaturation.key, color::kSaturation.low, color::kSaturation.high, 5},
                                {color::kGamma.key, color::kGamma.low, color::kGamma.high, 5}};
 
-constexpr const char* kTabLabels[kTabCount] = {"tab.screen", "tab.game", "tab.sound", "tab.controls", "tab.language", "tab.advanced"};
+constexpr const char* kTabLabels[kTabCount] = {"tab.screen", "tab.game", "tab.sound", "tab.controls", "tab.language", "tab.advanced", "tab.cheats"};
 
 constexpr const char* kDevice = "controls.device";
 constexpr const char* kPlayTime = "stats.play_time";
@@ -214,6 +214,8 @@ std::vector<std::string> tab_keys(size_t tab, Device device) {
         keys.push_back(kUpdate);
         return keys;
     }
+    case 6:
+        return {"cheats.berries", "cheats.prices", "cheats.chase_speed"};
     default:
         return {};
     }
@@ -270,6 +272,15 @@ std::vector<std::string> choices(const std::string& key) {
     }
     if (key == "game.text_speed") {
         return {"1", "2", "3", "0"};
+    }
+    if (key == "cheats.berries") {
+        return {"100", "200", "300", "500", "1000"};
+    }
+    if (key == "cheats.prices") {
+        return {"100", "75", "50", "25", "0"};
+    }
+    if (key == "cheats.chase_speed") {
+        return {"50", "75", "100", "125", "150"};
     }
     if (key == "overlay.level") {
         return {"minimal", "standard", "full"};
@@ -334,6 +345,9 @@ std::string shown_value(const std::string& key, const std::string& value) {
     }
     if (key == "video.aspect") {
         return value == "auto" ? ui::label("menu.aspect.auto") : value == "16:9" ? ui::label("menu.aspect.original") : value;
+    }
+    if (starts_with(key, "cheats.")) {
+        return value + " %";
     }
     if (key == "game.text_speed") {
         return value == "1" ? ui::label("menu.text_speed.original") : value == "0" ? ui::label("menu.text_speed.instant") : value + "x";

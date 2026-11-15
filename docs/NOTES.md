@@ -309,6 +309,22 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
 - Discord shows the game when `system.discord` is on and `discord_application` in the game description holds an
   Application ID; it talks to the local client over its IPC pipe and retries every 15 s.
 
+## Cheats
+
+- Taken from the rival recompilation's `hle_modifiers.c` (CC0), its USA addresses matched to PAL by the sizes of the
+  25 functions around each (one match each): `GlobalManager::Get` `0x80074C10`, `KineticEnergyControl` movement update
+  `0x800A9300` (hooked), the chase action's step `FieldAIActionChallengeChase::virt0x14` `0x801E1B80` (hooked).
+- Berries (`cheats.berries`, `cheats.prices`): the save data (`GlobalManager::Get()` +0x48) keeps them at +0x1474
+  (305 in the test save, as the game shows). In the park, each frame's change is scaled by the gain or the price
+  percentage and written back, at most 99999.
+- Chase speed (`cheats.chase_speed`): the accessor a chase step is given counts as chased for 4 movement updates;
+  for those its energy's target speeds (+0x28, +0x2C), top speed (+0x30, unless negative) and rates (+0x38, +0x3C)
+  are scaled for the update and put back after.
+- Not done: damage dealt and taken. The rival tells Pikachu by `ModuleAccessorPlayer`'s table, but in PAL every
+  Pokémon going through the movement update shares one table (`0x8044F330`, 7 accessors in the park) and Pikachu
+  (`0x80B3EEE4`, from the camera's follow handle) is not among them; with no battle in the test scripts, a wrong guess
+  could not be caught, and would make the enemies the invincible ones.
+
 ## Options menu, play time and performance overlay
 
 - Auto internal resolution (`video.scale=0`, the default): `scale_for_screen` takes the monitor's display mode (real pixels: the game is not DPI aware, so `rcMonitor` would be shrunk by Windows scaling) (the

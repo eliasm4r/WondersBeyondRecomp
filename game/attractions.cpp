@@ -1,4 +1,5 @@
 #include "attractions.h"
+#include "modifiers.h"
 #include "prompts.h"
 
 #include <algorithm>
@@ -157,6 +158,7 @@ void scene_manager_run_begin(Cpu& c, HleFunction original) {
     bool scene = park && !choice_shown && (framed || g_hud_step - g_map_step > kSceneHiddenSteps);
     bool over = !park || choice_shown || (g_skipping_framed ? frame_gone : map_shown);
     g_skipping = skip_scene(c, scene, over);
+    modifiers_frame(c, park);
     if (attraction::mode() == attraction::Mode::Shake) {
         label_bomb_button();
     }

@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "attractions.h"
+#include "modifiers.h"
 #include "prompts.h"
 #include "wp/audio.h"
 #include "wp/cpu.h"
@@ -835,7 +836,8 @@ HookFunction hook(const char* name) {
                    {"DanceFrame", dance_frame}, {"DanceFrameSecondPart", dance_frame_second_part},
                    {"DanceJudge", dance_judge}, {"CullingFrustum", culling_frustum},
                    {"DialogueWriterStep", dialogue_writer_step}, {"MovieSceneUpdate", movie_scene_update},
-                   {"FontResource", font_resource}, {"TextureBind", texture_bind}, {"MessageUpdate", message_update}, {"LayoutDraw", layout_draw}};
+                   {"FontResource", font_resource}, {"TextureBind", texture_bind}, {"MessageUpdate", message_update}, {"LayoutDraw", layout_draw},
+                   {"KineticEnergyUpdate", kinetic_energy_update}, {"ChaseStep", chase_step}};
     for (const auto& entry : kHooks) {
         if (std::strcmp(entry.name, name) == 0) {
             return entry.function;

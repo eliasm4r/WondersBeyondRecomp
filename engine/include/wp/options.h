@@ -38,7 +38,7 @@ struct Row {
     std::string help;
 };
 
-constexpr size_t kTabCount = 6;
+constexpr size_t kTabCount = 7;
 constexpr size_t kVisibleRows = 9;
 
 const char* tab_label(size_t tab);

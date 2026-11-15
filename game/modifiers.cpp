@@ -1,0 +1,127 @@
+#include "modifiers.h"
+
+#include <algorithm>
+#include <array>
+#include <cstdint>
+
+#include "wp/log.h"
+#include "wp/memory.h"
+#include "wp/settings.h"
+
+namespace wp::game {
+
+namespace {
+
+constexpr uint32_t kGlobalManagerGet = 0x80074c10;
+constexpr uint32_t kSaveData = 0x48;
+constexpr uint32_t kSaveBerries = 0x1474;
+constexpr int32_t kMaxBerries = 99999;
+constexpr uint32_t kTopSpeed = 0x30;
+constexpr std::array<uint32_t, 5> kSpeedFields = {0x28, 0x2c, 0x30, 0x38, 0x3c};
+constexpr int kChasedFrames = 4;
+
+struct Chased {
+    uint32_t accessor = 0;
+    int age = 0;
+};
+
+std::array<Chased, 4> g_chased;
+
+bool chased(uint32_t accessor) {
+    for (Chased& entry : g_chased) {
+        if (entry.accessor != accessor) {
+            continue;
+        }
+        if (++entry.age > kChasedFrames) {
+            entry.accessor = 0;
+            return false;
+        }
+        return true;
+    }
+    return false;
+}
+
+}
+
+void modifiers_frame(Cpu& c, bool park) {
+    static const settings::LiveNumber gained("cheats.berries", "WP_CHEAT_BERRIES");
+    static const settings::LiveNumber prices("cheats.prices", "WP_CHEAT_PRICES");
+    static bool have = false;
+    static int32_t last = 0;
+    if (!park) {
+        have = false;
+        return;
+    }
+    uint32_t saved = c.r[3];
+    call(c, kGlobalManagerGet);
+    uint32_t manager = c.r[3];
+    c.r[3] = saved;
+    uint32_t data = manager ? rd32(manager + kSaveData) : 0;
+    if (!data) {
+        have = false;
+        return;
+    }
+    uint32_t address = data + kSaveBerries;
+    int32_t now = static_cast<int32_t>(rd32(address));
+    if (!have) {
+        have = true;
+        last = now;
+        return;
+    }
+    int32_t change = now - last;
+    if (change == 0) {
+        return;
+    }
+    int percent = change > 0 ? gained() : prices();
+    int32_t scaled = static_cast<int32_t>(static_cast<int64_t>(change) * percent / 100);
+    last = std::clamp(last + scaled, 0, kMaxBerries);
+    if (scaled != change) {
+        log::write("cheats", "berries %+d become %+d", change, scaled);
+        wr32(address, static_cast<uint32_t>(last));
+    }
+}
+
+void chase_step(Cpu& c, HleFunction original) {
+    uint32_t accessor = c.r[4];
+    Chased* slot = &g_chased[0];
+    for (Chased& entry : g_chased) {
+        if (entry.accessor == accessor) {
+            slot = &entry;
+            break;
+        }
+        if (slot->accessor != 0 && (entry.accessor == 0 || entry.age > slot->age)) {
+            slot = &entry;
+        }
+    }
+    if (slot->accessor != accessor) {
+        log::write("cheats", "accessor %08x is being chased", accessor);
+    }
+    slot->accessor = accessor;
+    slot->age = 0;
+    original(c);
+}
+
+void kinetic_energy_update(Cpu& c, HleFunction original) {
+    static const settings::LiveNumber speed("cheats.chase_speed", "WP_CHEAT_CHASE_SPEED");
+    int percent = speed();
+    uint32_t energy = c.r[3];
+    if (percent == 100 || percent <= 0 || !chased(c.r[4])) {
+        original(c);
+        return;
+    }
+    float k = percent / 100.0f;
+    std::array<uint32_t, kSpeedFields.size()> saved{};
+    for (size_t i = 0; i < kSpeedFields.size(); i++) {
+        uint32_t field = energy + kSpeedFields[i];
+        saved[i] = rd32(field);
+        if (kSpeedFields[i] != kTopSpeed || rdf32(field) > 0.0f) {
+            wrf32(field, rdf32(field) * k);
+        }
+    }
+    original(c);
+    for (size_t i = 0; i < kSpeedFields.size(); i++) {
+        wr32(energy + kSpeedFields[i], saved[i]);
+    }
+}
+
+}
