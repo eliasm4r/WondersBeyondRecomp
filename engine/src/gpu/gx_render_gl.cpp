@@ -1384,8 +1384,8 @@ const char* api_name() {
     return "OpenGL";
 }
 
-int current_scale() {
-    return g_device.ready ? g_scale : 0;
+int auto_scale() {
+    return 4;
 }
 
 bool interpolating() {

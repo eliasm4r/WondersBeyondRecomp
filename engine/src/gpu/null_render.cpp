@@ -34,8 +34,8 @@ const char* api_name() {
     return "no renderer";
 }
 
-int current_scale() {
-    return 0;
+int auto_scale() {
+    return 4;
 }
 
 bool interpolating() {

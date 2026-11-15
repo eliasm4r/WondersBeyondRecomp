@@ -1993,12 +1993,13 @@ void test_options_menu() {
     wp::options::Menu menu;
     menu.set_open(true);
     std::vector<wp::options::Row> rows = menu.rows();
-    CHECK(rows[0].key == "video.scale" && rows[0].value == "Auto" && rows[0].live);
+    CHECK(rows[0].key == "video.scale" && rows[0].value == "Auto (4x)" && rows[0].live);
+    CHECK((wp::options::choices("video.scale") == std::vector<std::string>{"1", "2", "3", "0", "5", "6"}));
     CHECK(menu.handle(wp::options::Action::Next) == "video.scale");
-    CHECK(wp::settings::number("video.scale", nullptr) == 1);
+    CHECK(wp::settings::number("video.scale", nullptr) == 5);
     CHECK(menu.handle(wp::options::Action::Previous) == "video.scale");
     CHECK(menu.handle(wp::options::Action::Previous) == "video.scale");
-    CHECK(wp::settings::number("video.scale", nullptr) == 6);
+    CHECK(wp::settings::number("video.scale", nullptr) == 3);
     CHECK(menu.handle(wp::options::Action::Up).empty());
     CHECK(menu.selection() == rows.size() - 1);
 

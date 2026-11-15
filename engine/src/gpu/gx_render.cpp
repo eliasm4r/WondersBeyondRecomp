@@ -955,6 +955,18 @@ uint64_t g_texture_epoch = 0;
 int g_scale = 1;
 int g_auto_scale = 4;
 constexpr double kAutoScaleMargin = 1.25;
+
+int scale_for_screen(HMONITOR monitor) {
+    MONITORINFO info{};
+    info.cbSize = sizeof info;
+    if (!monitor || !GetMonitorInfoA(monitor, &info)) {
+        return 4;
+    }
+    double width = info.rcMonitor.right - info.rcMonitor.left;
+    double height = std::min<double>(info.rcMonitor.bottom - info.rcMonitor.top, width * 9.0 / 16.0);
+    double needed = kAutoScaleMargin * std::max(height * 16.0 / 9.0 / kEfbWidth, height / kPictureHeight);
+    return std::clamp(static_cast<int>(std::ceil(needed - 0.01)), 1, 6);
+}
 Canvas g_canvas;
 int g_canvas_kind = kInPicture;
 std::atomic<uint32_t> g_shared_margins{0};
@@ -1682,6 +1694,7 @@ bool initialize() {
     if (g_device.failed) {
         return false;
     }
+    g_auto_scale = scale_for_screen(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY));
     g_scale = requested_scale();
     D3D_FEATURE_LEVEL level;
     // WP_D3D_WARP=1 renders with the Windows software rasterizer, to tell driver faults from renderer ones.
@@ -2645,8 +2658,8 @@ const char* api_name() {
     return "Direct3D 11";
 }
 
-int current_scale() {
-    return g_device.ready ? g_scale : 0;
+int auto_scale() {
+    return g_auto_scale;
 }
 
 bool interpolating() {
@@ -5175,9 +5188,7 @@ bool present_view(HWND window, double aspect, ID3D11ShaderResourceView* view) {
     }
     D3D11_VIEWPORT viewport{static_cast<float>((client.right - width) / 2), static_cast<float>((client.bottom - height) / 2),
                             static_cast<float>(width), static_cast<float>(height), 0.0f, 1.0f};
-    double across = kAutoScaleMargin * width / canvas_width();
-    double down = kAutoScaleMargin * height / (kPictureHeight + 2 * g_canvas.margin_y);
-    g_auto_scale = std::clamp(static_cast<int>(std::ceil(std::max(across, down) - 0.01)), 1, 6);
+    g_auto_scale = scale_for_screen(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST));
     context->RSSetViewports(1, &viewport);
     context->RSSetState(g_device.present_rasterizer);
     context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);

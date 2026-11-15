@@ -13,7 +13,7 @@ Every change to WondersBeyondRecomp, newest first.
 ## Unreleased
 
 ### Added
-- **Auto internal resolution**, now the default: the game picks the lowest scale that draws at least 1.25 times the picture's size on screen, across and down, so the smoothing has pixels to spare (4x on a 1080p screen, 3x at 720p, 5x at 1440p, 6x above). It follows the window when it is resized or goes fullscreen, and the options menu shows the scale in use (Auto (4x)). Settings saved by an earlier build keep their choice.
+- **Auto internal resolution**, now the default: the game picks, from your screen's resolution, the lowest scale that draws at least 1.25 times the picture's size in fullscreen, across and down, so the smoothing has pixels to spare (4x on a 1080p screen, 3x at 720p, 5x at 1440p, 6x above). It takes that scale's place in the list (Native, 2x, 3x, Auto (4x), 5x, 6x on a 1080p screen) and does not change while you play. Settings saved by an earlier build keep their choice.
 
 ## v0.3.0-alpha · 2026-11-15
 

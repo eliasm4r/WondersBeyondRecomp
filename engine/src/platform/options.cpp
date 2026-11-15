@@ -253,9 +253,9 @@ bool live(const std::string& key) {
 
 std::vector<std::string> choices(const std::string& key) {
     if (key == "video.scale") {
-        std::vector<std::string> scales = {"0"};
+        std::vector<std::string> scales;
         for (int scale = 1; scale <= kMaxScale; scale++) {
-            scales.push_back(std::to_string(scale));
+            scales.push_back(scale == gx::render::auto_scale() ? "0" : std::to_string(scale));
         }
         return scales;
     }
@@ -316,8 +316,7 @@ std::string shown_value(const std::string& key, const std::string& value) {
     const ui::Text& text = ui::text();
     if (key == "video.scale") {
         if (value == "0") {
-            int scale = gx::render::current_scale();
-            return scale > 0 ? std::string(ui::label("menu.scale.auto")) + " (" + std::to_string(scale) + "x)" : ui::label("menu.scale.auto");
+            return std::string(ui::label("menu.scale.auto")) + " (" + std::to_string(gx::render::auto_scale()) + "x)";
         }
         return value == "1" ? text.menu_native : value + "x";
     }
