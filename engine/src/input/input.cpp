@@ -141,7 +141,10 @@ uint32_t autopilot(int milliseconds) {
             snapped = true;
             video::request_screenshot();
         }
-        return buttons & 0x7FFFFFFFu;
+        if (buttons & 0x60000000u) {
+            free_camera::add_mouse(0.0f, (buttons & 0x40000000u) ? 6.0f : -6.0f);
+        }
+        return buttons & 0x1FFFFFFFu;
     }
     if (milliseconds < from) {
         return 0;
