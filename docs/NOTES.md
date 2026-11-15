@@ -244,6 +244,14 @@ images from a thread of their own). Same scene: 239.6-239.8 fps, images 2.8 to 5
   known), and only for keys drawn more than once, the only ambiguous case; refused ones are drawn where they are.
   The `runs` log line counts them ("look-alikes too far to pair"): 0 a second walking at 240 fps, 0 to 3 while
   dashing (`run.txt`, `dash.txt`).
+- Teleports (the same report, found with the user's F9 capture): it was Power Bash. The target's disc and its red,
+  orange and white rings are single models parked at x = -50 in view space (off screen, left) and moved to x = 0
+  under the target in one frame, then back; with one copy only, the pair was never checked and they slid in and out
+  on the images in between. A model drawn once is now refused too when it moved more than 0.75 of its distance from
+  the eye (`kTeleportStep`); the rings jump 0.8 to 1.3, Pikachu's fastest strikes up to about 0.7. Logged as
+  "teleports" on the `runs` line: 2 to 18 a second in Power Bash, 0 in the park (`dash.txt`).
+- `WP_RECENT_AT=s1,s2,...` saves the bug recorder's images (as F9 does) at those seconds after start, for headless
+  runs (with `WP_BUG_RECORDER=1`).
 
 ## Presenting without waiting for the display
 

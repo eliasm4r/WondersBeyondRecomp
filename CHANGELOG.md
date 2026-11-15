@@ -19,7 +19,7 @@ Every change to WondersBeyondRecomp, newest first.
 - The options menu's bottom bar follows the device used last: with a gamepad it shows its own buttons (Xbox, PlayStation shapes or Switch) for confirming, changing tab and closing, and it adds "select" (Enter or A) on rows that need it, like key bindings and buttons.
 
 ### Fixed
-- Above 60 fps, an object drawn several times alike, like the red circles under the Pokémon in a minigame, could be drawn halfway to another copy on the images in between, so it seemed to jump aside for an instant. Two copies are now only blended when they could be the same object moving.
+- Above 60 fps, an object drawn several times alike, like the red circles under the Pokémon in a minigame, could be drawn halfway to another copy on the images in between, so it seemed to jump aside for an instant. Two copies are now only blended when they could be the same object moving. In Power Bash, the rings under the target no longer slide in from the side and out again above 60 fps: they appear and leave at once, as at 30 fps.
 
 ## v0.3.0-alpha · 2026-11-15
 

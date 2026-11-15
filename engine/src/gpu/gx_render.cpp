@@ -3561,7 +3561,7 @@ RunCamera g_run_camera;
 bool g_run_cut = false;
 std::array<std::string, 256> g_pair_notes;
 bool g_pair_notes_wanted = false;
-uint32_t g_run_counts[5] = {};
+uint32_t g_run_counts[6] = {};
 std::vector<Row> g_replay_rows;
 std::vector<RunDraw> g_replay_draws;
 
@@ -3858,6 +3858,7 @@ void find_run_camera(const std::vector<uint32_t>& unique) {
 }
 
 constexpr float kFarthestStep = 0.1f;
+constexpr float kTeleportStep = 0.75f;
 
 float run_distance(const RecordedRun& before, const RecordedRun& run) {
     const Row* a = &g_previous.rows[before.draw.matrix];
@@ -3876,13 +3877,13 @@ float run_distance(const RecordedRun& before, const RecordedRun& run) {
     return std::isfinite(distance) ? distance : 1e30f;
 }
 
-bool same_object(const RecordedRun& before, const RecordedRun& run, float distance) {
+bool same_object(const RecordedRun& before, const RecordedRun& run, float distance, float step) {
     if (!run_perspective(g_previous, before) || !run_perspective(g_record, run)) {
         return true;
     }
     const Row* b = &g_record.rows[run.draw.matrix];
     float away = std::sqrt(b[0][3] * b[0][3] + b[1][3] * b[1][3] + b[2][3] * b[2][3]);
-    return distance <= kFarthestStep * away;
+    return distance <= step * away;
 }
 
 void pair_runs() {
@@ -3978,8 +3979,9 @@ void pair_runs() {
         if (taken) {
             continue;
         }
-        if (best_distance > 0.0f && !same_object(before[*best], run, best_distance)) {
-            g_run_counts[4]++;
+        bool alone = best_distance == 0.0f;
+        if (!same_object(before[*best], run, alone ? run_distance(before[*best], run) : best_distance, alone ? kTeleportStep : kFarthestStep)) {
+            g_run_counts[alone ? 5 : 4]++;
             continue;
         }
         run.match = *best;
@@ -4888,7 +4890,7 @@ void finish_frame() {
                        frames, with_images, late_frames, seconds * 1000.0 / frames, g_time_pairing * 1000.0 / frames, g_time_filling * 1000.0 / frames, g_time_sending * 1000.0 / frames, draws / frames, g_match[0] / n, g_match[1] / n, g_match[2] / n, g_match[3] / n, g_match[4] / n,
                        g_match[5] / n, static_cast<uint32_t>(std::count_if(std::begin(g_cameras), std::end(g_cameras), [](const CameraMotion& c) { return c.known; })));
             if (g_run_counts[0] != 0) {
-                log::write("runs", "%u models per frame redrawn for the images: %u paired, %u moved too far, %u texture matrices turned in all, %u look-alikes too far to pair", g_run_counts[0] / n, g_run_counts[1] / n, g_run_counts[2] / n, g_run_counts[3], g_run_counts[4]);
+                log::write("runs", "%u models per frame redrawn for the images: %u paired, %u moved too far, %u texture matrices turned in all, %u look-alikes too far to pair, %u teleports", g_run_counts[0] / n, g_run_counts[1] / n, g_run_counts[2] / n, g_run_counts[3], g_run_counts[4], g_run_counts[5]);
             }
             std::fill(std::begin(g_match), std::end(g_match), 0u);
             std::fill(std::begin(g_run_counts), std::end(g_run_counts), 0u);

@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdint>
 #include <cstdlib>
@@ -581,6 +582,13 @@ void save_recent_images() {
 void present_on_gpu(HWND window, double aspect) {
     if (window) {
         gx::render::present_frame(window, aspect);
+    }
+    static const char* recent_at = std::getenv("WP_RECENT_AT");
+    static const auto started = std::chrono::steady_clock::now();
+    if (recent_at && *recent_at && std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count() >= std::atof(recent_at)) {
+        const char* comma = std::strchr(recent_at, ',');
+        recent_at = comma ? comma + 1 : nullptr;
+        save_recent_images();
     }
     if (g_screenshot_requested.exchange(false)) {
         save_screenshot();
