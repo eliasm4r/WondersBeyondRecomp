@@ -736,17 +736,16 @@ int64_t steady_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
-void movie_scene_update(Cpu& c, HleFunction original) {
+bool movie_skip_step(uint32_t owner, bool playing) {
     static const settings::LiveFlag enabled("game.skip_movies", "WP_SKIP_MOVIES");
     MovieSkip& skip = g_movie_skip;
-    uint32_t scene = c.r[3];
-    if (scene != skip.scene) {
+    if (owner != skip.scene) {
         if (skip.charging) {
             gx::set_veil(0.0f, kVeilRelease);
         }
         lift_movie_veil(kVeilOut);
         skip = MovieSkip{};
-        skip.scene = scene;
+        skip.scene = owner;
     }
     bool held = (input::held(0) & kSkipButtons) != 0;
     if (!held) {
@@ -755,7 +754,6 @@ void movie_scene_update(Cpu& c, HleFunction original) {
     } else if (skip.armed && skip.since == 0) {
         skip.since = steady_ms();
     }
-    bool playing = rd8(scene + kMovieSceneStarted) != 0 && rd8(kMoviePlayer + kMovieState) == kMoviePlaying;
     int64_t held_for = skip.since != 0 ? steady_ms() - skip.since : 0;
     if (!enabled() || !playing || skip.since == 0) {
         if (skip.charging) {
@@ -763,7 +761,9 @@ void movie_scene_update(Cpu& c, HleFunction original) {
             gx::set_veil(0.0f, kVeilRelease);
         }
         hint::hide();
-    } else if (held_for >= kSkipHoldMs) {
+        return false;
+    }
+    if (held_for >= kSkipHoldMs) {
         log::write("game", "movie skipped");
         wr8(kMoviePlayer + kMovieState, kMovieEnded);
         skip.armed = false;
@@ -772,13 +772,24 @@ void movie_scene_update(Cpu& c, HleFunction original) {
         gx::set_veil(1.0f, kVeilOut);
         g_movie_veiled = steady_ms();
         hint::hide();
-    } else {
-        if (!skip.charging) {
-            skip.charging = true;
-            gx::set_veil(kChargeVeil, (kSkipHoldMs - held_for) / 1000.0);
-        }
-        hint::hold("hint.skip_movie", kSkipHoldMs / 1000.0, held_for / 1000.0);
+        return true;
     }
+    if (!skip.charging) {
+        skip.charging = true;
+        gx::set_veil(kChargeVeil, (kSkipHoldMs - held_for) / 1000.0);
+    }
+    hint::hold("hint.skip_movie", kSkipHoldMs / 1000.0, held_for / 1000.0);
+    return true;
+}
+
+constexpr int64_t kLoneMovieMs = 250;
+int64_t g_movie_scene_seen = 0;
+bool g_lone_movie = false;
+
+void movie_scene_update(Cpu& c, HleFunction original) {
+    uint32_t scene = c.r[3];
+    g_movie_scene_seen = steady_ms();
+    movie_skip_step(scene, rd8(scene + kMovieSceneStarted) != 0 && rd8(kMoviePlayer + kMovieState) == kMoviePlaying);
     original(c);
     if (c.r[3] != 0) {
         hint::hide();
@@ -861,6 +872,23 @@ bool skip_scene(Cpu& c, bool scene, bool over) {
     int64_t now = steady_ms();
     if (g_movie_veiled != 0 && now - g_movie_veiled >= kMovieVeilLongestMs) {
         lift_movie_veil(0.0);
+    }
+    uint8_t movie = rd8(kMoviePlayer + kMovieState);
+    if (now - g_movie_scene_seen > kLoneMovieMs) {
+        bool playing = movie == kMoviePlaying;
+        if (playing || g_lone_movie) {
+            if (playing && !g_lone_movie) {
+                log::write("game", "movie playing outside a movie scene");
+            }
+            g_lone_movie = playing;
+            movie_skip_step(kMoviePlayer, playing);
+            if (playing) {
+                return false;
+            }
+        }
+        if (g_movie_veiled != 0 && !playing && movie != kMovieEnded) {
+            lift_movie_veil(kVeilOut);
+        }
     }
     bool active = state.active;
     if (active && (over || now - state.started >= kSkipLongestMs)) {
