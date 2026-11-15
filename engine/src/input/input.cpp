@@ -101,100 +101,8 @@ std::vector<ScriptEntry> parse_script(const char* text) {
     return entries;
 }
 
-std::mutex g_view_mutex;
-float g_view_target[3] = {};
-bool g_view_known = false;
-
-uint32_t autopilot(int milliseconds) {
-    static const char* text = std::getenv("WP_GOTO");
-    if (!text) {
-        return 0;
-    }
-    static std::vector<std::pair<float, float>> points;
-    static int from = -1;
-    static size_t reached = 0;
-    if (from < 0) {
-        from = std::atoi(text);
-        for (const char* at = std::strchr(text, '/'); at; at = std::strchr(at + 1, '/')) {
-            float x = 0.0f;
-            float z = 0.0f;
-            if (std::sscanf(at + 1, "%f:%f", &x, &z) == 2) {
-                points.emplace_back(x, z);
-            }
-        }
-    }
-    static int arrived = -1;
-    if (milliseconds >= from && reached >= points.size()) {
-        static const char* after = std::getenv("WP_GOTO_AFTER");
-        static const std::vector<ScriptEntry> then = parse_script(after ? after : "");
-        if (arrived < 0) {
-            arrived = milliseconds;
-        }
-        uint32_t buttons = 0;
-        for (const ScriptEntry& entry : then) {
-            if (milliseconds - arrived >= entry.from && milliseconds - arrived < entry.to) {
-                buttons |= entry.buttons;
-            }
-        }
-        static bool snapped = false;
-        if ((buttons & 0x80000000u) && !snapped) {
-            snapped = true;
-            video::request_screenshot();
-        }
-        if (buttons & 0x60000000u) {
-            free_camera::add_mouse(0.0f, (buttons & 0x40000000u) ? 6.0f : -6.0f);
-        }
-        return buttons & 0x1FFFFFFFu;
-    }
-    if (milliseconds < from) {
-        return 0;
-    }
-    float target[3];
-    {
-        std::lock_guard<std::mutex> lock(g_view_mutex);
-        if (!g_view_known) {
-            return 0;
-        }
-        std::memcpy(target, g_view_target, sizeof target);
-    }
-    static const uint32_t ring[8] = {kButtonDown, kButtonDown | kButtonRight, kButtonRight, kButtonUp | kButtonRight,
-                                     kButtonUp, kButtonUp | kButtonLeft, kButtonLeft, kButtonDown | kButtonLeft};
-    static int index = 0;
-    static int checked = -1;
-    static float last[2] = {};
-    float dx = points[reached].first - target[0];
-    float dz = points[reached].second - target[2];
-    float distance = std::sqrt(dx * dx + dz * dz);
-    if (distance < 6.0f) {
-        log::write("goto", "reached point %u at %.0f %.0f %.0f", static_cast<unsigned>(reached), target[0], target[1], target[2]);
-        static const char* snap = std::getenv("WP_GOTO_SNAP");
-        if (snap && reached >= static_cast<size_t>(std::atoi(snap))) {
-            video::request_screenshot();
-        }
-        reached++;
-        return ring[index];
-    }
-    if (checked < 0 || milliseconds - checked >= 250) {
-        float mx = target[0] - last[0];
-        float mz = target[2] - last[1];
-        float moved = std::sqrt(mx * mx + mz * mz);
-        if (checked >= 0 && moved > 0.5f) {
-            float error = std::atan2(mx * dz - mz * dx, mx * dx + mz * dz);
-            if (std::fabs(error) > 0.5f) {
-                index = (index + (error > 0.0f ? 7 : 1)) % 8;
-            }
-            log::write("goto", "at %.0f %.0f to point %u error %.2f index %d", target[0], target[2], static_cast<unsigned>(reached), error, index);
-        }
-        checked = milliseconds;
-        last[0] = target[0];
-        last[1] = target[2];
-    }
-    return ring[index];
-}
-
 Sample scripted(const std::vector<ScriptEntry>& script, int milliseconds) {
     Sample result;
-    result.buttons |= autopilot(milliseconds);
     for (const ScriptEntry& entry : script) {
         if (milliseconds >= entry.from && milliseconds < entry.to) {
             result.buttons |= entry.buttons;
@@ -369,12 +277,6 @@ bool wakes_remote(uint32_t channel) {
         last_y = current.pointer_y;
     }
     return moved;
-}
-
-void note_view(const float target[3]) {
-    std::lock_guard<std::mutex> lock(g_view_mutex);
-    std::memcpy(g_view_target, target, sizeof g_view_target);
-    g_view_known = true;
 }
 
 bool connected(uint32_t channel) {
