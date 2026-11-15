@@ -890,6 +890,7 @@ struct RunDraw {
     uint32_t matrix = 0;
     uint32_t camera = 0;
     uint64_t key = 0;
+    uint64_t shape = 0;
     bool kept = false;
 };
 
@@ -2843,6 +2844,7 @@ bool add_run(const VertexRun& run, uint32_t bytes, uint32_t index_count) {
     draw.matrix = run.palette ? g_run_palette + run.matrix : g_run_row_used + 4;
     draw.camera = run.camera;
     draw.key = run.key;
+    draw.shape = run.shape;
     g_run_draws.push_back(draw);
     g_run_row_used += run.row_count;
     return true;
@@ -3659,8 +3661,11 @@ void lerp_rows(Row* out, const Row* a, const Row* b, uint32_t count, float t) {
 }
 
 void blend_matrix(Row* out, const Row* a, const Row* b, float t) {
-    if (matrix_change(a, b) == kNearMatrix) {
+    MatrixChange change = matrix_change(a, b);
+    if (change == kNearMatrix) {
         lerp_rows(out, a, b, 3, t);
+    } else if (change == kOtherMatrix && t < 0.5f) {
+        std::copy(a, a + 3, out);
     }
 }
 
@@ -3727,6 +3732,8 @@ void blend_texture_matrix(Row* out, const Row* a, const Row* b, float t, bool fr
     MatrixChange change = from_coordinates && texture_jumped(a, b) ? kOtherMatrix : matrix_change(a, b);
     if (change == kNearMatrix) {
         lerp_rows(out, a, b, 3, t);
+    } else if (change == kOtherMatrix && t < 0.5f) {
+        std::copy(a, a + 3, out);
     }
     g_run_counts[3] += change == kOtherMatrix;
 }
@@ -4155,6 +4162,46 @@ void pair_runs() {
         *best = next[*best];
         paired++;
         rejected += matrix_change(&g_previous.rows[before[run.match].draw.matrix], &g_record.rows[run.draw.matrix]) == kOtherMatrix;
+    }
+    static std::vector<uint8_t> used;
+    static std::vector<uint32_t> left;
+    used.assign(before.size(), 0);
+    for (const RecordedRun& run : runs) {
+        if (run.match != kUnmatched) {
+            used[run.match] = 1;
+        }
+    }
+    left.clear();
+    for (uint32_t k = 0; k < before.size(); k++) {
+        if (!used[k] && before[k].draw.shape != 0) {
+            left.push_back(k);
+        }
+    }
+    for (size_t i = 0; i < runs.size() && !left.empty(); i++) {
+        RecordedRun& run = runs[i];
+        if (run.match != kUnmatched || run.draw.shape == 0) {
+            continue;
+        }
+        size_t best = left.size();
+        float best_distance = 0.0f;
+        for (size_t k = 0; k < left.size(); k++) {
+            const RecordedRun& other = before[left[k]];
+            if (other.draw.shape != run.draw.shape || other.draw.camera != run.draw.camera) {
+                continue;
+            }
+            float distance = run_distance(other, run);
+            if (best == left.size() || distance < best_distance) {
+                best = k;
+                best_distance = distance;
+            }
+        }
+        if (best == left.size() || !same_object(before[left[best]], run, best_distance, kFarthestStep)) {
+            continue;
+        }
+        run.match = left[best];
+        left[best] = left.back();
+        left.pop_back();
+        paired++;
     }
     g_run_cut = rejected > 8 && rejected * 3 > paired;
     if (g_pair_notes_wanted) {
