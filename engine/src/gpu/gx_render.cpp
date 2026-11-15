@@ -4025,6 +4025,28 @@ void find_run_camera(const std::vector<uint32_t>& unique) {
             best = i;
         }
     }
+    float least = 1e30f;
+    size_t voted = best;
+    for (size_t i = 0; i < count; i++) {
+        if (!close_motion(moves[voted], moves[i])) {
+            continue;
+        }
+        float spread = 0.0f;
+        for (size_t k = 0; k < count; k++) {
+            if (!close_motion(moves[voted], moves[k])) {
+                continue;
+            }
+            for (int r = 0; r < 3; r++) {
+                for (int c = 0; c < 4; c++) {
+                    spread += std::fabs(moves[i][r][c] - moves[k][r][c]);
+                }
+            }
+        }
+        if (spread < least) {
+            least = spread;
+            best = i;
+        }
+    }
     g_run_camera.valid = best_votes >= 3 && best_votes * 3 >= count;
     g_run_camera.known = false;
     if (!g_run_camera.valid) {
@@ -4272,7 +4294,7 @@ void adopt_run_camera() {
     CameraMotion* chosen = nullptr;
     for (CameraMotion& camera : g_cameras) {
         if (camera.claimed && camera.id == g_run_camera.id && !camera.is_second) {
-            chosen = camera.known ? nullptr : &camera;
+            chosen = &camera;
             break;
         }
         if (!camera.claimed && !chosen) {
@@ -5180,8 +5202,23 @@ void pair_frame() {
                 ay = a[1] / a[3];
             }
             char part[200];
-            std::snprintf(part, sizeof part, " | draw %zu %04x kind %d col %d p %d placed %d at %.2f %.2f w %.1f from %.2f %.2f n %u", d, static_cast<unsigned>(draw.key & 0xFFFF), kind[d], column[d],
-                          partner[d] < kRejected ? static_cast<int>(partner[d]) : partner[d] == kRejected ? -2 : -1, g_placed[d], b[0] / b[3], b[1] / b[3], b[3], ax, ay, draw.positions);
+            std::snprintf(part, sizeof part, " | draw %zu %04x kind %d col %d p %d placed %d at %.2f %.2f w %.1f from %.2f %.2f n %u cam %zu mov %d", d, static_cast<unsigned>(draw.key & 0xFFFF), kind[d], column[d],
+                          partner[d] < kRejected ? static_cast<int>(partner[d]) : partner[d] == kRejected ? -2 : -1, g_placed[d], b[0] / b[3], b[1] / b[3], b[3], ax, ay, draw.positions,
+                          camera_of(draw.camera), g_world_moving[d]);
+            note += part;
+        }
+        for (size_t k = 0; k < kMaxCameras; k++) {
+            if (!g_cameras[k].known) {
+                continue;
+            }
+            float off = 0.0f;
+            for (int r = 0; r < 4; r++) {
+                for (int c = 0; c < 4; c++) {
+                    off = std::max(off, std::fabs(g_cameras[k].back[r][c] - (r == c ? 1.0f : 0.0f)));
+                }
+            }
+            char part[80];
+            std::snprintf(part, sizeof part, " | camera %zu id %08x off %.4f points %zu", k, static_cast<unsigned>(g_cameras[k].id), off, g_cameras[k].from.size());
             note += part;
         }
     }
