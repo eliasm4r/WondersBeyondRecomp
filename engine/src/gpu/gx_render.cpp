@@ -843,6 +843,7 @@ struct PendingBatch : BatchState {
 struct RecordedDraw {
     uint64_t key = 0;
     uint64_t exact = 0;
+    uint64_t material = 0;
     uint32_t camera = 0;
     uint32_t first_position = 0;
     uint32_t positions = 0;
@@ -951,6 +952,25 @@ bool g_recording = false;
 bool g_record_broken = false;
 FrameRecord g_record;
 FrameRecord g_previous;
+
+struct CommandColors {
+    bool runs = false;
+    size_t begin = 0;
+    size_t end = 0;
+    uint64_t shape = 0;
+    float initial[4][4] = {};
+    float konst[4][4] = {};
+};
+
+std::vector<CommandColors> g_previous_colors;
+
+uint64_t command_shape(const BatchState& batch) {
+    const Constants& constants = batch.constants;
+    return hash_bytes(reinterpret_cast<const uint8_t*>(constants.stage), sizeof constants.stage) ^
+           hash_bytes(reinterpret_cast<const uint8_t*>(constants.header), sizeof constants.header) * 31 ^
+           hash_bytes(reinterpret_cast<const uint8_t*>(constants.swaps), sizeof constants.swaps) * 961 ^ batch.blend;
+}
+
 std::vector<uint32_t> g_color_partner;
 uint32_t g_interpolated_ready = 0;
 std::atomic<uint32_t> g_interpolated_frames{0};
@@ -2670,6 +2690,7 @@ void append(const ScreenVertex* vertices, uint32_t count, const DrawSource* sour
         RecordedDraw draw;
         draw.key = source->key;
         draw.exact = source->exact;
+        draw.material = command_shape(g_pending);
         draw.camera = source->camera;
         draw.first_position = static_cast<uint32_t>(g_record.positions.size());
         draw.positions = source->count;
@@ -4405,7 +4426,8 @@ bool replay_between(const std::vector<std::pair<uint32_t, uint32_t>>& matches, f
     for (size_t d = 0; d < g_record.draws.size() && d < g_color_partner.size(); d++) {
         const RecordedDraw& draw = g_record.draws[d];
         uint32_t p = g_color_partner[d];
-        if (p >= kRejected || p >= g_previous.draws.size() || g_previous.draws[p].positions != draw.positions || draw.positions == 0) {
+        if (p >= kRejected || p >= g_previous.draws.size() || g_previous.draws[p].positions != draw.positions || draw.positions == 0 ||
+            g_previous.draws[p].material != draw.material) {
             continue;
         }
         const RecordedDraw& before = g_previous.draws[p];
@@ -4421,9 +4443,11 @@ bool replay_between(const std::vector<std::pair<uint32_t, uint32_t>>& matches, f
                 continue;
             }
             for (int c = 0; c < 2; c++) {
-                for (int k = 0; k < 4; k++) {
-                    moved[index].color[c][k] = a[c][k] + (b[c][k] - a[c][k]) * t;
+                float alpha = a[c][3] + (b[c][3] - a[c][3]) * t;
+                for (int k = 0; k < 3; k++) {
+                    moved[index].color[c][k] = alpha > 0.0f ? (a[c][k] * a[c][3] + (b[c][k] * b[c][3] - a[c][k] * a[c][3]) * t) / alpha : b[c][k];
                 }
+                moved[index].color[c][3] = alpha;
             }
         }
     }
@@ -4458,17 +4482,79 @@ bool replay_between(const std::vector<std::pair<uint32_t, uint32_t>>& matches, f
         }
         return target;
     };
+    static std::vector<uint32_t> command_partner;
+    static uint64_t partnered_frame = ~0ull;
+    if (partnered_frame != g_frame) {
+        partnered_frame = g_frame;
+        command_partner.assign(g_record.commands.size(), ~0u);
+        static std::vector<uint32_t> lists[2];
+        lists[0].clear();
+        lists[1].clear();
+        for (uint32_t i = 0; i < g_previous_colors.size(); i++) {
+            lists[g_previous_colors[i].runs].push_back(i);
+        }
+        auto previous_command = [](bool runs, size_t at) {
+            const std::vector<uint32_t>& list = lists[runs];
+            auto found = std::upper_bound(list.begin(), list.end(), at, [](size_t value, uint32_t i) { return value < g_previous_colors[i].begin; });
+            if (found == list.begin()) {
+                return ~0u;
+            }
+            uint32_t i = *(found - 1);
+            return at < g_previous_colors[i].end ? i : ~0u;
+        };
+        size_t d = 0;
+        for (size_t c = 0; c < g_record.commands.size(); c++) {
+            const RecordedCommand& command = g_record.commands[c];
+            if (command.kind == RecordedCommand::kRuns) {
+                for (size_t r = command.begin; r < command.end; r++) {
+                    if (g_record.runs[r].match != kUnmatched) {
+                        command_partner[c] = previous_command(true, g_record.runs[r].match);
+                        break;
+                    }
+                }
+            } else if (command.kind == RecordedCommand::kBatch) {
+                while (d < g_record.draws.size() && g_record.draws[d].first_vertex < command.begin) {
+                    d++;
+                }
+                for (size_t e = d; e < g_record.draws.size() && g_record.draws[e].first_vertex < command.end; e++) {
+                    uint32_t p = e < g_color_partner.size() ? g_color_partner[e] : kUnmatched;
+                    if (p < kRejected && p < g_previous.draws.size() && g_previous.draws[p].material == g_record.draws[e].material) {
+                        command_partner[c] = previous_command(false, g_previous.draws[p].first_vertex);
+                        break;
+                    }
+                }
+            }
+        }
+    }
     BatchState swapped;
-    for (const RecordedCommand& command : g_record.commands) {
+    BatchState blended;
+    for (size_t c = 0; c < g_record.commands.size(); c++) {
+        const RecordedCommand& command = g_record.commands[c];
         switch (command.kind) {
         case RecordedCommand::kBatch:
         case RecordedCommand::kRuns: {
             const BatchState* state = &command.batch;
+            uint32_t partner = command_partner[c];
+            if (partner != ~0u) {
+                const CommandColors& before = g_previous_colors[partner];
+                const Constants& now = command.batch.constants;
+                if ((std::memcmp(before.initial, now.initial, sizeof before.initial) != 0 || std::memcmp(before.konst, now.konst, sizeof before.konst) != 0) &&
+                    before.shape == command_shape(command.batch)) {
+                    blended = command.batch;
+                    for (int i = 0; i < 4; i++) {
+                        for (int k = 0; k < 4; k++) {
+                            blended.constants.initial[i][k] = before.initial[i][k] + (now.initial[i][k] - before.initial[i][k]) * t;
+                            blended.constants.konst[i][k] = before.konst[i][k] + (now.konst[i][k] - before.konst[i][k]) * t;
+                        }
+                    }
+                    state = &blended;
+                }
+            }
             for (size_t map = 0; map < kTextureMaps; map++) {
                 for (const auto& [recorded, twin] : twins) {
                     if (command.batch.views[map] == recorded->view) {
                         if (state != &swapped) {
-                            swapped = command.batch;
+                            swapped = *state;
                             state = &swapped;
                         }
                         swapped.views[map] = twin->view;
@@ -4628,6 +4714,7 @@ void match_by(uint64_t RecordedDraw::*key, bool trusted, std::vector<uint32_t>& 
             continue;
         }
         candidates.emplace_back(static_cast<uint32_t>(d), p);
+        g_color_partner[d] = p;
     }
     close.assign(candidates.size(), 0);
     parallel_for(candidates.size(), [](size_t i) {
@@ -4881,6 +4968,7 @@ void pair_frame() {
     static std::vector<uint32_t> partner;
     static std::vector<uint8_t> taken;
     partner.assign(g_record.draws.size(), kUnmatched);
+    g_color_partner.assign(g_record.draws.size(), kUnmatched);
     taken.assign(g_previous.draws.size(), 0);
     uint32_t moved_too_far = 0;
     static std::vector<uint8_t> kind;
@@ -4927,7 +5015,6 @@ void pair_frame() {
             column[d] = partner[d] == kRejected ? 2 : (draw.exact != 0 ? 3 : 4);
         }
     });
-    g_color_partner = partner;
     follow_decals(partner, kind, column, target);
     g_matches.clear();
     for (size_t d = 0; d < partner.size(); d++) {
@@ -4983,7 +5070,20 @@ bool g_show_real = true;
 double g_planned_slot = 1.0 / 120.0;
 
 void end_record() {
+    g_previous_colors.clear();
     if (g_recording && !g_record_broken) {
+        for (const RecordedCommand& command : g_record.commands) {
+            if (command.kind == RecordedCommand::kBatch || command.kind == RecordedCommand::kRuns) {
+                CommandColors colors;
+                colors.runs = command.kind == RecordedCommand::kRuns;
+                colors.begin = command.begin;
+                colors.end = command.end;
+                colors.shape = command_shape(command.batch);
+                std::memcpy(colors.initial, command.batch.constants.initial, sizeof colors.initial);
+                std::memcpy(colors.konst, command.batch.constants.konst, sizeof colors.konst);
+                g_previous_colors.push_back(colors);
+            }
+        }
         g_previous.positions.swap(g_record.positions);
         g_previous.colors.swap(g_record.colors);
         g_previous.draws.swap(g_record.draws);
