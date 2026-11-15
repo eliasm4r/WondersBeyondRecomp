@@ -4192,15 +4192,21 @@ void pair_runs() {
             used[run.match] = 1;
         }
     }
+    static std::vector<uint64_t> drawn;
+    drawn.clear();
+    for (const RecordedRun& run : runs) {
+        drawn.push_back(run.draw.key);
+    }
+    std::sort(drawn.begin(), drawn.end());
     left.clear();
     for (uint32_t k = 0; k < before.size(); k++) {
-        if (!used[k] && before[k].draw.shape != 0) {
+        if (!used[k] && before[k].draw.shape != 0 && !std::binary_search(drawn.begin(), drawn.end(), before[k].draw.key)) {
             left.push_back(k);
         }
     }
     for (size_t i = 0; i < runs.size() && !left.empty(); i++) {
         RecordedRun& run = runs[i];
-        if (run.match != kUnmatched || run.draw.shape == 0) {
+        if (run.match != kUnmatched || run.draw.shape == 0 || (run.draw.key != 0 && keys[slot_of(run.draw.key)] == run.draw.key)) {
             continue;
         }
         size_t best = left.size();
@@ -4963,6 +4969,73 @@ void follow_decals(const std::vector<uint32_t>& partner, const std::vector<uint8
     }
 }
 
+constexpr size_t kMaxPlacedCopies = 64;
+
+void pair_copies_by_place(std::vector<uint32_t>& partner, const std::vector<uint8_t>& kind) {
+    static std::vector<uint32_t> copies;
+    copies.clear();
+    for (uint32_t d = 0; d < partner.size(); d++) {
+        const RecordedDraw& draw = g_record.draws[d];
+        size_t camera = camera_of(draw.camera);
+        if (kind[d] == kSameCount && partner[d] < kRejected && draw.positions != 0 && camera < kMaxCameras && g_cameras[camera].known) {
+            copies.push_back(d);
+        }
+    }
+    std::stable_sort(copies.begin(), copies.end(), [](uint32_t x, uint32_t y) { return g_record.draws[x].key < g_record.draws[y].key; });
+    static std::vector<std::array<float, 2>> now;
+    static std::vector<std::array<float, 2>> then;
+    static std::vector<std::tuple<float, uint32_t, uint32_t>> costs;
+    static std::vector<uint32_t> partners;
+    for (size_t first = 0; first < copies.size();) {
+        size_t last = first;
+        while (last < copies.size() && g_record.draws[copies[last]].key == g_record.draws[copies[first]].key) {
+            last++;
+        }
+        size_t count = last - first;
+        if (count >= 2 && count <= kMaxPlacedCopies) {
+            now.clear();
+            then.clear();
+            partners.clear();
+            bool usable = true;
+            for (size_t i = first; i < last && usable; i++) {
+                uint32_t d = copies[i];
+                const CameraMotion& camera = g_cameras[camera_of(g_record.draws[d].camera)];
+                const std::array<float, 4>& b = g_record.positions[g_record.draws[d].first_position];
+                const std::array<float, 4>& a = g_previous.positions[g_previous.draws[partner[d]].first_position];
+                float p[4];
+                for (int r = 0; r < 4; r++) {
+                    p[r] = camera.back[r][0] * b[0] + camera.back[r][1] * b[1] + camera.back[r][2] * b[2] + camera.back[r][3] * b[3];
+                }
+                usable = p[3] > 0.0f && a[3] > 0.0f && std::isfinite(p[0]) && std::isfinite(a[0]);
+                now.push_back({p[0] / p[3], p[1] / p[3]});
+                then.push_back({a[0] / a[3], a[1] / a[3]});
+                partners.push_back(partner[d]);
+            }
+            if (usable) {
+                costs.clear();
+                for (size_t i = 0; i < count; i++) {
+                    for (size_t j = 0; j < count; j++) {
+                        costs.emplace_back(std::fabs(now[i][0] - then[j][0]) + std::fabs(now[i][1] - then[j][1]), static_cast<uint32_t>(i), static_cast<uint32_t>(j));
+                    }
+                }
+                std::sort(costs.begin(), costs.end());
+                uint64_t done_now = 0;
+                uint64_t done_then = 0;
+                for (const auto& [cost, i, j] : costs) {
+                    if ((done_now >> i & 1) || (done_then >> j & 1)) {
+                        continue;
+                    }
+                    done_now |= 1ull << i;
+                    done_then |= 1ull << j;
+                    partner[copies[first + i]] = partners[j];
+                    g_color_partner[copies[first + i]] = partners[j];
+                }
+            }
+        }
+        first = last;
+    }
+}
+
 void pair_frame() {
     auto started = std::chrono::steady_clock::now();
     static std::vector<uint32_t> partner;
@@ -4977,6 +5050,7 @@ void pair_frame() {
     match_by(&RecordedDraw::key, false, partner, taken, kind, moved_too_far);
     find_cameras(partner, kind);
     adopt_run_camera();
+    pair_copies_by_place(partner, kind);
     static bool forward[kMaxCameras];
     for (size_t k = 0; k < kMaxCameras; k++) {
         forward[k] = g_cameras[k].known && invert(g_cameras[k].back, g_forward[k]);
