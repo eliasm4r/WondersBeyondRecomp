@@ -3709,9 +3709,86 @@ void blend_run(Row* out, const Row* a, const Row* b, float t) {
     }
 }
 
+bool split_matrix(const Row* m, float (&q)[4], float (&scale)[3]) {
+    float r[3][3];
+    for (int j = 0; j < 3; j++) {
+        scale[j] = std::sqrt(m[0][j] * m[0][j] + m[1][j] * m[1][j] + m[2][j] * m[2][j]);
+        if (!std::isfinite(scale[j]) || scale[j] < 1e-6f) {
+            return false;
+        }
+        for (int i = 0; i < 3; i++) {
+            r[i][j] = m[i][j] / scale[j];
+        }
+    }
+    float det = r[0][0] * (r[1][1] * r[2][2] - r[1][2] * r[2][1]) - r[0][1] * (r[1][0] * r[2][2] - r[1][2] * r[2][0]) + r[0][2] * (r[1][0] * r[2][1] - r[1][1] * r[2][0]);
+    if (det < 0.9f || det > 1.1f) {
+        return false;
+    }
+    float w = std::sqrt(std::max(0.0f, 1.0f + r[0][0] + r[1][1] + r[2][2])) / 2;
+    float x = std::copysign(std::sqrt(std::max(0.0f, 1.0f + r[0][0] - r[1][1] - r[2][2])) / 2, r[2][1] - r[1][2]);
+    float y = std::copysign(std::sqrt(std::max(0.0f, 1.0f - r[0][0] + r[1][1] - r[2][2])) / 2, r[0][2] - r[2][0]);
+    float z = std::copysign(std::sqrt(std::max(0.0f, 1.0f - r[0][0] - r[1][1] + r[2][2])) / 2, r[1][0] - r[0][1]);
+    float length = std::sqrt(w * w + x * x + y * y + z * z);
+    q[0] = w / length;
+    q[1] = x / length;
+    q[2] = y / length;
+    q[3] = z / length;
+    return true;
+}
+
+constexpr float kLargestBoneTurn = 1.6f;
+
+bool blend_turn(Row* out, const Row* a, const Row* b, float t) {
+    float qa[4], qb[4], sa[3], sb[3];
+    if (!split_matrix(a, qa, sa) || !split_matrix(b, qb, sb)) {
+        return false;
+    }
+    float step = 0.0f;
+    float length = 0.0f;
+    for (int i = 0; i < 3; i++) {
+        if (std::fabs(sa[i] - sb[i]) > 0.1f * std::max(sa[i], sb[i])) {
+            return false;
+        }
+        step += (b[i][3] - a[i][3]) * (b[i][3] - a[i][3]);
+        length += b[i][3] * b[i][3];
+    }
+    if (std::sqrt(step) > 0.5f * std::sqrt(length) + 200.0f) {
+        return false;
+    }
+    float dot = qa[0] * qb[0] + qa[1] * qb[1] + qa[2] * qb[2] + qa[3] * qb[3];
+    float sign = dot < 0.0f ? -1.0f : 1.0f;
+    float angle = std::acos(std::min(1.0f, std::fabs(dot)));
+    if (2 * angle > kLargestBoneTurn) {
+        return false;
+    }
+    float wa = 1.0f - t;
+    float wb = t;
+    if (angle > 1e-4f) {
+        wa = std::sin((1.0f - t) * angle) / std::sin(angle);
+        wb = std::sin(t * angle) / std::sin(angle);
+    }
+    float q[4];
+    for (int i = 0; i < 4; i++) {
+        q[i] = wa * qa[i] + wb * sign * qb[i];
+    }
+    float w = q[0], x = q[1], y = q[2], z = q[3];
+    float r[3][3] = {{1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)},
+                     {2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)},
+                     {2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)}};
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            out[i][j] = r[i][j] * (sa[j] + (sb[j] - sa[j]) * t);
+        }
+        out[i][3] = a[i][3] + (b[i][3] - a[i][3]) * t;
+    }
+    return true;
+}
+
 void blend_palette(Row* out, const Row* a, const Row* b, float t) {
     for (uint32_t m = 0; m + 3 <= 64; m += 3) {
-        blend_matrix(out + m, a + m, b + m, t);
+        if (matrix_change(a + m, b + m) != kOtherMatrix || !blend_turn(out + m, a + m, b + m, t)) {
+            blend_matrix(out + m, a + m, b + m, t);
+        }
     }
     lerp_rows(out + kPaletteRows, a + kPaletteRows, b + kPaletteRows, kNormalRows, t);
 }
