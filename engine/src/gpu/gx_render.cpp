@@ -5552,6 +5552,11 @@ bool present_frame(void* window_handle, double aspect) {
             last = g_last_shown;
         }
         g_slot = std::clamp(g_planned_slot, 0.002, 0.025);
+        uint32_t queued = g_interpolated_ready + (g_show_real ? 1 : 0);
+        if (queued > 0) {
+            double lead = std::chrono::duration<double>(last - now).count();
+            g_slot = std::clamp(g_slot - (lead - g_slot / 4) * 0.1 / queued, g_slot * 0.9, g_slot * 1.1);
+        }
         auto step = std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(g_slot));
         auto slot = std::max(now, last + step);
         for (uint32_t i = 0; i < g_interpolated_ready; i++) {
