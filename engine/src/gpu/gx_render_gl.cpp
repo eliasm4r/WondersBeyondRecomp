@@ -1,4 +1,5 @@
 #include "wp/gx_render.h"
+#include "wp/gx.h"
 
 #include "gx_render_common.h"
 #include "../platform/gl_window.h"
@@ -28,6 +29,7 @@
 #include "wp/memory.h"
 #include "wp/titlebar.h"
 #include "wp/options.h"
+#include "wp/hint.h"
 #include "wp/perf_overlay.h"
 #include "wp/settings.h"
 #include "wp/video.h"
@@ -633,7 +635,6 @@ struct TexturePack {
     bool load = false;
     std::filesystem::path dump_directory;
     custom_textures::Index index;
-    std::unordered_set<std::string> dumped;
     std::unordered_map<std::string, GLuint> loaded;
 };
 
@@ -702,6 +703,11 @@ struct Device {
     uint64_t hud_version = 0;
     bool hud_visible = false;
     perf::Corner hud_corner = perf::Corner::TopLeft;
+    GLuint hint_texture = 0;
+    uint32_t hint_width = 0;
+    uint32_t hint_height = 0;
+    uint64_t hint_version = 0;
+    bool hint_visible = false;
     GLuint bar_texture = 0;
     uint32_t bar_width = 0;
     uint32_t bar_height = 0;
@@ -1092,21 +1098,6 @@ GLuint custom_texture(const std::string& key, bool mipmaps) {
     return found->second;
 }
 
-void dump_texture(const custom_textures::TextureName& name, const std::vector<std::vector<uint32_t>>& pixels, uint32_t width, uint32_t height) {
-    std::string full = name.full();
-    if (!g_pack.dumped.insert(full).second) {
-        return;
-    }
-    std::error_code error;
-    std::filesystem::create_directories(g_pack.dump_directory, error);
-    for (uint32_t level = 0; level < pixels.size(); level++) {
-        std::filesystem::path path = g_pack.dump_directory / (custom_textures::level_name(full, level) + ".png");
-        if (!std::filesystem::exists(path, error)) {
-            video::save_png_rgba(path.string().c_str(), pixels[level], std::max(width >> level, 1u), std::max(height >> level, 1u));
-        }
-    }
-}
-
 void release_cached(CachedTexture& entry) {
     if (entry.texture && entry.owned) {
         gl.DeleteTextures(1, &entry.texture);
@@ -1205,7 +1196,7 @@ GLuint texture_for(uint32_t map) {
     }
     std::vector<std::vector<uint32_t>> pixels = decode_levels(request);
     if (named && g_pack.dump) {
-        dump_texture(name, pixels, width, height);
+        custom_textures::dump(g_pack.dump_directory, name, pixels, width, height);
     }
     if (custom) {
         entry.texture = custom;
@@ -1415,6 +1406,20 @@ bool draw_kept(const VertexRun&, const KeptRun&) {
 void reset_kept() {}
 
 void finish_frame() {}
+
+Canvas canvas() {
+    return {};
+}
+
+Canvas shared_canvas() {
+    return {};
+}
+
+void set_canvas_kind(int) {}
+
+bool canvas_copy(uint32_t) {
+    return false;
+}
 
 int64_t service_presents() {
     return -1;
@@ -1867,10 +1872,18 @@ void draw_overlay(int client_width, int client_height, int bar) {
     if (options::take_overlay(g_device.overlay_version, image, g_device.overlay_visible) && !image.pixels.empty()) {
         upload_image(g_device.overlay_texture, g_device.overlay_width, g_device.overlay_height, image);
     }
+    if (hint::take(g_device.hint_version, image, g_device.hint_visible) && !image.pixels.empty()) {
+        upload_image(g_device.hint_texture, g_device.hint_width, g_device.hint_height, image);
+    }
     if (g_device.hud_visible) {
         options::Rect placed = perf::corner_rect(client_width, client_height - bar, static_cast<int>(g_device.hud_width), static_cast<int>(g_device.hud_height), g_device.hud_corner);
         placed.y += bar;
         draw_image(g_device.hud_texture, placed, client_height);
+    }
+    if (g_device.hint_visible) {
+        options::Rect placed = hint::place(client_width, client_height - bar, static_cast<int>(g_device.hint_width), static_cast<int>(g_device.hint_height));
+        placed.y += bar;
+        draw_image(g_device.hint_texture, placed, client_height);
     }
     if (g_device.overlay_visible) {
         draw_image(g_device.overlay_texture, options::place(client_width, client_height, static_cast<int>(g_device.overlay_width), static_cast<int>(g_device.overlay_height)),
@@ -1906,6 +1919,9 @@ bool present_frame(void* window_handle, double aspect) {
                 static_cast<GLsizei>(height));
     use_fullscreen(g_device.present, 1.0f);
     color::Adjust colors = color::current();
+    float veil = gx::veil_level();
+    colors.brightness *= 1.0f - veil;
+    colors.saturation *= 1.0f - veil;
     gl.Uniform4f(g_device.present_adjust, colors.brightness, colors.contrast, colors.saturation, 1.0f / colors.gamma);
     gl.ActiveTexture(GL_TEXTURE0);
     gl.BindTexture(GL_TEXTURE_2D, g_device.frame.texture);

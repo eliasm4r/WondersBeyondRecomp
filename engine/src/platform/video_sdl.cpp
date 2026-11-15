@@ -55,7 +55,6 @@ constexpr int kExtraButton1 = 0x05;
 constexpr int kExtraButton2 = 0x06;
 constexpr int kF1 = 0x70;
 constexpr int kF11 = 0x7A;
-constexpr int kF12 = 0x7B;
 
 struct KeyPair {
     int vk;
@@ -236,10 +235,6 @@ void handle_event(SDL_Window* window, const SDL_Event& event) {
     case SDL_EVENT_KEY_DOWN: {
         int vk = vk_for(event.key.scancode);
         bool repeat = event.key.repeat;
-        if (vk == kF12 && !repeat) {
-            gx::request_capture();
-            return;
-        }
         if (vk == kF11 && !repeat) {
             set_fullscreen(window, !g_fullscreen);
             settings::store("video.fullscreen", g_fullscreen ? "1" : "0");

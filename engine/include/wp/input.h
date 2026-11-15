@@ -54,7 +54,7 @@ struct Sample {
 bool connected(uint32_t channel);
 Sample sample(uint32_t channel);
 // Player 1 taps A by itself, to get through a screen that waits for it.
-void set_auto_confirm(bool enabled);
+void set_auto_confirm(bool enabled, uint32_t buttons = kButtonA);
 bool wakes_remote(uint32_t channel);
 void note_wheel(int delta);
 const keymap::Bindings& bindings();
@@ -62,5 +62,6 @@ uint32_t keyboard_buttons(const keymap::Bindings& keys, const std::function<bool
 void upgrade_bindings();
 void set_blocked(bool blocked);
 bool gamepad_in_use();
+uint32_t held(uint32_t channel);
 
 }

@@ -22,6 +22,7 @@
 #include "wp/control_names.h"
 #include "wp/cpu.h"
 #include "wp/custom_textures.h"
+#include "wp/disc_textures.h"
 #include "wp/function_table.h"
 #include "wp/hollywood.h"
 #include "wp/gx.h"
@@ -45,6 +46,7 @@
 #include "wp/screenshot.h"
 #include "wp/stall_watch.h"
 #include "wp/settings.h"
+#include "wp/hd_textures.h"
 #include "wp/ui_text.h"
 #include "wp/update_check.h"
 #include "wp/video.h"
@@ -707,6 +709,163 @@ void test_custom_texture_index() {
     std::filesystem::remove_all(root, error);
 }
 
+std::vector<uint8_t> lz11_runs(const std::vector<uint8_t>& data) {
+    std::vector<uint8_t> out = {0x11, static_cast<uint8_t>(data.size()), static_cast<uint8_t>(data.size() >> 8), static_cast<uint8_t>(data.size() >> 16)};
+    size_t flags = 0;
+    int bit = -1;
+    for (size_t at = 0; at < data.size(); bit--) {
+        if (bit < 0) {
+            flags = out.size();
+            out.push_back(0);
+            bit = 7;
+        }
+        size_t run = 0;
+        while (at > 0 && at + run < data.size() && data[at + run] == data[at - 1] && run < 0x110) {
+            run++;
+        }
+        if (run < 0x11) {
+            out.push_back(data[at++]);
+            continue;
+        }
+        out[flags] |= static_cast<uint8_t>(1 << bit);
+        out.insert(out.end(), {static_cast<uint8_t>((run - 0x11) >> 4), static_cast<uint8_t>((run - 0x11) << 4), 0});
+        at += run;
+    }
+    return out;
+}
+
+void test_hd_progress_text() {
+    for (wp::ui::Language language : {wp::ui::Language::English, wp::ui::Language::French, wp::ui::Language::Spanish, wp::ui::Language::Galician}) {
+        wp::ui::set_language(language);
+        for (wp::hd_textures::State state : {wp::hd_textures::State::Reading, wp::hd_textures::State::Downloading, wp::hd_textures::State::Enlarging,
+                                             wp::hd_textures::State::Retrying, wp::hd_textures::State::Checking, wp::hd_textures::State::Done,
+                                             wp::hd_textures::State::Failed}) {
+            wp::hd_textures::Progress job;
+            job.state = state;
+            job.done = 312;
+            job.total = 1104;
+            job.found = 2784;
+            job.again = 1104;
+            job.still_empty = 2;
+            job.made = 2380;
+            job.seconds_left = 1500;
+            job.error = "vkQueueSubmit failed -4";
+            std::vector<std::string> lines = wp::hd_textures::describe(job);
+            CHECK(!lines.empty());
+            for (const std::string& line : lines) {
+                CHECK(!line.empty() && line.find('{') == std::string::npos && line.find("hd.") != 0);
+            }
+        }
+    }
+    wp::ui::set_language(wp::ui::Language::English);
+    wp::hd_textures::Progress retry;
+    retry.state = wp::hd_textures::State::Retrying;
+    retry.done = 312;
+    retry.total = 1104;
+    retry.again = 1104;
+    retry.still_empty = 2;
+    retry.seconds_left = 1500;
+    std::vector<std::string> lines = wp::hd_textures::describe(retry);
+    CHECK(lines.size() == 3);
+    CHECK(lines[1] == "1104 came out empty after a graphics card error");
+    CHECK(lines[2] == "310 of 1104 redone \xC2\xB7 2 still empty \xC2\xB7 about 25 min left");
+    wp::hd_textures::Progress done;
+    done.state = wp::hd_textures::State::Done;
+    done.made = 2380;
+    done.again = 1104;
+    done.still_empty = 2;
+    lines = wp::hd_textures::describe(done);
+    CHECK(lines.size() == 3 && lines[1] == "2380 textures in HD \xC2\xB7 1102 redone" && lines[2] == "2 could not be enlarged and keep their original look");
+    done.kept = 40;
+    lines = wp::hd_textures::describe(done);
+    CHECK(lines.size() == 4 && lines[2] == "40 kept as they are on purpose: enlarging them changed their drawing");
+    CHECK(wp::hd_textures::describe(wp::hd_textures::Progress{}).empty());
+    std::vector<uint32_t> original(8 * 8);
+    for (size_t i = 0; i < original.size(); i++) {
+        original[i] = (i % 3 == 0 ? 0xFF2040E0u : 0xFFE0C020u);
+    }
+    std::vector<uint32_t> larger(32 * 32);
+    for (uint32_t y = 0; y < 32; y++) {
+        for (uint32_t x = 0; x < 32; x++) {
+            larger[y * 32 + x] = original[(y / 4) * 8 + x / 4];
+        }
+    }
+    CHECK(wp::hd_textures::matches(original, 8, 8, larger, 32, 32));
+    CHECK(!wp::hd_textures::matches(original, 8, 8, larger, 32, 16));
+    std::vector<uint32_t> broken = larger;
+    std::fill(broken.begin() + 32 * 4, broken.end(), 0u);
+    CHECK(!wp::hd_textures::matches(original, 8, 8, broken, 32, 32));
+    broken = larger;
+    std::fill(broken.begin() + 32 * 28, broken.end(), 0xFF00FF00u);
+    CHECK(!wp::hd_textures::matches(original, 8, 8, broken, 32, 32));
+    std::vector<uint32_t> same = larger;
+    wp::hd_textures::Range range = wp::hd_textures::keep_in_range(original, 8, 8, same, 32, 32);
+    CHECK(range.matched && !range.changed && range.strayed == 0.0 && same == larger);
+    CHECK(!wp::hd_textures::keep_in_range(original, 8, 8, same, 32, 16).matched);
+    std::vector<uint32_t> dark(8 * 8, 0xFF000000u);
+    dark[3 * 8 + 3] = 0xFF181818u;
+    std::vector<uint32_t> speck(32 * 32, 0xFF000000u);
+    speck[13 * 32 + 13] = 0xFFC8C8C8u;
+    speck[30 * 32 + 30] = 0xFF505050u;
+    range = wp::hd_textures::keep_in_range(dark, 8, 8, speck, 32, 32);
+    CHECK(range.changed && range.strayed == 2.0 / 1024);
+    CHECK(speck[13 * 32 + 13] == 0xFF181818u && speck[30 * 32 + 30] == 0xFF000000u);
+}
+
+void test_disc_textures() {
+    namespace ct = wp::gx::custom_textures;
+    auto put32 = [](std::vector<uint8_t>& data, size_t at, uint32_t value) {
+        for (int i = 0; i < 4; i++) {
+            data[at + i] = static_cast<uint8_t>(value >> (24 - 8 * i));
+        }
+    };
+    std::vector<uint8_t> tpl(0x80 + 32);
+    put32(tpl, 0, 0x0020AF30);
+    put32(tpl, 4, 2);
+    put32(tpl, 8, 0x0C);
+    put32(tpl, 0x0C, 0x1C);
+    put32(tpl, 0x14, 0x40);
+    for (size_t header : {0x1C, 0x40}) {
+        put32(tpl, header, 4 << 16 | 8);
+        put32(tpl, header + 4, 1);
+        put32(tpl, header + 8, 0x80);
+        put32(tpl, header + 0x14, header == 0x1C ? 1 : 5);
+    }
+    std::fill(tpl.begin() + 0x80, tpl.end(), 0x80);
+    std::vector<uint8_t> archive(0x40);
+    put32(archive, 0, 0x55AA382D);
+    put32(archive, 4, 0x20);
+    put32(archive, 0x20, 0x01000000);
+    put32(archive, 0x28, 2);
+    put32(archive, 0x30, 0x40);
+    put32(archive, 0x34, static_cast<uint32_t>(tpl.size()));
+    archive.insert(archive.end(), tpl.begin(), tpl.end());
+
+    std::error_code error;
+    std::filesystem::path root = std::filesystem::temp_directory_path(error) / "wp_disc_textures_test";
+    std::filesystem::remove_all(root, error);
+    std::filesystem::create_directories(root / "files" / "Archive", error);
+    std::vector<uint8_t> packed = lz11_runs(archive);
+    CHECK(packed.size() < archive.size());
+    for (const char* name : {"Archive/MenuRes_Fr.dac", "Archive/MenuRes_Ge.dac"}) {
+        std::ofstream(root / "files" / name, std::ios::binary).write(reinterpret_cast<const char*>(packed.data()), static_cast<std::streamsize>(packed.size()));
+    }
+    std::ofstream(root / "files" / "readme.txt") << "not a texture";
+    CHECK(wp::gx::disc_textures::export_flat(root / "files", root / "out") == 1);
+    std::string name = ct::name_texture(tpl.data() + 0x80, 32, 8, 4, 1, false, nullptr).full();
+    std::vector<uint32_t> pixels;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    CHECK(ct::decode_png(root / "out" / (name + ".png"), pixels, width, height));
+    CHECK(width == 8 && height == 4 && pixels.size() == 32 && pixels[0] == pixels[31]);
+    size_t written = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(root / "out", error)) {
+        written += entry.is_regular_file() ? 1 : 0;
+    }
+    CHECK(written == 1);
+    std::filesystem::remove_all(root, error);
+}
+
 int blend_factor(wp::gx::BlendFactor factor, int written, int tev, int destination) {
     using wp::gx::BlendFactor;
     switch (factor) {
@@ -1150,16 +1309,16 @@ void test_key_names() {
         CHECK(name.empty() || key_code(name) == code);
     }
     CHECK(reserved(key_code("F11")));
-    CHECK(reserved(key_code("F12")));
+    CHECK(!reserved(key_code("F12")));
     CHECK(reserved(key_code("F10")));
     CHECK(reserved(key_code("F1")));
     CHECK(!reserved(key_code("F9")));
-    Parsed parsed = parse(" Enter , space,MouseLeft,,Nope,F12,enter,F11 ");
+    Parsed parsed = parse(" Enter , space,MouseLeft,,Nope,F10,enter,F11 ");
     CHECK(parsed.codes.size() == 3);
     CHECK(format(parsed.codes) == "Enter,Space,MouseLeft");
     CHECK(format(parsed.codes, ", ") == "Enter, Space, MouseLeft");
     CHECK(parsed.invalid.size() == 3);
-    CHECK(parsed.invalid.size() == 3 && parsed.invalid[0] == "Nope" && parsed.invalid[1] == "F12" && parsed.invalid[2] == "F11");
+    CHECK(parsed.invalid.size() == 3 && parsed.invalid[0] == "Nope" && parsed.invalid[1] == "F10" && parsed.invalid[2] == "F11");
     CHECK(parse("").codes.empty() && parse("").invalid.empty());
 }
 
@@ -1246,7 +1405,7 @@ void test_key_defaults() {
         CHECK(!keys.codes[i].empty());
         CHECK(setting_key(i) == std::string("keys.") + action(i).name);
     }
-    std::map<std::string, std::string> file = {{"keys.a", "K,Wrong"}, {"keys.screenshot", ""}, {"keys.b", "F12"}};
+    std::map<std::string, std::string> file = {{"keys.a", "K,Wrong"}, {"keys.screenshot", ""}, {"keys.b", "F10"}};
     std::vector<std::string> invalid;
     Bindings loaded = load(
         [&](const std::string& key) {
@@ -1266,7 +1425,7 @@ void test_key_defaults() {
     CHECK(loaded.of(Action::Screenshot).empty());
     CHECK(loaded.of(Action::B).empty());
     CHECK(format(loaded.of(Action::Home)) == "H");
-    CHECK(invalid.size() == 2 && invalid[0] == "keys.a: Wrong" && invalid[1] == "keys.b: F12");
+    CHECK(invalid.size() == 2 && invalid[0] == "keys.a: Wrong" && invalid[1] == "keys.b: F10");
 }
 
 std::function<std::string(const std::string&)> file_reader(const std::map<std::string, std::string>& file) {
@@ -1771,15 +1930,16 @@ void test_options_menu() {
     CHECK(std::strcmp(wp::ui::label("tab.advanced", wp::ui::Language::English), "Advanced") == 0);
     CHECK(std::strcmp(wp::ui::label("tab.controls", wp::ui::Language::Galician), "Controls") != 0);
     CHECK(std::strcmp(wp::ui::label("help.video.scale", wp::ui::Language::Spanish), wp::ui::label("help.video.scale", wp::ui::Language::English)) != 0);
-    CHECK((wp::options::tab_keys(0) == std::vector<std::string>{"video.scale", "video.fullscreen", "system.widescreen", "video.vsync", "video.smooth", "video.anisotropy",
+    CHECK((wp::options::tab_keys(0) == std::vector<std::string>{"video.scale", "video.fullscreen", "system.widescreen", "video.aspect", "video.vsync", "video.smooth", "video.anisotropy",
                                                                  "video.brightness", "video.contrast", "video.saturation", "video.gamma", "video.colors_reset"}));
     CHECK(std::strcmp(wp::ui::label("video.colors_reset", wp::ui::Language::French), "Couleurs d'origine") == 0);
     CHECK(std::strcmp(wp::ui::label("video.brightness", wp::ui::Language::French), "Luminosité") == 0);
-    CHECK((wp::options::tab_keys(1) == std::vector<std::string>{"video.fps", "saves.backups", "system.discord", "stats.play_time"}));
+    CHECK((wp::options::tab_keys(1) == std::vector<std::string>{"video.fps", "game.text_speed", "game.skip_movies", "game.button_icons", "saves.backups", "system.discord", "stats.play_time"}));
     CHECK((wp::options::tab_keys(2) == std::vector<std::string>{"audio.volume", "audio.mute", "audio.wiimote_speaker"}));
     CHECK((wp::options::tab_keys(4) == std::vector<std::string>{"system.interface_language", "system.language"}));
-    CHECK((wp::options::tab_keys(5) == std::vector<std::string>{"overlay.show", "overlay.level", "overlay.corner", "video.show_fps", "video.custom_textures", "video.dump_textures", "video.bug_recorder", "system.update"}));
+    CHECK((wp::options::tab_keys(5) == std::vector<std::string>{"overlay.show", "overlay.level", "overlay.corner", "video.show_fps", "video.custom_textures", "video.hd_textures", "video.dump_textures", "video.bug_recorder", "system.update"}));
     CHECK(wp::options::kind("system.update") == wp::options::Kind::Info);
+    CHECK(wp::options::kind("video.hd_textures") == wp::options::Kind::Button);
     std::vector<std::string> keyboard = wp::options::tab_keys(3, wp::options::Device::Keyboard);
     CHECK(keyboard[0] == "controls.device" && keyboard[1] == "input.hide_cursor" && keyboard.back() == "keys.reset");
     CHECK(std::find(keyboard.begin(), keyboard.end(), "keys.overlay") != keyboard.end());
@@ -1844,9 +2004,22 @@ void test_options_menu() {
 
     CHECK(menu.handle(wp::options::Action::TabNext).empty());
     CHECK(menu.tab() == 1 && menu.selection() == 0);
-    menu.select(3);
     rows = menu.rows();
-    CHECK(rows[3].kind == wp::options::Kind::Info && !rows[3].value.empty() && rows[3].live);
+    CHECK(rows[1].key == "game.text_speed" && rows[1].kind == wp::options::Kind::Choice && rows[1].live && rows[1].value == "Original");
+    menu.select(1);
+    CHECK(menu.handle(wp::options::Action::Next) == "game.text_speed" && wp::settings::number("game.text_speed", nullptr) == 2);
+    CHECK(menu.rows()[1].value == "2x");
+    CHECK(menu.handle(wp::options::Action::Next) == "game.text_speed" && menu.handle(wp::options::Action::Next) == "game.text_speed");
+    CHECK(wp::settings::number("game.text_speed", nullptr) == 0 && menu.rows()[1].value == "Instant");
+    wp::settings::store("game.text_speed", "1");
+    rows = menu.rows();
+    CHECK(rows[2].key == "game.skip_movies" && rows[2].kind == wp::options::Kind::Toggle && rows[2].live);
+    CHECK(wp::settings::flag("game.skip_movies", nullptr));
+    CHECK(rows[3].key == "game.button_icons" && rows[3].kind == wp::options::Kind::Toggle && rows[3].live);
+    CHECK(wp::settings::flag("game.button_icons", nullptr));
+    menu.select(6);
+    rows = menu.rows();
+    CHECK(rows[6].kind == wp::options::Kind::Info && !rows[6].value.empty() && rows[6].live);
     CHECK(menu.handle(wp::options::Action::Accept).empty() && menu.handle(wp::options::Action::Next).empty());
     CHECK(menu.handle(wp::options::Action::Previous).empty() && !menu.capturing());
 
@@ -1912,16 +2085,21 @@ void test_options_menu() {
 
     menu.select_tab(0);
     std::vector<wp::options::Row> screen = menu.rows();
-    CHECK(screen.size() == 11 && screen[6].key == "video.brightness" && screen[10].key == "video.colors_reset");
-    for (size_t i = 6; i < 10; i++) {
+    CHECK(screen.size() == 12 && screen[3].key == "video.aspect" && screen[3].kind == wp::options::Kind::Choice && screen[3].live);
+    CHECK(screen[3].value == "16:9 (original)" && screen[7].key == "video.brightness" && screen[11].key == "video.colors_reset");
+    for (size_t i = 7; i < 11; i++) {
         CHECK(screen[i].kind == wp::options::Kind::Slider && screen[i].value == "100%" && screen[i].live && screen[i].fraction == 0.5);
     }
-    CHECK(screen[10].kind == wp::options::Kind::Button && screen[10].live);
-    menu.select(6);
+    CHECK(screen[11].kind == wp::options::Kind::Button && screen[11].live);
+    menu.select(3);
+    CHECK(menu.handle(wp::options::Action::Next) == "video.aspect");
+    CHECK(wp::settings::text("video.aspect", nullptr) == "16:10");
+    wp::settings::store("video.aspect", "16:9");
+    menu.select(7);
     CHECK(menu.handle(wp::options::Action::Next) == "video.brightness");
     CHECK(wp::settings::number("video.brightness", nullptr) == 105);
     wp::settings::store("video.saturation", "0");
-    menu.select(10);
+    menu.select(11);
     CHECK(menu.handle(wp::options::Action::Accept) == "video.colors_reset");
     CHECK(wp::settings::number("video.brightness", nullptr) == 100 && wp::settings::number("video.saturation", nullptr) == 100);
 
@@ -2555,6 +2733,8 @@ int main() {
     test_custom_texture_hash();
     test_custom_texture_names();
     test_custom_texture_index();
+    test_disc_textures();
+    test_hd_progress_text();
     test_gx_logic_ops();
     test_gx_line_point_offsets();
     test_texture_keys();

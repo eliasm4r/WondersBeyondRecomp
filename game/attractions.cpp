@@ -1,4 +1,5 @@
 #include "attractions.h"
+#include "prompts.h"
 
 #include <algorithm>
 #include <array>
@@ -16,6 +17,7 @@
 
 #include "wp/attraction.h"
 #include "wp/canvas.h"
+#include "wp/gx.h"
 #include "wp/log.h"
 #include "wp/memory.h"
 
@@ -27,6 +29,7 @@ constexpr uint32_t kSceneManagerGet = 0x80074a90;
 constexpr uint32_t kEndScene = 0x802076a0;
 constexpr uint32_t kAddSceneParameter = 0x80207730;
 constexpr uint32_t kAttractionIdName = 0x8045394c;
+constexpr uint32_t kMovieName = 0x804b0360;
 constexpr uint32_t kNextSceneParameters = 0xac;
 
 enum Scene : int {
@@ -61,6 +64,12 @@ bool guest_text_is(uint32_t address, const char* text) {
 }
 
 int g_test_request = 0;
+uint64_t g_hud_step = 0;
+uint64_t g_map_step = 0;
+uint64_t g_choice_step = 0;
+uint64_t g_frame_step = 0;
+bool g_skipping = false;
+bool g_skipping_framed = false;
 
 void label_bomb_button();
 
@@ -105,8 +114,49 @@ void add_scene_parameter(Cpu& c, HleFunction original) {
     original(c);
 }
 
+void layout_draw(Cpu& c, HleFunction original) {
+    constexpr uint32_t kHudLayoutReturn = 0x80143248;
+    constexpr uint32_t kLayoutName = 0x0C;
+    constexpr uint32_t kLayoutShown = 0x2C;
+    bool hud = c.lr == kHudLayoutReturn;
+    bool minimap = hud && guest_text_is(c.r[3] + kLayoutName, "MnFdMap");
+    if (hud && rd8(c.r[3] + kLayoutShown) != 0) {
+        if (minimap) {
+            g_map_step = g_hud_step;
+        } else if (guest_text_is(c.r[3] + kLayoutName, "MnEvFrame")) {
+            g_frame_step = g_hud_step;
+        } else if (guest_text_is(c.r[3] + kLayoutName, "MnFdYesNoButton") || guest_text_is(c.r[3] + kLayoutName, "MnFdList") ||
+                   guest_text_is(c.r[3] + kLayoutName, "MnFdListQuiz") || guest_text_is(c.r[3] + kLayoutName, "MnFdBattleWindow")) {
+            g_choice_step = g_hud_step;
+        }
+    }
+    if (minimap) {
+        gx::mark_right_anchor(true);
+    }
+    original(c);
+    if (minimap) {
+        gx::mark_right_anchor(false);
+    }
+}
+
 void scene_manager_run_begin(Cpu& c, HleFunction original) {
     original(c);
+    update_prompts();
+    constexpr uint64_t kSceneHiddenSteps = 60;
+    constexpr uint64_t kShownSteps = 4;
+    constexpr uint64_t kFrameGoneSteps = 10;
+    g_hud_step++;
+    bool park = g_scene == kScenePark;
+    bool map_shown = g_hud_step - g_map_step <= kShownSteps;
+    bool choice_shown = g_hud_step - g_choice_step <= kShownSteps;
+    bool framed = g_frame_step != 0 && g_hud_step - g_frame_step <= kShownSteps;
+    bool frame_gone = g_frame_step == 0 || g_hud_step - g_frame_step > kFrameGoneSteps;
+    if (!g_skipping) {
+        g_skipping_framed = framed;
+    }
+    bool scene = park && !choice_shown && (framed || g_hud_step - g_map_step > kSceneHiddenSteps);
+    bool over = !park || choice_shown || (g_skipping_framed ? frame_gone : map_shown);
+    g_skipping = skip_scene(c, scene, over);
     if (attraction::mode() == attraction::Mode::Shake) {
         label_bomb_button();
     }
@@ -122,8 +172,9 @@ void scene_manager_run_begin(Cpu& c, HleFunction original) {
     log::write("game", "test: entering attraction %d", request);
     call(c, kSceneManagerGet);
     c.r[3] += kNextSceneParameters;
-    c.r[4] = kAttractionIdName;
-    c.r[5] = static_cast<uint32_t>(request - 1);
+    const char* movie = std::getenv("WP_MOVIE");
+    c.r[4] = movie ? kMovieName : kAttractionIdName;
+    c.r[5] = movie ? static_cast<uint32_t>(std::atoi(movie)) : static_cast<uint32_t>(request - 1);
     call(c, kAddSceneParameter);
     call(c, kSceneManagerGet);
     call(c, kEndScene);

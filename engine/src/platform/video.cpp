@@ -206,10 +206,6 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
     }
     case WM_KEYDOWN: {
         bool repeat = (lparam & (1 << 30)) != 0;
-        if (wparam == VK_F12 && !repeat) {
-            gx::request_capture();
-            return 0;
-        }
         if (wparam == VK_F11 && !repeat) {
             set_fullscreen(window, !g_fullscreen);
             settings::store("video.fullscreen", g_fullscreen ? "1" : "0");

@@ -45,4 +45,10 @@ TEXTS = {
     "step_configure": "Preparing the build",
     "step_build": "Building the game",
     "step_finish": "Finishing",
+    "rebuild_window": "PokePark 2: Wonders Beyond - Update",
+    "rebuild_intro": "A new version was installed. The game is being built again from it, once, with the disc files already on "
+                     "this computer. It takes a few minutes. Your saves and settings are kept.",
+    "rebuild_failed": "The update stopped: {step}",
+    "rebuild_old": "Start the previous version of the game for now?",
+    "rebuild_confirm_cancel": "The update is still running. Stop it? It will start again next time you play.",
 }

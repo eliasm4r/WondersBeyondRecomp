@@ -11,6 +11,7 @@ namespace wp::gx::render {
 
 constexpr int kEfbWidth = 640;
 constexpr int kEfbHeight = 528;
+constexpr int kPictureHeight = 456;
 constexpr uint32_t kMaxStages = 16;
 constexpr uint32_t kTextureMaps = 8;
 constexpr uint32_t kBpScissorOffset = 0x59;
@@ -92,7 +93,9 @@ std::vector<uint8_t> cmpr_to_bc1(const uint8_t* data, uint32_t width, uint32_t h
 uint64_t hash_bytes(const uint8_t* data, size_t size);
 uint64_t sample_hash(const uint8_t* data, size_t size);
 BlendState blend_state_for(uint32_t word);
-void fill_constants(Constants& constants, int scale);
+void fill_constants(Constants& constants, int scale, int margin_x = 0);
+Canvas wanted_canvas(double picture_aspect, double window_aspect);
+bool covers_picture(int x, int y, int width, int height);
 // The texture maps a draw samples: those of its TEV stages and of its indirect stages.
 uint32_t used_maps(const Constants& constants);
 AlphaTestResult alpha_test_result(uint32_t test);

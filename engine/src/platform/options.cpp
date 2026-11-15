@@ -13,6 +13,7 @@
 #include "wp/frame_pacing.h"
 #include "wp/game.h"
 #include "wp/gamepad.h"
+#include "wp/hd_textures.h"
 #include "wp/keymap.h"
 #include "wp/padmap.h"
 #include "wp/play_time.h"
@@ -32,7 +33,8 @@ constexpr const char* kLiveKeys[] = {
     "overlay.show",         "overlay.level",        "overlay.corner",        "controls.device",    "stats.play_time",
     "video.brightness",     "video.contrast",       "video.saturation",      "video.gamma",        "video.colors_reset",
     "camera.free",          "camera.mouse_speed",   "camera.stick_speed",    "camera.invert_y",    "video.bug_recorder",
-    "system.check_updates", "system.update",
+    "system.check_updates", "system.update",        "video.aspect",          "game.text_speed",
+    "game.skip_movies",     "game.button_icons",    "video.hd_textures",
 };
 
 struct Language {
@@ -75,6 +77,7 @@ constexpr const char* kResetKeys = "keys.reset";
 constexpr const char* kResetPad = "pad.reset";
 constexpr const char* kResetColors = "video.colors_reset";
 constexpr const char* kUpdate = "system.update";
+constexpr const char* kHdTextures = "video.hd_textures";
 
 const Slider* slider_of(const std::string& key) {
     for (const Slider& slider : kSliders) {
@@ -119,6 +122,43 @@ std::string update_text() {
     }
 }
 
+std::string hd_text() {
+    hd_textures::Progress now = hd_textures::progress();
+    switch (now.state) {
+    case hd_textures::State::Reading:
+        return ui::label("menu.hd.reading");
+    case hd_textures::State::Downloading:
+        return ui::label("menu.hd.downloading");
+    case hd_textures::State::Enlarging:
+        return now.total ? std::to_string(now.done) + " / " + std::to_string(now.total) : ui::label("menu.hd.enlarging");
+    case hd_textures::State::Retrying:
+        return std::string(ui::label("menu.hd.again")) + " " + std::to_string(now.done) + " / " + std::to_string(now.total);
+    case hd_textures::State::Checking:
+        return std::string(ui::label("menu.hd.check")) + " " + std::to_string(now.done) + " / " + std::to_string(now.total);
+    case hd_textures::State::Done:
+        return ui::label("menu.hd.done");
+    case hd_textures::State::Failed:
+        return ui::label("menu.hd.failed");
+    default:
+        return ui::label("menu.hd.start");
+    }
+}
+
+std::string hd_help() {
+    hd_textures::Progress now = hd_textures::progress();
+    if (now.state == hd_textures::State::Idle) {
+        return "";
+    }
+    std::vector<std::string> lines = hd_textures::describe(now);
+    std::string dot = " \xC2\xB7 ";
+    std::string text;
+    for (const std::string& line : lines) {
+        std::string part = text.empty() && line.find(dot) != std::string::npos ? line.substr(line.find(dot) + dot.size()) : line;
+        text += (text.empty() ? "" : dot) + part;
+    }
+    return text;
+}
+
 bool enabled_text(const std::string& value) {
     return !(value == "0" || value == "false" || value == "off" || value == "no");
 }
@@ -137,10 +177,10 @@ const char* tab_label(size_t tab) {
 std::vector<std::string> tab_keys(size_t tab, Device device) {
     switch (tab) {
     case 0:
-        return {"video.scale",      "video.fullscreen", "system.widescreen", "video.vsync", "video.smooth", "video.anisotropy",
+        return {"video.scale",      "video.fullscreen", "system.widescreen", "video.aspect", "video.vsync", "video.smooth", "video.anisotropy",
                 color::kBrightness.key, color::kContrast.key, color::kSaturation.key, color::kGamma.key, kResetColors};
     case 1:
-        return {"video.fps", "saves.backups", "system.discord", kPlayTime};
+        return {"video.fps", "game.text_speed", "game.skip_movies", "game.button_icons", "saves.backups", "system.discord", kPlayTime};
     case 2:
         return {"audio.volume", "audio.mute", "audio.wiimote_speaker"};
     case 3: {
@@ -162,7 +202,11 @@ std::vector<std::string> tab_keys(size_t tab, Device device) {
     case 4:
         return {"system.interface_language", "system.language"};
     case 5: {
-        std::vector<std::string> keys = {"overlay.show", "overlay.level", "overlay.corner", "video.show_fps", "video.custom_textures", "video.dump_textures", "video.bug_recorder"};
+        std::vector<std::string> keys = {"overlay.show", "overlay.level", "overlay.corner", "video.show_fps", "video.custom_textures"};
+        if (hd_textures::available()) {
+            keys.push_back(kHdTextures);
+        }
+        keys.insert(keys.end(), {"video.dump_textures", "video.bug_recorder"});
         if (update::available()) {
             keys.push_back("system.check_updates");
         }
@@ -175,7 +219,7 @@ std::vector<std::string> tab_keys(size_t tab, Device device) {
 }
 
 Kind kind(const std::string& key) {
-    if (key == kResetKeys || key == kResetPad || key == kResetColors) {
+    if (key == kResetKeys || key == kResetPad || key == kResetColors || key == kHdTextures) {
         return Kind::Button;
     }
     if (key == kPlayTime || key == kUpdate) {
@@ -219,6 +263,12 @@ std::vector<std::string> choices(const std::string& key) {
     }
     if (key == "video.anisotropy") {
         return {"1", "2", "4", "8", "16"};
+    }
+    if (key == "video.aspect") {
+        return {"16:9", "16:10", "21:9", "32:9", "auto"};
+    }
+    if (key == "game.text_speed") {
+        return {"1", "2", "3", "0"};
     }
     if (key == "overlay.level") {
         return {"minimal", "standard", "full"};
@@ -277,6 +327,12 @@ std::string shown_value(const std::string& key, const std::string& value) {
     }
     if (key == "video.anisotropy") {
         return value == "1" ? text.menu_off : value + "x";
+    }
+    if (key == "video.aspect") {
+        return value == "auto" ? ui::label("menu.aspect.auto") : value == "16:9" ? ui::label("menu.aspect.original") : value;
+    }
+    if (key == "game.text_speed") {
+        return value == "1" ? ui::label("menu.text_speed.original") : value == "0" ? ui::label("menu.text_speed.instant") : value + "x";
     }
     if (key == "overlay.level" || key == "overlay.corner" || key == kDevice) {
         std::string prefix = key == "overlay.level" ? "menu.level." : key == "overlay.corner" ? "menu.corner." : "menu.device.";
@@ -419,6 +475,12 @@ std::vector<Row> Menu::rows() const {
             help_key = motion ? "pad.motion_help" : name == "pointer" ? "help.pad.pointer" : "help.keys." + name;
         }
         row.help = ui::label(help_key.c_str());
+        if (key == kHdTextures) {
+            std::string job = hd_help();
+            if (!job.empty()) {
+                row.help = job;
+            }
+        }
         std::string label_key = row.kind == Kind::Pad ? "keys." + key.substr(4) : key;
         row.label = ui::label(label_key.c_str());
         if (key == kDevice) {
@@ -427,6 +489,8 @@ std::vector<Row> Menu::rows() const {
             row.value = play_time::format(play_time::seconds(), ui::language());
         } else if (key == kUpdate) {
             row.value = update_text();
+        } else if (key == kHdTextures) {
+            row.value = hd_text();
         } else if (row.kind != Kind::Button) {
             std::string value = settings::text(key.c_str(), nullptr);
             row.value = shown_value(key, value);
@@ -507,6 +571,10 @@ std::string Menu::handle(Action action) {
         scroll_ = 0;
         return "";
     }
+    if (action == Action::Accept && key == kUpdate && update::state() == update::State::Newer) {
+        update::open_page();
+        return "";
+    }
     if (changes_value && type == Kind::Info) {
         return "";
     }
@@ -529,15 +597,16 @@ std::string Menu::handle(Action action) {
         select_tab((tab_ + 1) % kTabCount);
         return "";
     case Action::Accept:
-        if (key == kUpdate && update::state() == update::State::Newer) {
-            update::open_page();
-            return "";
-        }
         if (type == Kind::Key || type == Kind::Pad) {
             capturing_ = true;
             return "";
         }
         if (type == Kind::Button) {
+            if (key == kHdTextures) {
+                hd_textures::start();
+                settings::store("video.custom_textures", "1");
+                return "video.custom_textures";
+            }
             if (key == kResetColors) {
                 for (const color::Range& range : color::kRanges) {
                     settings::store(range.key, "100");

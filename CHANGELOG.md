@@ -10,6 +10,31 @@ Every change to WondersBeyondRecomp, newest first.
 
 <br>
 
+## v0.3.0-alpha · 2026-11-15
+
+> **Wider and quicker.** 16:10, 21:9 and 32:9 screens, faster text, skippable cutscenes, your own keys and buttons drawn in the game, every texture in HD with one button, and 240 fps at 6x. [Download it here.](https://github.com/eliasm4r/WondersBeyondRecomp/releases/tag/v0.3.0-alpha)
+
+### Changed
+- Skipping a video or a story scene looks smoother: the gauge fills at the screen's frame rate in 0.8 s, the picture dims while you hold, then fades to black, a moving bar shows while the scene is skipped, and the game fades back in instead of cutting.
+- With vsync off, pictures are shown without waiting for the screen (tearing allowed, as the other PokePark 2 recompilation does), and three buffers are used instead of two. On a real screen the waits held 240 fps at x6 down to about 180 in the same scene that reached 240 in a hidden window.
+- F12 no longer saves a debug capture of the next picture (it froze the game for a moment and filled the captures folder when pressed by mistake); it can now be bound to an action like any other key.
+- RecompLauncher: after an update the game is built again from the new version on the first start (a small window shows the progress, about a minute, without the disc image), so the update really takes effect. Saves and settings are kept.
+- RecompLauncher: the frame rate setting goes up to 240 and the picture shape setting offers 16:10, 21:9, 32:9 and Fit window.
+- RecompLauncher: every option of the game's F1 menu can be set from the launcher too (colors, text speed, cutscene skip, button icons, save backups, sound, camera, gamepads, menu language, overlay, textures, update check), except the key and button bindings.
+- Faster on the graphics card at high internal resolutions: the screen clears no longer write depth from the pixel shader. At 6x and 240 fps the GPU load on the first beach went from 80% to 66%.
+
+### Added
+- **Make every texture HD** (Options > Advanced): one button reads every menu, map, font and 2D picture from the game's files, even the ones not seen yet (about 2,700), and makes 4x copies with Real-ESRGAN on your graphics card in under 2 minutes (about 600 MB). Each copy is compared with the original and made again, with another model if needed, when it came out wrong; the few that no model draws faithfully (sparkles, one pixel lines) keep their original look and are not tried again the next time the button is pressed. Copies never get brighter or darker than the original around each pixel, so no white dots or halos appear (the black band of the title logo). A box in the corner of the screen shows each step while you play: how many are done, redone or wrong, the time left, and what went wrong if it fails. Start the game again when it says done.
+- HD textures: `tools/hd_textures.py` makes 4x copies of the dumped menu, map and HUD textures with Real-ESRGAN on your graphics card, for the custom textures option.
+- Picture shape option (Options > Screen): 16:10, 21:9, 32:9 or the window's own shape. The world fills the wider screen and shows more on the sides; menus and text stay in the middle, the minimap moves to the right edge, the sprint's speed lines and the bands across the screen (zone names, the photo shutter and its question) reach the edges, and screens with no world (title video, menus, loading) keep their 16:9 shape. Objects past the old edges are drawn too, so nothing pops in at the sides.
+- Text speed option (Options > Game): dialogue written as in the game, 2 or 3 times faster, or a whole page at once.
+- Video scenes can be skipped: hold A or + (Start, Tab) for a second, a small gauge fills in the corner. Story scenes played in the game, like the Reshiram and Zekrom intro, are skipped by holding + for a second; the skip stops at the end of that scene or at a question. Both can be turned off in Options > Game.
+- Button icons: the game's texts, the action bubble over Pikachu and the title screen show the keys and buttons set in Controls (keyboard keys, mouse buttons, Xbox, PlayStation or Switch buttons, whichever was used last) instead of the Wii Remote's. They change as soon as a binding or the device does, and the Wii Remote's come back with a real Wii Remote or with Options > Game > Button icons off.
+
+### Fixed
+- HD textures: Real-ESRGAN no longer makes the graphics card reset (the screen flickered and many copies came out black or full of noise). Pictures with a side under 12 pixels, or whose last 200 pixel tile was that thin, caused it; they are now padded before and cropped after.
+- Options > Advanced > Version: confirming it when a newer version exists now opens the download page, as its help line says. The row ignored it.
+
 ## v0.2.0-alpha · 2026-11-14
 
 > **Smoother and faster.** Up to 240 fps, shorter freezes when a zone appears, a faster start, an update check and controls made for the four attractions. [Download it here.](https://github.com/eliasm4r/WondersBeyondRecomp/releases/tag/v0.2.0-alpha)

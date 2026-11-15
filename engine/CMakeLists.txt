@@ -17,6 +17,7 @@ add_library(wp_engine STATIC
     src/gpu/gx.cpp
     src/gpu/gx_lighting.cpp
     src/gpu/custom_textures.cpp
+    src/gpu/disc_textures.cpp
     src/gpu/gx_state.cpp
     src/gpu/gx_render_common.cpp
     src/audio/dsp.cpp
@@ -44,6 +45,7 @@ add_library(wp_engine STATIC
     src/platform/play_time.cpp
     src/platform/perf.cpp
     src/platform/perf_overlay.cpp
+    src/platform/hint.cpp
     src/platform/system_stats.cpp
     src/platform/ui_text.cpp
     src/platform/color.cpp
@@ -52,6 +54,7 @@ add_library(wp_engine STATIC
     src/platform/options_window.cpp
     src/platform/discord.cpp
     src/platform/update_check.cpp
+    src/platform/hd_textures.cpp
 )
 if(WIN32)
     target_sources(wp_engine PRIVATE src/gpu/gx_render.cpp src/platform/video.cpp)

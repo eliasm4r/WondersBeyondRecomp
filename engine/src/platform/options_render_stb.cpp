@@ -220,7 +220,7 @@ void draw_control(Canvas& canvas, const Menu& menu, const Row& row, bool selecte
     }
     case Kind::Button:
         canvas.fill_round(control.x, control.y, control.x + control.width, control.y + control.height, control.height / 2, over_control ? kOrangeHover : kOrange);
-        canvas.text(value_face, kWhite, ui::label("menu.reset"), control.x + unit / 2, control.y, control.x + control.width - unit / 2, control.y + control.height,
+        canvas.text(value_face, kWhite, row.value.empty() ? ui::label("menu.reset") : row.value, control.x + unit / 2, control.y, control.x + control.width - unit / 2, control.y + control.height,
                     Align::Center, true);
         break;
     case Kind::Choice: {

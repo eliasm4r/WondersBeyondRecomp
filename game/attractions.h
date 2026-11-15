@@ -11,5 +11,7 @@ void scene_manager_run_begin(Cpu& c, HleFunction original);
 void dance_frame(Cpu& c, HleFunction original);
 void dance_frame_second_part(Cpu& c, HleFunction original);
 void dance_judge(Cpu& c, HleFunction original);
+bool skip_scene(Cpu& c, bool scene, bool over);
+void layout_draw(Cpu& c, HleFunction original);
 
 }

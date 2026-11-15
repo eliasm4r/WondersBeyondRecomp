@@ -113,6 +113,17 @@ Draw done and tokens wait for pending copies to reach RAM, like the console. Not
 a late write can land in memory the game has already reused. Dolphin needs RAM copies for this game only for the
 snapshot feature. All pending copies share one staging atlas, so a frame costs two GPU synchronisations instead of
 about forty. 
+## EFB clears
+
+The game clears the picture (640x456, not the whole 640x528 EFB, so `ClearRenderTargetView` cannot be used) about
+four times a frame, usually color and depth. The clear wrote its depth from the pixel shader (`SV_Depth`), which on
+the RTX 4070 cost about 0.24 ms per clear at 6x and left the depth buffer uncompressed for the draws after it. The
+clear's vertex shader now puts the depth in the triangle's z (constant over the screen, so the same value is
+stored) and the pixel shader writes only the color. Measured with temporary GPU timestamps, 240 fps at 6x on the
+first beach: the GPU went from 80% busy to 66%; an in-between image took 3.4 ms of GPU time before. The other large
+costs there are the game's full picture copies (0.07 to 0.3 ms each at 6x) and its full screen blurred layers
+(about 0.14 ms each).
+
 ## Specialised pixel shaders
 
 The generic pixel shader interprets the TEV stages for every pixel. At 6x that took about 8 ms of GPU time per frame
@@ -224,6 +235,17 @@ light scenes, where few commands wake it, the images piled up. The wait is now a
 to the next image's time (0.1 to 1 ms), as PokePark 2 Wiicompiled's `wait_until` (`gx_frames.c`, which shows its
 images from a thread of their own). Same scene: 239.6-239.8 fps, images 2.8 to 5.5 ms apart instead of 0.1 to 14;
 144 fps 6 to 8 ms apart, 120 fps 7.6 to 9 ms, 60 fps unchanged.
+
+## Presenting without waiting for the display
+
+At x6 and 240 fps the user's log (fullscreen, 240 Hz screen) showed 178-183 fps in the save spot, while a hidden
+window run of the same scene (same 21 million vertices and 29,000-38,000 indirect draws a second) held 239.8 fps. GPU
+timestamps in the hidden run: replays 415-446 ms a second, copies 56, recorder 25, the rest presenting and idle.
+The swapchain was flip-discard with 2 buffers and no tearing flag, so `Present(0, 0)` still went through the
+compositor's queue and could block the GPU thread on a real screen. It now has 3 buffers and, when
+`IDXGIFactory5::CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING)` says so, `DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING`
+and `DXGI_PRESENT_ALLOW_TEARING` when vsync is off (PokePark 2 Wiicompiled: "presenting never waits for the
+display"). Fullscreen is a borderless window, which tearing needs. The log says which way it presents.
 
 ## 45 and 90 fps
 
@@ -404,15 +426,32 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
   `progress <0 to 1> <step>` lines; it exits with 0 once the game is built, else 1 after printing the reason and the
   log path. `pythonw` opens no console window and its output still reaches the launcher through the pipe. The script
   path comes first: `Setup (if blocked).exe --prepare` would read `--prepare` as an option of Python itself.
-- Start: `pokepark2.exe` with `WP_ROOT` set to the install folder; the game makes it the working folder before
-  reading anything (`main.cpp`), since every path it uses is relative.
+- Start: `python/pythonw.exe installer/setup.py --start` with `WP_ROOT` set to the install folder. It starts
+  `pokepark2.exe` (any further arguments passed on), waits for it and returns its exit code, so the launcher sees
+  the game's run; the game makes `WP_ROOT` the working folder before reading anything (`main.cpp`), since every path
+  it uses is relative. `AllowSetForegroundWindow` lets the game's window come to the front.
+- Updates: an update unpacks the new release over the folder, which replaces `installer/sources.zip`, but the game
+  is built on the player's computer and the launcher's documentation does not say that it runs the setup step again.
+  Each build (setup window, `--prepare` or the step below) ends by writing the SHA-256 of `sources.zip` to
+  `build/sources.sha256`. `--start` compares it with the `sources.zip` in place: when they differ (or the file is
+  missing, as for a build made by v0.2.0 or older) and the disc files are already extracted, a small window
+  ("Update", same look as the setup) runs the same steps as the setup without the disc image, then starts the game.
+  Cancelled: exit code 3; failed: the error and the log path, then, if the old `pokepark2.exe` is still there (it is
+  only replaced at the very end), an offer to start it for now, else exit code 4. `exit_codes` in the manifest gives
+  the launcher a message for 3 and 4 (the game itself only returns 0 or 1).
+- Tested on a folder unpacked from the setup zip like the launcher does: `--prepare` from the disc image 2 min 43 s,
+  then `--start` with the same sources starts the game at once (0.2 s, no window); after a change to `sources.zip`,
+  `--start` rebuilt (about one minute, the tools and disc files already there), wrote the new digest and started the
+  rebuilt game. The window was checked with a fake build.
+- Players who installed v0.2.0 through the launcher get the new manifest with the update, so their first start
+  after it rebuilds once, unless the launcher already ran the setup step.
 - Settings: the launcher edits `game/settings.ini` key by key (`video/scale`). The game now writes each section once:
   `system.idle_sleep` and `video.custom_textures` sat apart in the option list and made a second `[system]` and
   `[video]`. Reading is unchanged.
 - `dumps`: CRC32 a9bf13d3 is the Redump entry "PokePark 2 - Wonders Beyond (Europe) (En,Fr,De,Es,It)" as nodtool
   1.4.4 matched it on the user's disc (redump.org did not answer); the size is left out, not checked against Redump.
-- Open: the launcher runs the setup step after the first install and when the player picks another copy. An update
-  unpacks the new sources over the folder, and nothing says it runs the step again: until it does, the old build stays.
+- The launcher's frame rate choices go up to 240 and its picture shape choice sets `video.aspect` as well as
+  `system.widescreen` (16:9, 16:10, 21:9, 32:9, Fit window, 4:3).
 - A folder built in one place and then moved (a friend built the v0.2.0 zip in Downloads, then put it in
   `C:/Recomp Library`) stopped the setup at the configure step: CMake refuses a `build/out` whose cache names another
   source folder. `configure` now reads `CMAKE_HOME_DIRECTORY` in `build/out/CMakeCache.txt` (`built_elsewhere`), and
@@ -876,6 +915,253 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
   indexed matrices while the GPU thread still draws from them (0 changes before the frame end over 600,000 samples a
   second, even with the thread stalled 150 ms), and face culling in single precision (wrong for 10,000 to 17,000
   triangles a second, all under 0.03 pixel of area; now computed in double precision by `gx::facing_area`).
+
+## Picture shape (16:10, 21:9, 32:9)
+
+- `video.aspect` (Screen tab, live): `16:9` (default), `16:10`, `21:9` (taken as 64:27, 2560x1080), `32:9` or `auto`
+  (the window's shape, kept between 4:3 and 32:9). Only with the game's 16:9 mode (`system.widescreen`); Direct3D 11
+  only, the OpenGL renderer keeps 16:9. Idea and draw sorting from the rival PP2 recomp (`gx_canvas`, `canvas_kind`).
+- The EFB grows into a canvas with margins: `wanted_canvas` gives them in EFB pixels (21:9: 107 a side, 854x456;
+  16:10: 25 above and below, 640x506), `apply_scale` makes the target again when they change, and logs
+  `picture WxH at scale N`.
+- Each run of draws is sorted in `gx.cpp` (`canvas_kind`, `fit_canvas`), from the projection and, for runs of up to
+  64 vertices, their place on the picture: the world (perspective with a far plane past 2000) is moved by the margins
+  and its clip space shrunk, so it stays where it was and more shows around it; a draw over the whole picture (a fade,
+  a flat quad of the world) is stretched over the canvas; everything else (2D, the HUD's layouts drawn on the plane
+  z -579.4 with their own 45 degree camera) stays in the 16:9 middle, its scissor cut to it. Only the projection's
+  four viewport terms change, so the processor and GPU vertex paths and the in-between images need nothing more.
+- Frames with no world are shown at 16:9: the title is a THP video (three I8 maps, 640x448 and 320x224), and
+  stretched it widened the logo by a third; the menus' background was stretched while the strip at its bottom was
+  not. `set_canvas_kind` notes whether a frame drew the world; after 8 frames the other way the frame copy takes the
+  whole canvas or only the picture, and stretched draws stay in the picture while the world is away. `present_view`
+  fits the whole canvas's shape in the window and shows the picture-only images in its middle at 16:9, with black
+  sides: showing each image at its own shape made the window jump between 21:9 and 16:9 at each change in the title
+  and the menus (user report).
+- The minimap goes to the right edge (user report: it stayed inside the 16:9 middle). The HUD (0x80142F40) draws
+  its layouts through 0x8013CB40 (hooked as `LayoutDraw`, r3 = the layout, its name at +0x0C), returning to
+  0x80143248; its layouts are MnFdMap, MnFdContinue, MnFdMessage, MnFdMessageSys, MnFdBattleWindow,
+  MnFdYesNoButton, MnFdList, MnFdListQuiz, MnFdFpsCamera, MnEvFrame, MnEvFurifuri*, MnFdSukettoCutIn and
+  MnFdKeyGuide. Around MnFdMap the hook puts `gx::mark_right_anchor` in the FIFO, a write to CP register 0xF0 (the
+  GPU has none; PokePark-2-Wiicompiled marks its minimap the same way), so the order with the draws holds on the GPU
+  thread. Those draws, when they would stay in the picture of a frame with the world, get the kind `kRightEdge`:
+  moved right by the side margin, the scissor of the whole canvas.
+- The dash's speed effect (user report: misplaced when sprinting) is a 600 triangle ring in front of the camera,
+  textured with a copy of the whole picture through coordinates made from the positions (texgen source 0). It does
+  not cover the picture, so it stayed in the middle while its copy holds the whole canvas: a shrunk ghost of the
+  scene with hard edges at the 16:9 borders. A draw that would stay in the picture of a frame with the world and
+  whose TEV stages map such a copy by position (`render::canvas_copy`, the copies that took the margins) is
+  stretched instead, so it lines up with the screen. The bloom passes after it were already right: their small
+  steps stay in the picture and the full screen quads that add them up are stretched (GX capture at 27 s while
+  dashing in Cove Town, kinds written in the capture).
+- A dash also starts with speed lines (user report: cut at the 16:9 borders): quads of 4 vertices at z -64 with a
+  camera of their own, shaped like the picture but with a far plane at 1000, so not taken for the world. In a frame
+  with the world, a perspective draw that stayed in the picture is drawn like the world when its camera has the
+  picture's shape (`screen_camera`: x scale over y scale 9/16, viewport over the picture, not the HUD's 45 degree
+  camera): same place, no longer cut (GX capture at 21.15 s of `dash.txt`).
+- 2D and HUD draws as wide as the picture but not as tall (the zone name's band, the photo shutter's bars, the band
+  of "Would you like to save Photo data?") get the kind `kWide` (user report: the photo screen stopped at the 16:9
+  borders): stretched across the canvas's width only, their scissor the canvas's width and the picture's height.
+  With the margins' height too, 16:10 showed HUD lines and shutter bars that stay off screen at 16:9. Checked at
+  16:10, 21:9 and 32:9 with `dash.txt` and `photo1.txt`.
+- Copies of the whole picture take the margins; others, and what is written back to memory (photos), are the
+  picture's part. Clears too. Range fog moves its center by the side margin.
+- The game picks what to draw with a frustum made for 16:9 (`FrustumForCamera` 0x8001A390, same address as the US
+  game, builds it with 0x8027DCD0: fovy in degrees, aspect, near, far). `CullingFrustum` widens it for cameras that
+  see past 2000 by the canvas's shape: 21:9 at 240 fps x3 drew 21.9 million vertices a second instead of 21.3, still
+  at 239.8 fps.
+
+## Text speed
+
+- `game.text_speed` (Game tab, live): `1` (the game's), `2`, `3`, or `0` for a whole page at once. Idea from the rival
+  PP2 recomp (`hle_modifiers.c`). The dialogue writer's step (`MenuMessagePuncherImpl`, 0x801485A0 here, 0x80148520
+  in the US game: the functions around it sit 0x80 later in this release) returns 1 while it writes; its caller keeps
+  that state at +0x0C. `DialogueWriterStep` calls it again while both stay 1, up to the speed, or 4000 times for a
+  page at once; the pauses for the player are other states and are left alone. Reading the first sign of the beach:
+  58 steps for a page at 1, 29 at 2, 1 at once.
+- Each step plays the speaker's voice blip (sound id at +0xC4, -1 for none, played from 0x80148904), so a page at
+  once played dozens of them in one frame, heard as a high squeal (user report). The extra steps run with the id set
+  to -1 and the id is put back after them (or the one a step set, if a step changed it). Logged on the intro
+  (Reshiram and Zekrom, id 0xCF): one blip a page.
+
+## Skipping videos
+
+- `game.skip_movies` (Game tab, live, on by default): holding A or + for a second ends a video scene (the Mobiclip
+  `Movie/*.mo` files, played by `nsNile::nsScene::SceneSpecializerMovie`, vtable 0x80468DF8). Its update
+  (0x8020A9A0, hooked as `MovieSceneUpdate`, r3 = the scene) returns 1 when the scene is over; the movie player is
+  at 0x804CF758 (returned by 0x80077A70), its state byte at +0x35 is 2 when ready, 3 while playing and 5 at the
+  end (set by 0x801873D0 after the last frame). Writing 5 while it plays makes the scene end the usual way: the file
+  stops streaming at once and the game goes on as after the last frame (tested with DmCh1110_01, skipped 8 seconds
+  in, back to the park with no hang).
+- The hold counts in real time from a press made during the scene, so a button held from the scene before does not
+  skip it. The buttons come from `input::held`, the device without the test and blocking side effects of `sample`.
+- While held, `wp::hint` draws a small box with "Hold to skip" and a gauge in the bottom right corner (both
+  renderers, above the game and the statistics, below the options menu); the image is made again only when the
+  gauge moves by a 32nd.
+- Tests: `WP_MOVIE=n` with `WP_ATTRACTION=1,8` gives the scene parameter `Movie` instead of `AttractionId`, which
+  starts movie `n` of the table at 0x80468C28 from the park (2 is DmCh1110_01).
+
+## Skipping story scenes
+
+- The story's scenes in the park (the Reshiram and Zekrom intro of a new game, Pikachu's run to the cave) are event
+  scripts, not videos: no scene change, the game stays in scene 0. No flag for "a script holds the player" was found
+  (`nsNile::nsEvent::EventManager`, vtable 0x80439304, its message handler 0x8004E5F0 was never called during the
+  intro; two `EventScript`s, vtable 0x80439628, are built once by a pool).
+- What tells them apart is the HUD. `LayoutDraw` (0x8013CB40) is called for every layout each frame, shown or not;
+  it returns at once when the byte at +0x2C is 0. Visible HUD layouts logged per half second: the Reshiram and Zekrom
+  intro hides MnFdMap from start to end; Pikachu's run shows MnEvFrame (the black bars) with MnFdMap; free play shows
+  MnFdMap alone; reading a sign keeps MnFdMap. So a story scene is the park scene with MnEvFrame shown, or with
+  MnFdMap hidden for over 60 steps, and no question (MnFdYesNoButton, MnFdList, MnFdListQuiz) nor battle window
+  (MnFdBattleWindow) shown. In free play + opens the PokePark Pad, which stops the scene manager: no hint there (the
+  user saw "Hold to fast-forward" when opening the Pad with the earlier fast-forward, usable anywhere).
+- `skip_scene` (from `SceneManagerRunBegin`): + held for a second in such a scene starts a skip, which ends with that
+  scene, so each one is skipped on its own (user wish: stop right after the Reshiram and Zekrom scene, Pikachu's run
+  is another): a scene started without the minimap ends when MnFdMap shows again, one started with the bars when
+  MnEvFrame is gone for 10 steps; also on a question or a battle window (the player answers, + held again goes on),
+  off the park scene, or after 3 minutes.
+- During a skip the picture is hidden (`gx::set_screen_hidden`), draws and copies are dropped
+  (`gx::set_drawing_skipped`, the FIFO is still read), the sound is silenced (`audio::set_silenced`), the input alarm
+  gets a sixteenth of its period through the game's setter (0x8000efa0, as the boot speed-up) and the emulated
+  retrace runs 4 times faster (`set_retrace_speed`). The game does at most 10 logic steps per retrace: with the
+  alarm alone, 16 times faster gave 480 steps a second and 64 times 600; with the retrace too, 960. Drawing dropped
+  took the intro from 14 to 10.5 seconds, the retrace to 5.5; 32 times (retrace 8) gave 5.2 seconds, the rest being
+  waits in real time, so 16 stays. 64 times once left a bubble unconfirmed.
+- Pages: the message window's update (0x801482B0, hooked as `MessageUpdate`, r3 = the window; the writer step's
+  caller) waits in state 3 (+0x0C) at the end of a page until bit 0x04 of +0x3A is set, then goes on. That bit is set
+  while skipping. Closing the window is done by the script reading the controller, so while a window waited (state
+  3, or 0 once written) within the last two steps, `input::set_auto_confirm` taps A and 2 (2 is what the sideways
+  Wii Remote confirms with; the auto confirm takes its buttons).
+- Tested from a new game (slot 2): + held 3 s from 20.5 s skipped the intro from the fire to the first frame of
+  Pikachu's run (22.1 to 27.4 s, about 50 s of scene); + held again at 30 s skipped the run up to Piplup's "I've
+  been waiting, Pikachu!", left to the player; 2 pressed then went on to the tutorial box and free play. + held 4 s in
+  Cove Town opened the Pad, no skip.
+
+## Skip transitions
+
+- User report: the skip gauge was not smooth and the picture cut abruptly. The gauge was an image remade by the game
+  thread in 32 steps, at the game's own rate. `hint::hold` and `hint::busy` now keep a start time and `hint::take`,
+  called at each presented image, works out the step (240 steps for the hold, a sliding bar looping every 1.2 s while
+  skipping), so both move at the display rate. The hold is 0.8 s instead of 1 s.
+- Since the GPU thread now redraws the box too, `hint::refresh` publishes a drawn image only if the wanted box is still
+  the same once it is drawn (user report: "Skipping the scene" stayed after the skip: the game thread hid it while the
+  GPU thread was drawing a moved bar, which then showed the box again with nothing left to hide it).
+- `gx::set_veil(level, seconds, delay)` fades the presented picture to black: `present_view` (and the OpenGL present)
+  multiply brightness and saturation by `1 - level`, eased with a smoothstep. While the veil is on or moving,
+  `present_frame` shows the last frame again even without a new one, so the frozen picture fades during a skip. Holding
+  dims it to 0.35 over the hold, a skip fades it to black in 0.35 s, the end of a story scene skip fades back in over
+  0.6 s; a skipped video fades in again when its scene is over (0.35 s later), or after 4 s at most.
+- Faster skips were tried and dropped: the scene runs about 940 game steps a second, which is the input alarm at 16
+  times; 32 times (retrace 8) took 19 s for the intro instead of 5.5, 64 times hung. Running the audio DMA and the DSP
+  4 times faster did not help (the script does not wait on sounds). A real skip would need the event script
+  interpreter (vtable 0x80439628) to finish its waits at once.
+
+## Button icons
+
+- `game/prompts.cpp`, `game.button_icons` (Game tab, live, on by default). Idea from the rival PP2 recomp
+  (`hle_prompts.c`); its icons are Icons8 pictures, so ours are drawn by code (distance fields: rings, keycaps,
+  lines, the PlayStation shapes, a mouse, a stick, plus key names in the Heavy font).
+- Text: the game writes a button with an MSBT tag that draws a glyph of its font, U+E041 to U+E048 (+ Control Pad,
+  A, B, HOME, +, -, 1, 2). `ResFontBase::SetResourceBuffer` (0x80277E30 here, 0x80277510 in the US game, r4 = the
+  font, already RFNU) is hooked as `FontResource`; the font's TGLP gives the I4 sheets (the main font: 40x47 cells,
+  baseline 38, three a row, the buttons from glyph 195, 35 columns drawn), CMAP the glyphs and CWDH their width.
+  Each button glyph is kept and redrawn as a square icon up to the baseline in 16 grey levels.
+- Pictures: `TPLBind` (0x8031EBC0 here, 0x8031E2A0 in the US game) is hooked as `TextureBind`. Two CI8 / RGB5A3
+  textures show the 2 button: the action bubble (`ActionWin.tpl`, 110x71, 80 colours) and the title's "Press"
+  (`StartButtonTwo.tpl`, 290x34, 64 colours). Their words change with the language, so the disc is found in the
+  picture: the bubble's by its opaque greys darker than 160 (54, 23, radius 10 in all five languages), the title's
+  as the rightmost opaque column, a disc as tall as the picture (English 258, French 238). The disc is wiped and the
+  icon drawn in the bubble's ring grey, or for the title white with a one pixel grey edge like its words, each pixel
+  mapped to the nearest palette colour. A keycap's corners reach 13.9 pixels from the bubble's disc center, past the
+  wiped circle (11.5): those pixels are drawn over the bubble's own colour, so Space's outline is no longer cut at
+  the corners (user report; checked in the dumped `ActionWin` texture).
+- Which icon: the keyboard's first key for the action (`input::bindings`), or with a pad (`input::gamepad_in_use`)
+  the first combo of `padmap::current_mapping` in the family shown (`gamepad::shown_family`). Move is the arrow keys
+  (four arrows), other keys as four small keycaps, or the left stick on a pad. Both are read again each frame from
+  `SceneManager` run begin, so changes in the options menu show at once; the drawing is redone only when the
+  description of the eight icons changes. A real Wii Remote (`real_wiimote::present`) keeps the game's glyphs.
+- Not redrawn: `KeyButton` (the menus' button bar) and `FukidashiMini`, whose spots are not mapped.
+- Tests: `SED_SETTINGS` in `run.sh` changes the settings for one run; `two=F,Enter` showed F on the title.
+
+## HD textures
+
+- The texture pack support follows Dolphin's names (`tex1_WxH[_m]_<xxh64>[_<tlut>|_$]_<format>.png`, `_mipN` for
+  levels, `_arb` accepted): `video.dump_textures` writes each texture the game uses to `game/textures/dump`, and
+  `video.custom_textures` loads any PNG of that name found under `game/textures/load` (subfolders too, read at start).
+  A replacement can be any size; without its own `_mipN` files the mipmaps are generated.
+- Dumping wrote each PNG on the emulation thread, and the title video gives a new 320x224 and 640x448 intensity
+  texture each frame: the user's dump held 8223 of them (4.5 GB) and some 50 real textures, the title ran at 100 fps
+  and the game froze at launch. The PNGs are now written by one thread of `custom_textures::dump`, shared by both
+  renderers, and an intensity (I4, I8) size seen over 16 times is not dumped, as `tools/hd_textures.py` skips it.
+- `tools/hd_textures.py` (also in the setup's sources) makes the larger copies: it downloads Real-ESRGAN ncnn Vulkan
+  0.2.5.0 (BSD-3-Clause, checked by SHA-256) into `toolchain/realesrgan` on first use, picks the dumped textures
+  without mipmaps (the menus, the map, the HUD and the 2D pictures; the 3D world's textures have mipmaps and are left
+  out unless `--all`), at least 8 pixels a side, that have no copy in `load` yet (`--again` redoes them), enlarges
+  them 4x (or 2x with `--scale 2`) with `realesr-animevideov3` (`--model general` uses `realesrgan-x4plus`, 4x only)
+  and writes them to `game/textures/load/hd`. The textures stay on the player's computer; the game's own pictures
+  are never distributed.
+- The first model, `realesrgan-x4plus-anime`, smeared the minimap's one pixel lines and checkered squares into blots
+  (user report: the HD map was badly made; the Cove Town map is a C4 160x160); `realesr-animevideov3` keeps them and
+  draws the menus, the font and the 2D pictures about as well. The 16 pixel minimum left out the title's copyright
+  line (IA4 554x15).
+- Video frames are left out: the movies are decoded into I8 textures (formats 0 and 1) of one size, a new name per
+  picture (576 of them, 320x224 and 640x448, after the title and the intro). A size and intensity format seen more
+  than 16 times counts as video.
+- Real-ESRGAN ncnn cuts each picture into tiles (200 pixels on the RTX 4070, chosen from the video memory) and loses
+  the graphics card (`vkQueueSubmit failed -4`, VK_ERROR_DEVICE_LOST, `nvlddmkm` event 153, the screen flickers) when
+  a tile is under about 12 pixels on a side: a 10x10 or 128x8 texture, or a 201 pixel wide one whose last tile is 1
+  pixel. Every picture after it in the same run comes out wrong, mostly black with a few rows of noise rather than
+  blank (85 to 90% of a run of 1000). Found by running single pictures, game closed: 8 and 10 pixel sides fail, 12,
+  14, 16, 17 pass, 201x56 fails while 200x56 and 199x56 pass. Not the ncnn version (upscayl-bin 20251207 fails the
+  same), not the game running, not alpha. `-t 128` failed for the same reason with other sizes. The tool now passes
+  `-t 200` and pads every side with copies of its edge pixels so that `side % 200` is 0 or at least 16, then crops
+  the output: the 978 textures that failed went through in one run of 4.4 s with no error.
+- Opaque textures are given as RGB (the tool reads and writes PNG with `zlib`, the setup's Python has no Pillow),
+  fully transparent ones are left out, and an output that is entirely zero is redone alone. The game reads RGB PNG
+  files through WIC.
+- Gray formats (I4, I8, IA4, IA8): the game decodes I4 and I8 as (v, v, v, v). Real-ESRGAN sharpened the colour but
+  not the alpha (the sparkles under the title logo became hard white dots) and drew colour noise on one pixel line
+  patterns. They are now given as gray, the output is turned back to gray (the mean of R, G and B) with alpha equal
+  to it for I4 and I8, and one that drifts from the original (mean error over 12, or over 28 on the pixels that show)
+  keeps its original look. That leaves out the 256x256 I4 sparkle animation frames, which every model redraws as
+  sharp crosses or moves.
+- Use: turn on "Dump textures", visit the menus and places wanted, quit, run `python tools/hd_textures.py` from the
+  game's folder, turn on "Custom textures" and start the game again.
+- Tested: a dump of the title, menus, intro and Cove Town (1453 files) gave 130 textures in 6.5 s, none blank; in the
+  game at 3x the title logo, the save menus, the action bubble and the minimap are sharp and Oshawott is unchanged.
+
+### "Make every texture HD" (Options > Advanced)
+
+- `gx::disc_textures::export_flat` reads every texture without mipmaps from the game's files (LZ11, U8, TPL, BRRES,
+  RFNT) into `game/textures/disc` under the names the game gives them (2784 textures; 246 of 255 names known from
+  dumps match). `hd_textures::start` runs on its own thread: it exports, then runs `tools/hd_textures.py --source
+  game/textures/disc --model <m>` with the setup's Python (`python/python.exe`) or the system's, in a job object that
+  kills it when the game closes, and reads its output for the progress.
+- After each run of the tool, `check` compares every file of `load/hd` with its original (`hd_textures::matches`:
+  the larger picture averaged back to the original size, colour error weighted by alpha at most 30 and at most 2% of
+  the pixels off by more than 64), deletes the wrong ones and runs the tool again on what is missing, one round per
+  model: `realesr-animevideov3`, `realesrgan-x4plus`, `realesrgan-x4plus-anime`. What none of them drew right is
+  written to `load/hd/kept.txt` and left out of later runs (user report: three more rounds for the same 40 on each
+  press); deleting the folder starts over. The other models
+  rescued 22 of 62 textures the first one drew wrong. About 40 never pass (sparkle frames, one pixel lines, colour
+  ramps) and keep their original look; a plain enlargement of them would look the same in the game.
+- Each copy that passes is then kept within its original's colours (`hd_textures::keep_in_range`): every channel of
+  a larger pixel is held between the lowest and highest value of the 3x3 original pixels around it. Real-ESRGAN
+  turned faint dots of the title logo's black band (24 of 255 under the letters of WONDERS BEYOND, C8 378x66) into
+  white dots, and drew halos past the edges; the box-average check above cannot see either. Edges stay sharp, since
+  both sides of an edge are in the 3x3 range. A copy with more than 10% of its visible pixels moved by over 64 is
+  wrong and made again: that caught two noise pictures left by the old graphics card resets, which averaged back to
+  their dark originals. The corrected copies are written with WIC's PNG encoder (`custom_textures::write_png`;
+  `video::save_png_rgba` does not compress), on half the processor threads (at most 8): 2712 of 2726 copies changed,
+  12 s, and the folder went from about 950 MB to 590 MB.
+- The minimap (Cove Town: C4 160x160 `tex1_160x160_debc1fed1fbb8e68_aae87f63a6f2b704_8`) does use its HD copy (tinted
+  red in a test run, the minimap turned red), but it is drawn at about 2.3 screen pixels per texel at 3x, and its
+  outline has one texel steps in the original drawing that every model keeps, so it looks only a little sharper.
+  `realesrgan-x4plus` and `realesrgan-x4plus-anime` smooth the steps no better and blur the small squares.
+- The menu row shows the step and counts, the help line and a box in the corner of the screen (`hint::note`, below a
+  skip hint) show the step out of 4, how many are done, empty and redone, wrong and made again, the time left, and the
+  error on failure. The box stays 30 s after the end.
+- On the user's RTX 4070: the full job takes under 2 minutes, `game/textures/load/hd` holds 2726 textures, about
+  600 MB. The work folders (`disc`, `enlarging`) are removed at the end; closing the game mid-way leaves them until the
+  next run.
 
 ## Bug recorder and hang report
 

@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <deque>
+#include <atomic>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -67,9 +68,10 @@ struct SpeakerChannel {
 };
 SpeakerChannel g_speakers[kSpeakerChannels];
 uint32_t g_source_rate = 32000;
+std::atomic<bool> g_silenced{false};
 bool muted() {
     static const settings::LiveFlag value("audio.mute", "WP_MUTE");
-    return value();
+    return value() || g_silenced.load(std::memory_order_relaxed);
 }
 std::FILE* g_dump = nullptr;
 uint32_t g_dump_frames = 0;
@@ -350,6 +352,10 @@ void output_thread() {
 }
 #endif
 
+}
+
+void set_silenced(bool silenced) {
+    g_silenced = silenced;
 }
 
 void update() {

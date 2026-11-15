@@ -49,8 +49,10 @@ using Clock = wp::FastClock;
 constexpr uint32_t kCurrentThread = 0x800000E4;
 std::atomic<int64_t> g_idle_nanoseconds{0};
 
+std::atomic<uint32_t> g_retrace_speed{1};
+
 std::chrono::microseconds retrace_period() {
-    return (rd16(kDisplayConfig) & kFormatMask) == kFormatPal ? kPalPeriod : kNtscPeriod;
+    return ((rd16(kDisplayConfig) & kFormatMask) == kFormatPal ? kPalPeriod : kNtscPeriod) / g_retrace_speed.load(std::memory_order_relaxed);
 }
 
 Clock::time_point g_next_retrace = Clock::now() + kPalPeriod;
@@ -152,6 +154,10 @@ double idle_share() {
     previous = now;
     double idle = static_cast<double>(g_idle_nanoseconds.exchange(0));
     return elapsed > 0.0 ? std::min(1.0, idle / elapsed) : -1.0;
+}
+
+void set_retrace_speed(uint32_t speed) {
+    g_retrace_speed = std::max(1u, speed);
 }
 
 void interrupt_left() {

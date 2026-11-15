@@ -35,6 +35,7 @@ std::atomic<int64_t> g_wheel_up{0};
 std::atomic<int64_t> g_wheel_down{0};
 std::atomic<bool> g_blocked{false};
 std::atomic<bool> g_auto_confirm{false};
+std::atomic<uint32_t> g_auto_confirm_buttons{kButtonA};
 std::atomic<bool> g_gamepad_in_use{false};
 constexpr float kPadAimMove = 0.03f;
 constexpr float kStickAim = 0.2f;
@@ -412,12 +413,20 @@ Sample device_sample(uint32_t channel) {
     return result;
 }
 
-void set_auto_confirm(bool enabled) {
+void set_auto_confirm(bool enabled, uint32_t buttons) {
+    g_auto_confirm_buttons = buttons;
     g_auto_confirm = enabled;
 }
 
 bool gamepad_in_use() {
     return g_gamepad_in_use;
+}
+
+uint32_t held(uint32_t channel) {
+    if (g_blocked.load()) {
+        return 0;
+    }
+    return device_sample(channel).buttons & ~kMotionSideways;
 }
 
 void set_blocked(bool blocked) {
@@ -441,7 +450,7 @@ Sample sample(uint32_t channel) {
         g_release_wait[channel] = false;
     }
     if (channel == 0 && g_auto_confirm.load() && now_ms() % kConfirmPeriod < kConfirmLength) {
-        result.buttons |= kButtonA;
+        result.buttons |= g_auto_confirm_buttons.load();
     }
     if (channel == 0) {
         free_camera::note_buttons(result.buttons);

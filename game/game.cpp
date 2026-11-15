@@ -5,9 +5,13 @@
 #include <vector>
 
 #include "attractions.h"
+#include "prompts.h"
+#include "wp/audio.h"
 #include "wp/cpu.h"
 #include "wp/game.h"
 #include "wp/gx.h"
+#include "wp/gx_render.h"
+#include "wp/hint.h"
 #include "wp/disc.h"
 #include "wp/frame_pacing.h"
 #include "wp/free_camera.h"
@@ -15,6 +19,7 @@
 #include "wp/input.h"
 #include "wp/log.h"
 #include "wp/memory.h"
+#include "wp/runtime.h"
 #include "wp/settings.h"
 #include "lookup.h"
 
@@ -543,6 +548,180 @@ void without_interrupts(Cpu& c, HleFunction original) {
     c.msr |= enabled;
 }
 
+constexpr double kWorldFar = 2000.0;
+constexpr double kPictureWidth = 640.0;
+constexpr double kPictureHeight = 456.0;
+constexpr double kWidestFieldOfView = 180.0;
+constexpr double kDegreesPerHalfRadian = 360.0 / 3.14159265358979323846;
+
+void culling_frustum(Cpu& c, HleFunction original) {
+    gx::render::Canvas canvas = gx::render::shared_canvas();
+    if ((canvas.margin_x != 0 || canvas.margin_y != 0) && c.f[4] >= kWorldFar && c.f[1] > 0.0 && c.f[1] < kWidestFieldOfView) {
+        double wide = (kPictureWidth + 2.0 * canvas.margin_x) / kPictureWidth;
+        double tall = (kPictureHeight + 2.0 * canvas.margin_y) / kPictureHeight;
+        c.f[1] = std::atan(std::tan(c.f[1] / kDegreesPerHalfRadian) * tall) * kDegreesPerHalfRadian;
+        c.f[2] *= wide / tall;
+    }
+    original(c);
+}
+
+constexpr uint32_t kWriterState = 0x0C;
+constexpr uint32_t kWriting = 1;
+constexpr int kPageAtOnce = 4000;
+constexpr uint32_t kWriterSound = 0xC4;
+constexpr uint32_t kNoWriterSound = 0xFFFFFFFF;
+
+void dialogue_writer_step(Cpu& c, HleFunction original) {
+    static const settings::LiveNumber speed("game.text_speed", "WP_TEXT_SPEED");
+    uint32_t writer = c.r[3];
+    int steps = speed() > 0 ? speed() : kPageAtOnce;
+    original(c);
+    uint32_t sound = rd32(writer + kWriterSound);
+    bool silenced = false;
+    while (--steps > 0 && c.r[3] == kWriting && rd32(writer + kWriterState) == kWriting) {
+        uint32_t voice = rd32(writer + kWriterSound);
+        if (voice != kNoWriterSound || !silenced) {
+            sound = silenced ? voice : sound;
+            wr32(writer + kWriterSound, kNoWriterSound);
+            silenced = true;
+        }
+        c.r[3] = writer;
+        original(c);
+    }
+    if (silenced) {
+        uint32_t voice = rd32(writer + kWriterSound);
+        wr32(writer + kWriterSound, voice != kNoWriterSound ? voice : sound);
+    }
+}
+
+constexpr uint32_t kMoviePlayer = 0x804cf758;
+constexpr uint32_t kMovieState = 0x35;
+constexpr uint8_t kMoviePlaying = 3;
+constexpr uint8_t kMovieEnded = 5;
+constexpr uint32_t kMovieSceneStarted = 0x1c;
+constexpr uint32_t kSkipButtons = input::kButtonA | input::kButtonPlus;
+constexpr int64_t kSkipHoldMs = 800;
+constexpr float kChargeVeil = 0.35f;
+constexpr double kVeilOut = 0.35;
+constexpr double kVeilIn = 0.6;
+constexpr double kVeilRelease = 0.2;
+constexpr int64_t kMovieVeilLongestMs = 4000;
+
+struct MovieSkip {
+    uint32_t scene = 0;
+    bool armed = false;
+    int64_t since = 0;
+    bool charging = false;
+};
+
+MovieSkip g_movie_skip;
+int64_t g_movie_veiled = 0;
+
+void lift_movie_veil(double delay) {
+    if (g_movie_veiled != 0) {
+        g_movie_veiled = 0;
+        gx::set_veil(0.0f, kVeilIn, delay);
+    }
+}
+
+int64_t steady_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void movie_scene_update(Cpu& c, HleFunction original) {
+    static const settings::LiveFlag enabled("game.skip_movies", "WP_SKIP_MOVIES");
+    MovieSkip& skip = g_movie_skip;
+    uint32_t scene = c.r[3];
+    if (scene != skip.scene) {
+        if (skip.charging) {
+            gx::set_veil(0.0f, kVeilRelease);
+        }
+        lift_movie_veil(kVeilOut);
+        skip = MovieSkip{};
+        skip.scene = scene;
+    }
+    bool held = (input::held(0) & kSkipButtons) != 0;
+    if (!held) {
+        skip.armed = true;
+        skip.since = 0;
+    } else if (skip.armed && skip.since == 0) {
+        skip.since = steady_ms();
+    }
+    bool playing = rd8(scene + kMovieSceneStarted) != 0 && rd8(kMoviePlayer + kMovieState) == kMoviePlaying;
+    int64_t held_for = skip.since != 0 ? steady_ms() - skip.since : 0;
+    if (!enabled() || !playing || skip.since == 0) {
+        if (skip.charging) {
+            skip.charging = false;
+            gx::set_veil(0.0f, kVeilRelease);
+        }
+        hint::hide();
+    } else if (held_for >= kSkipHoldMs) {
+        log::write("game", "movie skipped");
+        wr8(kMoviePlayer + kMovieState, kMovieEnded);
+        skip.armed = false;
+        skip.since = 0;
+        skip.charging = false;
+        gx::set_veil(1.0f, kVeilOut);
+        g_movie_veiled = steady_ms();
+        hint::hide();
+    } else {
+        if (!skip.charging) {
+            skip.charging = true;
+            gx::set_veil(kChargeVeil, (kSkipHoldMs - held_for) / 1000.0);
+        }
+        hint::hold("hint.skip_movie", kSkipHoldMs / 1000.0, held_for / 1000.0);
+    }
+    original(c);
+    if (c.r[3] != 0) {
+        hint::hide();
+        lift_movie_veil(kVeilOut);
+    }
+}
+
+constexpr uint32_t kMessageState = 0x0C;
+constexpr uint32_t kMessageWaiting = 3;
+constexpr uint32_t kMessageDone = 0;
+constexpr uint32_t kMessageFlags = 0x3A;
+constexpr uint8_t kMessageConfirmed = 0x04;
+constexpr uint64_t kSkipSpeed = 16;
+constexpr uint32_t kSkipRetraceSpeed = 4;
+constexpr int64_t kSkipLongestMs = 180000;
+
+struct SceneSkip {
+    bool armed = false;
+    int64_t since = 0;
+    bool charging = false;
+    bool active = false;
+    int64_t started = 0;
+    bool hinted = false;
+    bool confirming = false;
+    uint64_t normal = 0;
+    uint64_t step = 0;
+    uint64_t message_waits = 0;
+};
+
+SceneSkip g_scene_skip;
+
+void set_input_period(Cpu& c, uint64_t period) {
+    write_u64(kInputAlarm + kAlarmPending, period);
+    uint32_t saved = c.r[3];
+    c.r[3] = kInputAlarm;
+    call(c, kApplyAlarmPeriod);
+    c.r[3] = saved;
+}
+
+void message_update(Cpu& c, HleFunction original) {
+    uint32_t message = c.r[3];
+    uint32_t state = rd32(message + kMessageState);
+    if (g_scene_skip.active && state == kMessageWaiting) {
+        wr8(message + kMessageFlags, static_cast<uint8_t>(rd8(message + kMessageFlags) | kMessageConfirmed));
+    }
+    if (state == kMessageWaiting || state == kMessageDone) {
+        g_scene_skip.message_waits = g_scene_skip.step;
+    }
+    original(c);
+}
+
 void temp_pool_alloc(Cpu& c, HleFunction original) {
     uint32_t pool = c.r[3];
     uint32_t index = c.r[4];
@@ -568,6 +747,82 @@ void temp_pool_alloc(Cpu& c, HleFunction original) {
 
 }
 
+bool skip_scene(Cpu& c, bool scene, bool over) {
+    static const settings::LiveFlag enabled("game.skip_movies", "WP_SKIP_MOVIES");
+    SceneSkip& state = g_scene_skip;
+    int64_t now = steady_ms();
+    if (g_movie_veiled != 0 && now - g_movie_veiled >= kMovieVeilLongestMs) {
+        lift_movie_veil(0.0);
+    }
+    bool active = state.active;
+    if (active && (over || now - state.started >= kSkipLongestMs)) {
+        active = false;
+    }
+    bool usable = !active && scene && enabled() && !g_boot_fast && disc::seconds_since_read("/Movie/") >= 0.5;
+    bool held = usable && (input::held(0) & input::kButtonPlus) != 0;
+    if (!held) {
+        state.armed = usable;
+        state.since = 0;
+    } else if (state.armed && state.since == 0) {
+        state.since = now;
+    }
+    int64_t held_for = state.since != 0 ? now - state.since : 0;
+    if (state.since != 0 && held_for >= kSkipHoldMs) {
+        active = true;
+        state.started = now;
+        state.since = 0;
+        state.armed = false;
+    }
+    bool charging = !active && state.since != 0;
+    if (charging != state.charging) {
+        state.charging = charging;
+        if (charging) {
+            gx::set_veil(kChargeVeil, (kSkipHoldMs - held_for) / 1000.0);
+        } else if (!active) {
+            gx::set_veil(0.0f, kVeilRelease);
+        }
+    }
+    if (active != state.active) {
+        state.active = active;
+        gx::set_veil(active ? 1.0f : 0.0f, active ? kVeilOut : kVeilIn);
+        gx::set_screen_hidden(active);
+        gx::set_drawing_skipped(active);
+        set_retrace_speed(active ? kSkipRetraceSpeed : 1);
+        audio::set_silenced(active);
+        log::write("game", active ? "cutscene skip" : "cutscene skip ends");
+    }
+    state.step++;
+    bool confirming = active && state.step - state.message_waits <= 2;
+    if (confirming != state.confirming) {
+        state.confirming = confirming;
+        input::set_auto_confirm(confirming, input::kButtonA | input::kButtonTwo);
+    }
+    uint64_t period = read_u64(kInputAlarm + kAlarmPeriod);
+    if (active && state.normal == 0 && period != 0) {
+        state.normal = period;
+    }
+    if (state.normal != 0) {
+        uint64_t wanted = active ? state.normal / kSkipSpeed : state.normal;
+        if (period != wanted) {
+            set_input_period(c, wanted);
+        }
+        if (!active) {
+            state.normal = 0;
+        }
+    }
+    if (active) {
+        hint::busy("hint.skipping_scene");
+        state.hinted = true;
+    } else if (state.since != 0) {
+        hint::hold("hint.hold_skip_scene", kSkipHoldMs / 1000.0, held_for / 1000.0);
+        state.hinted = true;
+    } else if (state.hinted) {
+        hint::hide();
+        state.hinted = false;
+    }
+    return active;
+}
+
 HookFunction hook(const char* name) {
     static const struct {
         const char* name;
@@ -578,7 +833,9 @@ HookFunction hook(const char* name) {
                    {"FindResourceByNumber", find_resource_by_number},
                    {"AddSceneParameter", add_scene_parameter}, {"PickScene", pick_scene}, {"SceneManagerRunBegin", scene_manager_run_begin},
                    {"DanceFrame", dance_frame}, {"DanceFrameSecondPart", dance_frame_second_part},
-                   {"DanceJudge", dance_judge}};
+                   {"DanceJudge", dance_judge}, {"CullingFrustum", culling_frustum},
+                   {"DialogueWriterStep", dialogue_writer_step}, {"MovieSceneUpdate", movie_scene_update},
+                   {"FontResource", font_resource}, {"TextureBind", texture_bind}, {"MessageUpdate", message_update}, {"LayoutDraw", layout_draw}};
     for (const auto& entry : kHooks) {
         if (std::strcmp(entry.name, name) == 0) {
             return entry.function;

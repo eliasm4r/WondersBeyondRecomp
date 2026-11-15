@@ -1,4 +1,5 @@
 #include "wp/custom_textures.h"
+#include "wp/video.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -9,9 +10,14 @@
 
 #include <algorithm>
 #include <cctype>
+#include <condition_variable>
 #include <cstdio>
 #include <cstring>
+#include <deque>
+#include <mutex>
 #include <system_error>
+#include <thread>
+#include <unordered_set>
 
 namespace wp::gx::custom_textures {
 
@@ -23,6 +29,45 @@ constexpr uint64_t kPrime3 = 0x165667B19E3779F9ull;
 constexpr uint64_t kPrime4 = 0x85EBCA77C2B2AE63ull;
 constexpr uint64_t kPrime5 = 0x27D4EB2F165667C5ull;
 constexpr uint32_t kMaxDimension = 16384;
+constexpr uint32_t kVideoFrames = 16;
+
+struct PendingDump {
+    std::filesystem::path path;
+    std::vector<uint32_t> pixels;
+    uint32_t width = 0;
+    uint32_t height = 0;
+};
+
+struct Dumper {
+    std::mutex mutex;
+    std::condition_variable wake;
+    std::deque<PendingDump> queue;
+    std::unordered_set<std::string> names;
+    std::unordered_map<std::string, uint32_t> intensity_sizes;
+    bool started = false;
+
+    void run() {
+        for (;;) {
+            PendingDump job;
+            {
+                std::unique_lock<std::mutex> lock(mutex);
+                wake.wait(lock, [this] { return !queue.empty(); });
+                job = std::move(queue.front());
+                queue.pop_front();
+            }
+            std::error_code error;
+            std::filesystem::create_directories(job.path.parent_path(), error);
+            if (!std::filesystem::exists(job.path, error)) {
+                video::save_png_rgba(job.path.string().c_str(), job.pixels, job.width, job.height);
+            }
+        }
+    }
+};
+
+Dumper& dumper() {
+    static Dumper* instance = new Dumper;
+    return *instance;
+}
 
 uint64_t rotl(uint64_t value, int count) {
     return (value << count) | (value >> (64 - count));
@@ -298,6 +343,76 @@ bool decode_png(const std::filesystem::path& path, std::vector<uint32_t>& pixels
     }
     return ok;
 #endif
+}
+
+bool write_png(const std::filesystem::path& path, const std::vector<uint32_t>& pixels, uint32_t width, uint32_t height) {
+    if (width == 0 || height == 0 || pixels.size() != static_cast<size_t>(width) * height) {
+        return false;
+    }
+#ifdef _WIN32
+    bool opaque = std::all_of(pixels.begin(), pixels.end(), [](uint32_t pixel) { return pixel >> 24 == 255; });
+    std::filesystem::path partial = path;
+    partial += ".part";
+    HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    IWICImagingFactory* factory = nullptr;
+    IWICStream* stream = nullptr;
+    IWICBitmapEncoder* encoder = nullptr;
+    IWICBitmapFrameEncode* frame = nullptr;
+    IWICBitmap* bitmap = nullptr;
+    WICPixelFormatGUID format = opaque ? GUID_WICPixelFormat24bppBGR : GUID_WICPixelFormat32bppRGBA;
+    bool ok = SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_IWICImagingFactory, reinterpret_cast<void**>(&factory))) &&
+              SUCCEEDED(factory->CreateStream(&stream)) && SUCCEEDED(stream->InitializeFromFilename(partial.wstring().c_str(), GENERIC_WRITE)) &&
+              SUCCEEDED(factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder)) &&
+              SUCCEEDED(encoder->Initialize(stream, WICBitmapEncoderNoCache)) && SUCCEEDED(encoder->CreateNewFrame(&frame, nullptr)) &&
+              SUCCEEDED(frame->Initialize(nullptr)) && SUCCEEDED(frame->SetSize(width, height)) && SUCCEEDED(frame->SetPixelFormat(&format)) &&
+              SUCCEEDED(factory->CreateBitmapFromMemory(width, height, GUID_WICPixelFormat32bppRGBA, width * 4, static_cast<UINT>(pixels.size() * 4),
+                                                         reinterpret_cast<BYTE*>(const_cast<uint32_t*>(pixels.data())), &bitmap)) &&
+              SUCCEEDED(frame->WriteSource(bitmap, nullptr)) && SUCCEEDED(frame->Commit()) && SUCCEEDED(encoder->Commit());
+    release(bitmap);
+    release(frame);
+    release(encoder);
+    release(stream);
+    release(factory);
+    if (SUCCEEDED(initialized)) {
+        CoUninitialize();
+    }
+    std::error_code error;
+    if (ok) {
+        std::filesystem::rename(partial, path, error);
+        ok = !error;
+    }
+    if (!ok) {
+        std::filesystem::remove(partial, error);
+    }
+    return ok;
+#else
+    video::save_png_rgba(path.string().c_str(), pixels, width, height);
+    return true;
+#endif
+}
+
+void dump(const std::filesystem::path& directory, const TextureName& name, const std::vector<std::vector<uint32_t>>& pixels, uint32_t width,
+          uint32_t height) {
+    Dumper& state = dumper();
+    std::string full = name.full();
+    std::lock_guard<std::mutex> lock(state.mutex);
+    if (!state.names.insert(full).second) {
+        return;
+    }
+    if (name.format == "0" || name.format == "1") {
+        uint32_t& seen = state.intensity_sizes[std::to_string(width) + "x" + std::to_string(height) + "_" + name.format];
+        if (++seen > kVideoFrames) {
+            return;
+        }
+    }
+    for (uint32_t level = 0; level < pixels.size(); level++) {
+        state.queue.push_back({directory / (level_name(full, level) + ".png"), pixels[level], std::max(width >> level, 1u), std::max(height >> level, 1u)});
+    }
+    if (!state.started) {
+        state.started = true;
+        std::thread([&state] { state.run(); }).detach();
+    }
+    state.wake.notify_one();
 }
 
 }

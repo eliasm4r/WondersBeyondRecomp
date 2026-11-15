@@ -50,6 +50,7 @@ constexpr size_t kFlushThreshold = 1u << 20;
 constexpr size_t kMaxQueuedBytes = size_t{64} << 20;
 std::atomic<size_t> g_queued_bytes{0};
 std::atomic<bool> g_screen_hidden{false};
+std::atomic<bool> g_drawing_skipped{false};
 
 void publish_performance(double fps, double game_fps, double seconds, double game_thread, double gpu_thread) {
     static const settings::LiveNumber scale("video.scale", "WP_SCALE");
@@ -105,6 +106,7 @@ size_t private_memory_mb() {
 }
 constexpr uint8_t kCommandNop = 0x00;
 constexpr uint8_t kCommandLoadCp = 0x08;
+constexpr uint8_t kCpRightAnchor = 0xF0;
 constexpr uint8_t kCommandLoadXf = 0x10;
 constexpr uint8_t kCommandCallList = 0x40;
 constexpr uint8_t kCommandMetrics = 0x44;
@@ -150,6 +152,16 @@ constexpr uint32_t kArrayAddressMask = 0x1FFFFFFF;
 constexpr float kViewportOffset = 342.0f;
 constexpr float kEfbWidth = 640.0f;
 constexpr float kEfbHeight = 528.0f;
+constexpr float kPictureHeight = 456.0f;
+constexpr float kWorldFar = 2000.0f;
+constexpr float kLayoutScale = 2.4142136f;
+constexpr float kLayoutNear = -580.5f;
+constexpr float kLayoutFar = -578.3f;
+constexpr float kFlatDepth = 0.001f;
+constexpr float kScreenAspect = 9.0f / 16.0f;
+constexpr float kScreenAspectSlack = 0.01f;
+constexpr uint32_t kSmallDraw = 4;
+constexpr uint32_t kMeasuredVertices = 64;
 constexpr float kDepthRange = 16777215.0f;
 constexpr int kMaxLoggedCopies = 60;
 constexpr uint32_t kTexCoordCount = 8;
@@ -223,12 +235,12 @@ void note_register(int kind, uint32_t index, uint32_t value) {
 
 bool g_log_draws = g_log_level != nullptr && g_log_level[0] == '2';
 int g_logged_draws = 0;
+bool g_right_anchor = false;
 int g_logged_prepared = 0;
 bool g_render_enabled = std::getenv("WP_NO_RENDER") == nullptr;
 bool g_log_fps = std::getenv("WP_LOG_FPS") != nullptr;
 int g_frames = 0;
 std::chrono::steady_clock::time_point g_fps_start = std::chrono::steady_clock::now();
-std::atomic<bool> g_capture_requested{false};
 FILE* g_capture = nullptr;
 int g_capture_index = 0;
 int g_capture_draws = 0;
@@ -724,6 +736,8 @@ struct ProjectionState {
 };
 
 ProjectionState g_projection;
+float g_canvas_width = kEfbWidth;
+float g_canvas_height = kEfbHeight;
 
 void begin_projection() {
     g_projection.a = xf_float(0x1020);
@@ -931,14 +945,14 @@ void emit_line(DrawOutput& out, const Prepared& a, const Prepared& b) {
     float width = static_cast<float>(g_bp[0x22] & 0xFF) / 6.0f;
     float sx = b.vertex.x / b.vertex.w - a.vertex.x / a.vertex.w;
     float sy = b.vertex.y / b.vertex.w - a.vertex.y / a.vertex.w;
-    float dx = std::fabs(sx) * kEfbWidth;
-    float dy = std::fabs(sy) * kEfbHeight;
+    float dx = std::fabs(sx) * g_canvas_width;
+    float dy = std::fabs(sy) * g_canvas_height;
     float ox = 0.0f;
     float oy = 0.0f;
     if (dy > dx) {
-        ox = width / kEfbWidth;
+        ox = width / g_canvas_width;
     } else {
-        oy = width / kEfbHeight;
+        oy = width / g_canvas_height;
     }
     ScreenVertex a0 = shifted(a.vertex, -ox, -oy);
     ScreenVertex a1 = shifted(a.vertex, ox, oy);
@@ -959,8 +973,8 @@ void emit_point(DrawOutput& out, const Prepared& a) {
         return;
     }
     float size = static_cast<float>((g_bp[0x22] >> 8) & 0xFF) / 6.0f;
-    float ox = size / kEfbWidth;
-    float oy = size / kEfbHeight;
+    float ox = size / g_canvas_width;
+    float oy = size / g_canvas_height;
     ScreenVertex v0 = shifted(a.vertex, -ox, -oy);
     ScreenVertex v1 = shifted(a.vertex, ox, -oy);
     ScreenVertex v2 = shifted(a.vertex, ox, oy);
@@ -1767,6 +1781,157 @@ bool run_in_lists() {
     return true;
 }
 
+bool covers_picture(float left, float top, float right, float bottom) {
+    return left <= 1.0f && top <= 1.0f && right >= kEfbWidth - 1.0f && bottom >= kPictureHeight - 1.0f;
+}
+
+int canvas_kind(uint32_t count) {
+    const ProjectionState& p = g_projection;
+    float half_width = xf_float(0x101A);
+    float half_height = xf_float(0x101B);
+    float center_x = xf_float(0x101D) - kViewportOffset;
+    float center_y = xf_float(0x101E) - kViewportOffset;
+    if (!covers_picture(center_x - std::fabs(half_width), center_y - std::fabs(half_height), center_x + std::fabs(half_width), center_y + std::fabs(half_height))) {
+        return render::kInPicture;
+    }
+    bool perspective = !p.orthographic;
+    bool world = perspective && p.e != 0.0f && p.f / p.e > kWorldFar;
+    bool layout = world && std::fabs(p.c - kLayoutScale) < 1e-3f;
+    uint32_t largest = 0;
+    uint32_t total = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        largest = std::max(largest, g_run[i].count);
+        total += g_run[i].count;
+    }
+    if (world && !layout && largest > kSmallDraw) {
+        return render::kWorld;
+    }
+    int outside = world ? render::kWorld : render::kInPicture;
+    if (total == 0 || total > kMeasuredVertices) {
+        return outside;
+    }
+    float left = 1e9f;
+    float top = 1e9f;
+    float right = -1e9f;
+    float bottom = -1e9f;
+    float nearest = 1e9f;
+    float farthest = -1e9f;
+    Vertex vertex;
+    for (uint32_t i = 0; i < count; i++) {
+        const DrawJob& job = g_run[i];
+        const uint8_t* stream = job.data;
+        begin_vertex(vertex);
+        for (uint32_t k = 0; k < job.count; k++) {
+            decode_vertex(*job.layout, stream, vertex);
+            float eye[3];
+            transform_position(vertex, eye);
+            nearest = std::min(nearest, eye[2]);
+            farthest = std::max(farthest, eye[2]);
+            float x;
+            float y;
+            if (perspective) {
+                if (eye[2] >= 0.0f) {
+                    return outside;
+                }
+                x = (p.a * eye[0] + p.b * eye[2]) / -eye[2];
+                y = (p.c * eye[1] + p.d * eye[2]) / -eye[2];
+            } else {
+                x = p.a * eye[0] + p.b;
+                y = p.c * eye[1] + p.d;
+            }
+            x = center_x + x * half_width;
+            y = center_y + y * half_height;
+            left = std::min(left, x);
+            right = std::max(right, x);
+            top = std::min(top, y);
+            bottom = std::max(bottom, y);
+        }
+    }
+    bool whole = covers_picture(left, top, right, bottom);
+    int flat = whole ? render::kStretched : left <= 1.0f && right >= kEfbWidth - 1.0f ? render::kWide : render::kInPicture;
+    if (layout && nearest > kLayoutNear && farthest < kLayoutFar) {
+        return flat;
+    }
+    if (world && largest > kSmallDraw) {
+        return render::kWorld;
+    }
+    if (world) {
+        return whole && farthest - nearest <= -farthest * kFlatDepth ? render::kStretched : render::kWorld;
+    }
+    return flat;
+}
+
+bool screen_camera() {
+    const ProjectionState& p = g_projection;
+    if (p.orthographic || p.c == 0.0f || std::fabs(p.c - kLayoutScale) < 1e-3f) {
+        return false;
+    }
+    float half_width = xf_float(0x101A);
+    float half_height = xf_float(0x101B);
+    float center_x = xf_float(0x101D) - kViewportOffset;
+    float center_y = xf_float(0x101E) - kViewportOffset;
+    if (!covers_picture(center_x - std::fabs(half_width), center_y - std::fabs(half_height), center_x + std::fabs(half_width), center_y + std::fabs(half_height))) {
+        return false;
+    }
+    return std::fabs(p.a / p.c - kScreenAspect) < kScreenAspectSlack;
+}
+
+bool maps_canvas_copy() {
+    uint32_t stages = ((g_bp[0x00] >> 10) & 15) + 1;
+    for (uint32_t i = 0; i < stages; i++) {
+        uint32_t order = g_bp[0x28 + i / 2] >> (i % 2 != 0 ? 12 : 0);
+        if ((order & 0x40) == 0 || ((g_xf[0x1040 + ((order >> 3) & 7)] >> 7) & 31) != 0) {
+            continue;
+        }
+        uint32_t map = order & 7;
+        uint32_t image = g_bp[map < 4 ? 0x94 + map : 0xB4 + (map - 4)];
+        if (render::canvas_copy(0x80000000u | ((image & 0x00FFFFFF) << 5))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void fit_canvas(uint32_t count) {
+    render::Canvas canvas = render::canvas();
+    g_canvas_width = kEfbWidth + 2.0f * canvas.margin_x;
+    g_canvas_height = kEfbHeight + 2.0f * canvas.margin_y;
+    if (canvas.margin_x == 0 && canvas.margin_y == 0) {
+        render::set_canvas_kind(render::kInPicture);
+        return;
+    }
+    int kind = canvas_kind(count);
+    if ((kind == render::kStretched || kind == render::kWide) && !canvas.world) {
+        kind = render::kInPicture;
+    }
+    if (kind == render::kInPicture && canvas.world && maps_canvas_copy()) {
+        kind = render::kStretched;
+    }
+    if (kind == render::kInPicture && canvas.world && screen_camera()) {
+        kind = render::kWorld;
+    }
+    bool right_edge = kind == render::kInPicture && g_right_anchor && canvas.world;
+    render::set_canvas_kind(right_edge ? render::kRightEdge : kind);
+    float scale_x = kEfbWidth / g_canvas_width;
+    float scale_y = kEfbHeight / g_canvas_height;
+    float offset_y = 0.0f;
+    if (kind == render::kStretched) {
+        scale_x = 1.0f;
+        scale_y = (kPictureHeight + 2.0f * canvas.margin_y) / kPictureHeight * kEfbHeight / g_canvas_height;
+        offset_y = 1.0f - scale_y;
+    } else if (kind == render::kWide) {
+        scale_x = 1.0f;
+    }
+    ProjectionState& p = g_projection;
+    p.x_offset *= scale_x;
+    p.x_scale *= scale_x;
+    p.y_offset = p.y_offset * scale_y + offset_y;
+    p.y_scale *= scale_y;
+    if (right_edge) {
+        p.x_offset += 2.0f * canvas.margin_x / g_canvas_width;
+    }
+}
+
 void flush_run() {
     uint32_t count = static_cast<uint32_t>(g_run.size());
     if (count == 0) {
@@ -1780,6 +1945,7 @@ void flush_run() {
     lighting::begin(g_xf);
     begin_texture_coordinates();
     begin_projection();
+    fit_canvas(count);
     begin_colors();
     g_recording = render::interpolating();
     if (!g_log_draws && !g_capture && run_of_triangles() && (!g_recording || run_in_lists()) && render::transforms_vertices()) {
@@ -1802,7 +1968,7 @@ void flush_run() {
 }
 
 void draw_primitive(uint8_t command, const uint8_t* data, uint32_t count, const Layout& layout) {
-    if (!g_render_enabled) {
+    if (!g_render_enabled || g_drawing_skipped.load(std::memory_order_relaxed)) {
         return;
     }
     g_run.push_back({data, &layout, count, command, g_in_list});
@@ -1847,7 +2013,7 @@ void capture_frame_boundary() {
             next = comma ? comma + 1 : next + std::strlen(next);
         }
     }
-    if (!g_capture_requested.exchange(false) && !due) {
+    if (!due) {
         return;
     }
     std::error_code created;
@@ -1899,7 +2065,7 @@ std::atomic<bool> g_frame_late{false};
 void execute_copy(uint32_t value) {
     g_copy_total++;
     report_copy();
-    if (!g_render_enabled) {
+    if (!g_render_enabled || g_drawing_skipped.load(std::memory_order_relaxed)) {
         return;
     }
     if (g_capture && !(value & kCopyToFramebuffer)) {
@@ -2067,6 +2233,10 @@ void load_bp(uint32_t word) {
 
 void load_cp(uint8_t reg, uint32_t value) {
     flush_run();
+    if (reg == kCpRightAnchor) {
+        g_right_anchor = value != 0;
+        return;
+    }
     g_stats.cp_writes++;
     note_register(1, reg, value);
     if (reg == 0x50) {
@@ -2304,6 +2474,12 @@ bool linked_mode() {
     return cp_base != 0 && pi_base == cp_base;
 }
 
+void mark_right_anchor(bool on) {
+    push(kCommandLoadCp, 1);
+    push(kCpRightAnchor, 1);
+    push(on ? 1 : 0, 4);
+}
+
 void push(uint64_t value, unsigned bytes) {
     uint64_t swapped = __builtin_bswap64(value << (8 * (8 - bytes)));
     const uint8_t* data = reinterpret_cast<const uint8_t*>(&swapped);
@@ -2385,12 +2561,65 @@ void set_screen_hidden(bool hidden) {
     g_screen_hidden = hidden;
 }
 
-uint64_t frames_drawn() {
-    return g_frames_drawn.load();
+void set_drawing_skipped(bool skipped) {
+    g_drawing_skipped = skipped;
 }
 
-void request_capture() {
-    g_capture_requested = true;
+namespace {
+
+struct VeilStep {
+    float from = 0.0f;
+    float to = 0.0f;
+    std::chrono::steady_clock::time_point start{};
+    double seconds = 0.0;
+};
+
+std::mutex g_veil_mutex;
+VeilStep g_veil_before;
+VeilStep g_veil;
+
+float veil_step_at(const VeilStep& step, std::chrono::steady_clock::time_point at) {
+    if (at <= step.start) {
+        return step.from;
+    }
+    double done = step.seconds > 0.0 ? std::chrono::duration<double>(at - step.start).count() / step.seconds : 1.0;
+    if (done >= 1.0) {
+        return step.to;
+    }
+    done = done * done * (3.0 - 2.0 * done);
+    return static_cast<float>(step.from + (step.to - step.from) * done);
+}
+
+float veil_at(std::chrono::steady_clock::time_point at) {
+    return veil_step_at(at < g_veil.start ? g_veil_before : g_veil, at);
+}
+
+}
+
+void set_veil(float level, double seconds, double delay) {
+    std::lock_guard<std::mutex> lock(g_veil_mutex);
+    auto now = std::chrono::steady_clock::now();
+    auto start = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(std::max(0.0, delay)));
+    VeilStep current = now < g_veil.start ? g_veil_before : g_veil;
+    VeilStep next{veil_step_at(current, start), std::clamp(level, 0.0f, 1.0f), start, std::max(0.0, seconds)};
+    g_veil_before = current;
+    g_veil = next;
+}
+
+float veil_level() {
+    std::lock_guard<std::mutex> lock(g_veil_mutex);
+    return veil_at(std::chrono::steady_clock::now());
+}
+
+bool veil_moving() {
+    std::lock_guard<std::mutex> lock(g_veil_mutex);
+    auto now = std::chrono::steady_clock::now();
+    auto end = g_veil.start + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(g_veil.seconds));
+    return veil_at(now) > 0.0f || now < end;
+}
+
+uint64_t frames_drawn() {
+    return g_frames_drawn.load();
 }
 
 namespace {

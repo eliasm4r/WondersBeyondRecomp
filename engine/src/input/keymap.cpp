@@ -78,7 +78,6 @@ constexpr Key kKeys[] = {
 constexpr int kF1 = 0x70;
 constexpr int kF10 = 0x79;
 constexpr int kF11 = 0x7A;
-constexpr int kF12 = 0x7B;
 constexpr int kF24 = 0x87;
 
 std::string lower(const std::string& text) {
@@ -146,7 +145,7 @@ std::string key_name(int code) {
 }
 
 bool reserved(int code) {
-    return code == kF1 || code == kF10 || code == kF11 || code == kF12;
+    return code == kF1 || code == kF10 || code == kF11;
 }
 
 Parsed parse(const std::string& list) {

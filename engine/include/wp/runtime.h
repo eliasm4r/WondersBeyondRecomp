@@ -38,5 +38,6 @@ void print_guest_threads();
 std::vector<uint32_t> guest_call_chain(uint32_t stack_pointer, size_t limit);
 uint32_t symbol_address(const char* name);
 void interrupt_left();
+void set_retrace_speed(uint32_t speed);
 
 }

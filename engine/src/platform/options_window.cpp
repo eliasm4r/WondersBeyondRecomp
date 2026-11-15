@@ -8,6 +8,7 @@
 
 #include "wp/game.h"
 #include "wp/gamepad.h"
+#include "wp/hd_textures.h"
 #include "wp/input.h"
 #include "wp/keymap.h"
 #include "wp/log.h"
@@ -257,6 +258,12 @@ void menu_hover(void* window, int x, int y) {
 
 std::string poll_gamepads(void* window) {
     static Repeat repeat(kRepeating, kRepeatDelay, kRepeatInterval);
+    static hd_textures::Progress shown;
+    hd_textures::Progress job = hd_textures::progress();
+    if (g_menu.open() && (job.version != shown.version || job.seconds_left / 60 != shown.seconds_left / 60)) {
+        shown = job;
+        sync(window);
+    }
     int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
     bool focused = video::window_focused();
     if (g_menu.open() && g_menu.capturing() && g_menu.capture_kind() == Kind::Pad) {

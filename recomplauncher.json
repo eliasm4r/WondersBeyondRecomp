@@ -18,8 +18,13 @@
     "timeout": 3600
   },
   "start": {
-    "program": ["pokepark2.exe"],
+    "program": ["python/pythonw.exe"],
+    "args": ["{install}/installer/setup.py", "--start"],
     "env": { "WP_ROOT": "{install}" }
+  },
+  "exit_codes": {
+    "3": "The update was stopped before the end. It starts again the next time you play.",
+    "4": "The new version could not be built. The details are in logs/install.log in the game's folder."
   },
   "config": [
     {
@@ -54,13 +59,16 @@
     },
     {
       "id": "frame_rate", "label": "Frame rate",
-      "help": "30 or 60 as on the Wii (60 works perfectly), 45 in between. 90 and 120 add images between the game's own frames on a fast screen; experimental. Movies and cutscenes stay at 30.",
+      "help": "30 or 60 as on the Wii (60 works perfectly), 45 in between. 90 to 240 add images between the game's own frames, up to your screen's refresh rate. Movies and cutscenes stay at 30.",
       "choices": [
         { "label": "30", "set": { "video/fps": "30" } },
         { "label": "45", "set": { "video/fps": "45" } },
         { "label": "60", "set": { "video/fps": "60" } },
         { "label": "90", "set": { "video/fps": "90" } },
-        { "label": "120", "set": { "video/fps": "120" } }
+        { "label": "120", "set": { "video/fps": "120" } },
+        { "label": "144", "set": { "video/fps": "144" } },
+        { "label": "165", "set": { "video/fps": "165" } },
+        { "label": "240", "set": { "video/fps": "240" } }
       ],
       "defaults": { "video/fps": "60" }
     },
@@ -75,12 +83,16 @@
     },
     {
       "id": "shape", "label": "Picture shape",
-      "help": "Shows the game in 16:9, or in 4:3 as on an old TV.",
+      "help": "16:9 as on the Wii, or 4:3 as on an old TV. 16:10, 21:9 and 32:9 show more of the world around the picture; Fit window follows the window's shape.",
       "choices": [
-        { "label": "16:9", "set": { "system/widescreen": "1" } },
-        { "label": "4:3", "set": { "system/widescreen": "0" } }
+        { "label": "16:9", "set": { "system/widescreen": "1", "video/aspect": "16:9" } },
+        { "label": "16:10", "set": { "system/widescreen": "1", "video/aspect": "16:10" } },
+        { "label": "21:9", "set": { "system/widescreen": "1", "video/aspect": "21:9" } },
+        { "label": "32:9", "set": { "system/widescreen": "1", "video/aspect": "32:9" } },
+        { "label": "Fit window", "set": { "system/widescreen": "1", "video/aspect": "auto" } },
+        { "label": "4:3", "set": { "system/widescreen": "0", "video/aspect": "16:9" } }
       ],
-      "defaults": { "system/widescreen": "1" }
+      "defaults": { "system/widescreen": "1", "video/aspect": "16:9" }
     },
     {
       "id": "vsync", "label": "V-Sync",
@@ -113,6 +125,81 @@
       "defaults": { "video/anisotropy": "1" }
     },
     {
+      "id": "brightness", "label": "Brightness",
+      "help": "Makes the whole picture lighter or darker. 100% is the original picture.",
+      "slider": { "key": "video/brightness", "min": 50, "max": 150, "step": 5, "format": "%d" },
+      "defaults": { "video/brightness": "100" }
+    },
+    {
+      "id": "contrast", "label": "Contrast",
+      "help": "Widens or narrows the gap between the dark and the light areas. 100% is the original picture.",
+      "slider": { "key": "video/contrast", "min": 50, "max": 150, "step": 5, "format": "%d" },
+      "defaults": { "video/contrast": "100" }
+    },
+    {
+      "id": "saturation", "label": "Saturation",
+      "help": "0% is black and white, 200% gives very vivid colors. 100% is the original picture.",
+      "slider": { "key": "video/saturation", "min": 0, "max": 200, "step": 5, "format": "%d" },
+      "defaults": { "video/saturation": "100" }
+    },
+    {
+      "id": "gamma", "label": "Gamma",
+      "help": "Lightens or darkens the dark areas without burning out the light ones. 100% is the original picture.",
+      "slider": { "key": "video/gamma", "min": 50, "max": 150, "step": 5, "format": "%d" },
+      "defaults": { "video/gamma": "100" }
+    },
+    {
+      "id": "text_speed", "label": "Text speed",
+      "help": "How fast dialogue is written: as in the game, 2 or 3 times faster, or a whole page at once.",
+      "choices": [
+        { "label": "Original", "set": { "game/text_speed": "1" } },
+        { "label": "2x", "set": { "game/text_speed": "2" } },
+        { "label": "3x", "set": { "game/text_speed": "3" } },
+        { "label": "Instant", "set": { "game/text_speed": "0" } }
+      ],
+      "defaults": { "game/text_speed": "1" }
+    },
+    {
+      "id": "skip_cutscenes", "label": "Skip cutscenes",
+      "help": "Hold A or + (Start, Tab) for a second to skip a video. During a story scene, hold + for a second to skip it; it stops at questions so you can answer.",
+      "choices": [
+        { "label": "Off", "set": { "game/skip_movies": "0" } },
+        { "label": "On", "set": { "game/skip_movies": "1" } }
+      ],
+      "defaults": { "game/skip_movies": "1" }
+    },
+    {
+      "id": "button_icons", "label": "Button icons",
+      "help": "Shows the keys and buttons you set in Controls instead of the Wii Remote's, in the game's texts, its action bubble and the title screen.",
+      "choices": [
+        { "label": "Off", "set": { "game/button_icons": "0" } },
+        { "label": "On", "set": { "game/button_icons": "1" } }
+      ],
+      "defaults": { "game/button_icons": "1" }
+    },
+    {
+      "id": "save_backups", "label": "Save backups kept",
+      "help": "How many copies of your save are kept; one is made each time the game starts.",
+      "choices": [
+        { "label": "0", "set": { "saves/backups": "0" } },
+        { "label": "1", "set": { "saves/backups": "1" } },
+        { "label": "3", "set": { "saves/backups": "3" } },
+        { "label": "5", "set": { "saves/backups": "5" } },
+        { "label": "10", "set": { "saves/backups": "10" } },
+        { "label": "20", "set": { "saves/backups": "20" } }
+      ],
+      "defaults": { "saves/backups": "5" }
+    },
+    {
+      "id": "discord", "label": "Show the game in Discord",
+      "help": "Shows on your Discord profile that you are playing PokéPark 2.",
+      "choices": [
+        { "label": "Off", "set": { "system/discord": "0" } },
+        { "label": "On", "set": { "system/discord": "1" } }
+      ],
+      "defaults": { "system/discord": "1" }
+    },
+    {
       "id": "show_fps", "label": "Show FPS",
       "help": "Adds the frame rate to the window's title bar.",
       "choices": [
@@ -128,6 +215,87 @@
       "defaults": { "audio/volume": "100" }
     },
     {
+      "id": "mute", "label": "Mute",
+      "help": "Silences the game without changing the volume.",
+      "choices": [
+        { "label": "Off", "set": { "audio/mute": "0" } },
+        { "label": "On", "set": { "audio/mute": "1" } }
+      ],
+      "defaults": { "audio/mute": "0" }
+    },
+    {
+      "id": "wiimote_speaker", "label": "Wii Remote speaker",
+      "help": "Plays the sounds meant for the Wii Remote's speaker on your computer.",
+      "choices": [
+        { "label": "Off", "set": { "audio/wiimote_speaker": "0" } },
+        { "label": "On", "set": { "audio/wiimote_speaker": "1" } }
+      ],
+      "defaults": { "audio/wiimote_speaker": "1" }
+    },
+    {
+      "id": "free_camera", "label": "Free camera",
+      "help": "Turn the camera around Pikachu with the mouse or the right stick. Off keeps the game's own camera.",
+      "choices": [
+        { "label": "Off", "set": { "camera/free": "0" } },
+        { "label": "On", "set": { "camera/free": "1" } }
+      ],
+      "defaults": { "camera/free": "1" }
+    },
+    {
+      "id": "mouse_camera_speed", "label": "Mouse camera speed",
+      "help": "How fast the camera turns when you move the mouse, in percent.",
+      "slider": { "key": "camera/mouse_speed", "min": 10, "max": 300, "step": 10, "format": "%d" },
+      "defaults": { "camera/mouse_speed": "100" }
+    },
+    {
+      "id": "stick_camera_speed", "label": "Stick camera speed",
+      "help": "How fast the camera turns with the right stick, in percent.",
+      "slider": { "key": "camera/stick_speed", "min": 10, "max": 300, "step": 10, "format": "%d" },
+      "defaults": { "camera/stick_speed": "100" }
+    },
+    {
+      "id": "invert_camera", "label": "Invert camera up/down",
+      "help": "Moving up looks down and moving down looks up.",
+      "choices": [
+        { "label": "Off", "set": { "camera/invert_y": "0" } },
+        { "label": "On", "set": { "camera/invert_y": "1" } }
+      ],
+      "defaults": { "camera/invert_y": "0" }
+    },
+    {
+      "id": "hide_cursor", "label": "Hide the mouse cursor",
+      "help": "Hides the mouse cursor over the game window.",
+      "choices": [
+        { "label": "Off", "set": { "input/hide_cursor": "0" } },
+        { "label": "On", "set": { "input/hide_cursor": "1" } }
+      ],
+      "defaults": { "input/hide_cursor": "1" }
+    },
+    {
+      "id": "gamepads", "label": "Gamepads",
+      "help": "Lets gamepads play as Wii Remotes, even when the window is in the background.",
+      "choices": [
+        { "label": "Off", "set": { "input/gamepads": "0" } },
+        { "label": "On", "set": { "input/gamepads": "1" } }
+      ],
+      "defaults": { "input/gamepads": "1" }
+    },
+    {
+      "id": "vibration", "label": "Vibration",
+      "help": "Makes the gamepad vibrate when the Wii Remote would.",
+      "choices": [
+        { "label": "Off", "set": { "input/rumble": "0" } },
+        { "label": "On", "set": { "input/rumble": "1" } }
+      ],
+      "defaults": { "input/rumble": "1" }
+    },
+    {
+      "id": "stick_deadzone", "label": "Stick dead zone",
+      "help": "How far the stick must move before the game reacts, in percent.",
+      "slider": { "key": "input/stick_deadzone", "min": 10, "max": 90, "step": 5, "format": "%d" },
+      "defaults": { "input/stick_deadzone": "50" }
+    },
+    {
       "id": "language", "label": "Game language",
       "help": "Language of the game's text. System follows your computer's language.",
       "choices": [
@@ -140,6 +308,83 @@
         { "label": "Nederlands", "set": { "system/language": "nl" } }
       ],
       "defaults": { "system/language": "auto" }
+    },
+    {
+      "id": "menu_language", "label": "Menu language",
+      "help": "Language of the game's options menu (F1) and of the window's title bar.",
+      "choices": [
+        { "label": "English", "set": { "system/interface_language": "en" } },
+        { "label": "Français", "set": { "system/interface_language": "fr" } },
+        { "label": "Español", "set": { "system/interface_language": "es" } },
+        { "label": "Galego", "set": { "system/interface_language": "gl" } }
+      ],
+      "defaults": { "system/interface_language": "en" }
+    },
+    {
+      "id": "overlay", "label": "Performance overlay",
+      "help": "Shows the frame rate, processor, graphics card and memory figures in a corner; F2 does the same.",
+      "choices": [
+        { "label": "Off", "set": { "overlay/show": "0" } },
+        { "label": "On", "set": { "overlay/show": "1" } }
+      ],
+      "defaults": { "overlay/show": "0" }
+    },
+    {
+      "id": "overlay_detail", "label": "Overlay detail",
+      "help": "Minimal shows the frame rate only, Standard adds the main figures, Full shows everything.",
+      "choices": [
+        { "label": "Minimal", "set": { "overlay/level": "minimal" } },
+        { "label": "Standard", "set": { "overlay/level": "standard" } },
+        { "label": "Full", "set": { "overlay/level": "full" } }
+      ],
+      "defaults": { "overlay/level": "full" }
+    },
+    {
+      "id": "overlay_corner", "label": "Overlay corner",
+      "help": "Corner of the window where the performance overlay sits.",
+      "choices": [
+        { "label": "Top left", "set": { "overlay/corner": "top_left" } },
+        { "label": "Top right", "set": { "overlay/corner": "top_right" } },
+        { "label": "Bottom left", "set": { "overlay/corner": "bottom_left" } },
+        { "label": "Bottom right", "set": { "overlay/corner": "bottom_right" } }
+      ],
+      "defaults": { "overlay/corner": "top_left" }
+    },
+    {
+      "id": "custom_textures", "label": "Custom textures",
+      "help": "Uses the replacement textures installed in the textures folder, such as the HD copies made by tools/hd_textures.py.",
+      "choices": [
+        { "label": "Off", "set": { "video/custom_textures": "0" } },
+        { "label": "On", "set": { "video/custom_textures": "1" } }
+      ],
+      "defaults": { "video/custom_textures": "1" }
+    },
+    {
+      "id": "dump_textures", "label": "Dump textures",
+      "help": "Saves every texture the game loads to disk, to make replacement textures.",
+      "choices": [
+        { "label": "Off", "set": { "video/dump_textures": "0" } },
+        { "label": "On", "set": { "video/dump_textures": "1" } }
+      ],
+      "defaults": { "video/dump_textures": "0" }
+    },
+    {
+      "id": "bug_recorder", "label": "Bug recorder",
+      "help": "Keeps the last three seconds of images in graphics memory: the screenshot key (F9) then saves them all, to show a display bug.",
+      "choices": [
+        { "label": "Off", "set": { "video/bug_recorder": "0" } },
+        { "label": "On", "set": { "video/bug_recorder": "1" } }
+      ],
+      "defaults": { "video/bug_recorder": "0" }
+    },
+    {
+      "id": "check_updates", "label": "Check for updates",
+      "help": "At start, asks GitHub for the latest release. Nothing is downloaded by itself.",
+      "choices": [
+        { "label": "Off", "set": { "system/check_updates": "0" } },
+        { "label": "On", "set": { "system/check_updates": "1" } }
+      ],
+      "defaults": { "system/check_updates": "1" }
     }
   ],
   "actions": [

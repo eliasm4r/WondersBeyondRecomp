@@ -44,5 +44,9 @@ private:
 };
 
 bool decode_png(const std::filesystem::path& path, std::vector<uint32_t>& pixels, uint32_t& width, uint32_t& height);
+bool write_png(const std::filesystem::path& path, const std::vector<uint32_t>& pixels, uint32_t width, uint32_t height);
+
+void dump(const std::filesystem::path& directory, const TextureName& name, const std::vector<std::vector<uint32_t>>& pixels, uint32_t width,
+          uint32_t height);
 
 }
