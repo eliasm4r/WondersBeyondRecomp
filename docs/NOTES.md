@@ -244,6 +244,7 @@ images from a thread of their own). Same scene: 239.6-239.8 fps, images 2.8 to 5
   known), and only for keys drawn more than once, the only ambiguous case; refused ones are drawn where they are.
   The `runs` log line counts them ("look-alikes too far to pair"): 0 a second walking at 240 fps, 0 to 3 while
   dashing (`run.txt`, `dash.txt`).
+
 ## Presenting without waiting for the display
 
 At x6 and 240 fps the user's log (fullscreen, 240 Hz screen) showed 178-183 fps in the save spot, while a hidden
