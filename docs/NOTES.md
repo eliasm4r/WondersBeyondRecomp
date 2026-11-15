@@ -1076,6 +1076,13 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
 - While held, `wp::hint` draws a small box with "Hold to skip" and a gauge in the bottom right corner (both
   renderers, above the game and the statistics, below the options menu); the image is made again only when the
   gauge moves by a 32nd.
+- User report: a video still could not be skipped. It was `DmCh0000_00` (78 seconds, started from the park after a
+  message), and no `MovieSceneUpdate` ran during it: some videos are played by the movie player without the movie
+  scene, as is the boot video `DmCh0000_01`. While held, the scene skip saw a loading screen (no HUD layout drawn) and
+  left it alone. Now, each `SceneManagerRunBegin`, when the player's state is 3 and no `MovieSceneUpdate` ran for
+  250 ms, the same hold (A or +, real time, gauge and veil) writes 5 into the state; the scene skip is not offered
+  meanwhile, and the veil lifts once the state is neither 3 nor 5 (or after 4 seconds, as before). Headless: + held
+  from 3 s, the boot video ended at 4.4 s and the title screen came up as usual.
 - Tests: `WP_MOVIE=n` with `WP_ATTRACTION=1,8` gives the scene parameter `Movie` instead of `AttractionId`, which
   starts movie `n` of the table at 0x80468C28 from the park (2 is DmCh1110_01).
 
