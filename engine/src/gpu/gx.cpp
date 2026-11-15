@@ -53,7 +53,6 @@ std::atomic<bool> g_screen_hidden{false};
 std::atomic<bool> g_drawing_skipped{false};
 
 void publish_performance(double fps, double game_fps, double seconds, double game_thread, double gpu_thread) {
-    static const settings::LiveNumber scale("video.scale", "WP_SCALE");
     static const settings::LiveFlag vsync("video.vsync", nullptr);
     perf::Sample sample;
     sample.fps = fps;
@@ -78,7 +77,7 @@ void publish_performance(double fps, double game_fps, double seconds, double gam
     sample.refresh_hz = gpu.refresh_hz;
     sample.cpu_name = perf::cpu_name();
     sample.api = render::api_name();
-    sample.scale = scale();
+    sample.scale = render::current_scale();
     sample.vsync = vsync();
     perf::publish(sample);
 }

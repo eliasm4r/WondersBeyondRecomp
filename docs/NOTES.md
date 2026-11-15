@@ -311,6 +311,14 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
 
 ## Options menu, play time and performance overlay
 
+- Auto internal resolution (`video.scale=0`, the default): `present_frame` works out the scale from the box the
+  picture fills on screen, `ceil(1.25 * box / logical size)` across (canvas width with the 21:9 margins) and down
+  (456 plus the margins), the larger of the two, 1 to 6; `apply_scale` picks it up on the next frame like a changed
+  setting. At 3x on a 1080p 16:9 screen the picture is drawn 1920 wide for 1920 pixels, so `pixel_smooth` (16 taps
+  over each screen pixel) has nothing to average across and edges stay jagged; the user saw the difference with 4x
+  (1.33 across, 1.69 down) but none between 4x and 5x, hence 1.25. OpenGL uses 4x for Auto.
+  `render::current_scale()` gives the scale in use to the menu (Auto (4x)) and the F2 overlay.
+
 - The F1 menu is drawn on the CPU into one image (`options_render_stb.cpp`, on the shared canvas of `canvas.cpp`) that
   the renderer shows over the game. Its size follows the window height: `unit = clamp(height / 40, 14, 40)`, the panel
   is 60 units wide, and its orange edge, `max(3, unit * 3 / 5)` pixels, is the outline polygon drawn once offset in
