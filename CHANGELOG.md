@@ -25,6 +25,8 @@ Every change to WondersBeyondRecomp, newest first.
 - Above 60 fps, an object drawn several times alike, like the red circles under the Pokémon in a minigame, could be drawn halfway to another copy on the images in between, so it seemed to jump aside for an instant. Two copies are now only blended when they could be the same object moving. In Power Bash, the rings under the target no longer slide in from the side and out again above 60 fps: they appear and leave at once, as at 30 fps.
 - Pressing the right stick quickly on a gamepad no longer flashes the aiming cursor: it only recentres it while you aim.
 - Loading screens can no longer be skipped as if they were story scenes, and a scene skip now stops when a loading screen starts.
+- The fly camera no longer jumps or turns around when a wall, a tree or a hill stands between it and your Pokémon, or when it flies past the edge of the map: the game was still pulling the view back in front of the obstacle.
+- The mouse and the right stick turn the camera by the same amount on every game frame, so a turn no longer speeds up and slows down from one frame to the next.
 
 ## v0.3.0-alpha · 2026-11-15
 
