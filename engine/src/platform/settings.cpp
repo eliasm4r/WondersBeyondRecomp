@@ -65,6 +65,7 @@ const Option kBaseOptions[] = {
     {"game.text_speed", "1"},
     {"game.skip_movies", "1"},
     {"game.button_icons", "1"},
+    {"game.save_photos", "1"},
     {"system.options_menu", "1"},
     {"system.discord", "1"},
     {"system.check_updates", "1"},

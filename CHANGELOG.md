@@ -10,6 +10,11 @@ Every change to WondersBeyondRecomp, newest first.
 
 <br>
 
+## Unreleased
+
+### Added
+- Photos saved in the game are also written as PNG files, at the internal resolution (1920x1050 at 3x, 3840x2100 at 6x), to a `photos` folder next to the game, named with the date and time. Photos you choose not to save are not written. Turn it off with Options > Game > Save photos as PNG.
+
 ## v0.3.0-alpha · 2026-11-15
 
 > **Wider and quicker.** 16:10, 21:9 and 32:9 screens, faster text, skippable cutscenes, your own keys and buttons drawn in the game, every texture in HD with one button, and 240 fps at 6x. [Download it here.](https://github.com/eliasm4r/WondersBeyondRecomp/releases/tag/v0.3.0-alpha)

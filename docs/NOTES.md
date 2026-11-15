@@ -970,6 +970,13 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
   see past 2000 by the canvas's shape: 21:9 at 240 fps x3 drew 21.9 million vertices a second instead of 21.3, still
   at 239.8 fps.
 
+## Photos as PNG
+
+- The Pad camera copies the picture into RAM as 640x350 RGBA8 (EFB copy format 6), and the game stores it as a JPEG of up to 100 KB in a slot of `data/Pic0` or `Pic1` (one file per save slot, slots 0x19000 bytes apart) once "Save Photo data?" is answered yes.
+- `copy_to_texture` reads back the copy's internal-resolution texture for every one-off copy of that size and format (`keep_photo`, the picture's part only, so wide shapes give the same framing as the game's photo) and hands it to `screenshot::photo_taken`.
+- The PNG is written only when the game writes bytes that differ from the file's into a `Pic` file within two minutes of the copy (`changes` in nand.cpp, compared only while a photo waits). Answering no writes nothing to `Pic`, so no PNG; a photo is written once. Checked with `photo1.txt` (yes: 1920x1050 PNG at 3x) and the same script without its left press (no: no file). Colour settings are applied like on screenshots.
+- Option `game.save_photos` (`WP_SAVE_PHOTOS`), Game tab, on by default. Only the Direct3D renderer keeps the photo.
+
 ## Text speed
 
 - `game.text_speed` (Game tab, live): `1` (the game's), `2`, `3`, or `0` for a whole page at once. Idea from the rival

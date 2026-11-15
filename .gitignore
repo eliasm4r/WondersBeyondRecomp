@@ -54,3 +54,6 @@ __pycache__/
 /*.bat
 /*.whl
 /perso/
+/logs/
+/photos/
+/.superpowers/

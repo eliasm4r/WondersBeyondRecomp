@@ -178,6 +178,15 @@
       "defaults": { "game/button_icons": "1" }
     },
     {
+      "id": "save_photos", "label": "Save photos as PNG",
+      "help": "Each photo you save in the game is also written in full resolution to the photos folder next to the game.",
+      "choices": [
+        { "label": "Off", "set": { "game/save_photos": "0" } },
+        { "label": "On", "set": { "game/save_photos": "1" } }
+      ],
+      "defaults": { "game/save_photos": "1" }
+    },
+    {
       "id": "save_backups", "label": "Save backups kept",
       "help": "How many copies of your save are kept; one is made each time the game starts.",
       "choices": [

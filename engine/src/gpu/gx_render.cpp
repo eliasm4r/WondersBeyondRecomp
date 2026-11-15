@@ -3194,6 +3194,35 @@ void prune_twins() {
     }
 }
 
+bool read_texture(ID3D11Texture2D* texture, std::vector<uint32_t>& pixels, uint32_t& width, uint32_t& height);
+
+bool keep_photos() {
+    static const settings::LiveFlag enabled("game.save_photos", "WP_SAVE_PHOTOS");
+    return enabled();
+}
+
+void keep_photo(ID3D11Texture2D* texture, int x, int y, int width, int height, int canvas_width, int canvas_height) {
+    std::vector<uint32_t> pixels;
+    uint32_t full_width = 0;
+    uint32_t full_height = 0;
+    if (!texture || canvas_width <= 0 || canvas_height <= 0 || !read_texture(texture, pixels, full_width, full_height)) {
+        return;
+    }
+    uint32_t left = std::min(full_width, static_cast<uint32_t>(std::max(0, x)) * full_width / static_cast<uint32_t>(canvas_width));
+    uint32_t top = std::min(full_height, static_cast<uint32_t>(std::max(0, y)) * full_height / static_cast<uint32_t>(canvas_height));
+    uint32_t photo_width = std::min(full_width - left, static_cast<uint32_t>(width) * full_width / static_cast<uint32_t>(canvas_width));
+    uint32_t photo_height = std::min(full_height - top, static_cast<uint32_t>(height) * full_height / static_cast<uint32_t>(canvas_height));
+    if (photo_width == 0 || photo_height == 0) {
+        return;
+    }
+    std::vector<uint32_t> photo(static_cast<size_t>(photo_width) * photo_height);
+    for (uint32_t row = 0; row < photo_height; row++) {
+        const uint32_t* source = pixels.data() + static_cast<size_t>(top + row) * full_width + left;
+        std::copy(source, source + photo_width, photo.begin() + static_cast<size_t>(row) * photo_width);
+    }
+    screenshot::photo_taken(std::move(photo), photo_width, photo_height);
+}
+
 void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width, int height, bool half, uint32_t format, bool intensity, bool depth, bool alpha,
                      const CopyFilter& filter) {
     if (!initialize()) {
@@ -3269,6 +3298,9 @@ void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width,
         command.copy = {entry.converted_target, target_width, target_height, canvas_x, canvas_y, canvas_w, canvas_h, format, intensity, alpha || depth, depth, filter};
         entry.converted_target->AddRef();
         g_record.commands.push_back(command);
+    }
+    if (!recurring && !half && format == 6 && logical_width == screenshot::kPhotoWidth && logical_height == screenshot::kPhotoHeight && keep_photos()) {
+        keep_photo(entry.converted, x + g_canvas.margin_x - canvas_x, y + g_canvas.margin_y - canvas_y, width, height, canvas_w, canvas_h);
     }
     entry.view = entry.converted_view;
     entry.whole_canvas = canvas_w > width;

@@ -4,10 +4,14 @@
 #include <cstdint>
 #include <ctime>
 #include <string>
+#include <vector>
 
 namespace wp::screenshot {
 
 constexpr const char* kFolder = "screenshots";
+constexpr const char* kPhotoFolder = "photos";
+constexpr uint32_t kPhotoWidth = 640;
+constexpr uint32_t kPhotoHeight = 350;
 
 constexpr uint32_t kRecentWidth = 1400;
 constexpr size_t kRecentImages = 360;
@@ -18,5 +22,8 @@ uint32_t recent_level(uint32_t width);
 size_t recent_count(uint32_t width, uint32_t height);
 std::string recent_folder(const char* prefix, const std::tm& time);
 std::string recent_name(size_t index, bool between);
+void photo_taken(std::vector<uint32_t> pixels, uint32_t width, uint32_t height);
+bool photo_pending();
+std::string photo_stored();
 
 }
