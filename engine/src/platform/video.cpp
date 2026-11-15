@@ -639,6 +639,10 @@ void present_on_gpu(HWND window, double aspect) {
     }
 }
 
+void request_screenshot() {
+    g_screenshot_requested = true;
+}
+
 void save_next_frame(const char* path) {
     g_next_frame_path = path;
 }

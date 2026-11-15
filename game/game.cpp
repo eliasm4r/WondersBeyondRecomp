@@ -427,6 +427,13 @@ void field_camera(Cpu& c, HleFunction original) {
     }
     wrote = false;
     original(c);
+    {
+        float target[3];
+        for (uint32_t i = 0; i < 3; i++) {
+            target[i] = rdf32(camera + kCameraTarget + 4 * i);
+        }
+        input::note_view(target);
+    }
     static std::chrono::steady_clock::time_point logged;
     if (now - logged >= kPlaceLogPeriod) {
         logged = now;

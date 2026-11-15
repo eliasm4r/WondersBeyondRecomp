@@ -9,6 +9,7 @@ void start();
 void present();
 void update_statistics(double fps);
 void save_next_frame(const char* path);
+void request_screenshot();
 void* window_handle();
 std::vector<uint8_t> encode_png(const std::vector<uint32_t>& pixels, uint32_t width, uint32_t height);
 void save_png(const char* path, const std::vector<uint32_t>& pixels, uint32_t width, uint32_t height);
