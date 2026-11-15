@@ -3681,11 +3681,13 @@ void lerp_rows(Row* out, const Row* a, const Row* b, uint32_t count, float t) {
     }
 }
 
+bool blend_turn(Row* out, const Row* a, const Row* b, float t);
+
 void blend_matrix(Row* out, const Row* a, const Row* b, float t) {
     MatrixChange change = matrix_change(a, b);
     if (change == kNearMatrix) {
         lerp_rows(out, a, b, 3, t);
-    } else if (change == kOtherMatrix && t < 0.5f) {
+    } else if (change == kOtherMatrix && !blend_turn(out, a, b, t) && t < 0.5f) {
         std::copy(a, a + 3, out);
     }
 }
@@ -3882,9 +3884,7 @@ bool blend_turn(Row* out, const Row* a, const Row* b, float t) {
 
 void blend_palette(Row* out, const Row* a, const Row* b, float t) {
     for (uint32_t m = 0; m + 3 <= 64; m += 3) {
-        if (matrix_change(a + m, b + m) != kOtherMatrix || !blend_turn(out + m, a + m, b + m, t)) {
-            blend_matrix(out + m, a + m, b + m, t);
-        }
+        blend_matrix(out + m, a + m, b + m, t);
     }
     lerp_rows(out + kPaletteRows, a + kPaletteRows, b + kPaletteRows, kNormalRows, t);
 }
@@ -4243,7 +4243,7 @@ void pair_runs() {
             for (uint32_t other = key != 0 && keys[slot] == key ? last[slot] : kUnmatched; other != kUnmatched && copies < 4; other = later[other]) {
                 copies++;
             }
-            if (copies < 4) {
+            if (copies < 4 && runs[i].match != kUnmatched) {
                 continue;
             }
             const Row* b = &g_record.rows[runs[i].draw.matrix];
@@ -4554,6 +4554,17 @@ bool replay_between(const std::vector<std::pair<uint32_t, uint32_t>>& matches, f
                         }
                     }
                     state = &blended;
+                    if (g_pair_notes_wanted && t < 0.3f) {
+                        std::string& note = g_pair_notes[g_frame % g_pair_notes.size()];
+                        char part[200];
+                        std::snprintf(part, sizeof part, " | colors %zu<-%u runs %d k0 %.2f %.2f %.2f %.2f<-%.2f %.2f %.2f %.2f c0 %.2f %.2f %.2f %.2f<-%.2f %.2f %.2f %.2f", c, partner,
+                                      static_cast<int>(before.runs), now.konst[0][0], now.konst[0][1], now.konst[0][2], now.konst[0][3], before.konst[0][0], before.konst[0][1],
+                                      before.konst[0][2], before.konst[0][3], now.initial[1][0], now.initial[1][1], now.initial[1][2], now.initial[1][3], before.initial[1][0],
+                                      before.initial[1][1], before.initial[1][2], before.initial[1][3]);
+                        if (note.size() < 12000) {
+                            note += part;
+                        }
+                    }
                 }
             }
             for (size_t map = 0; map < kTextureMaps; map++) {
