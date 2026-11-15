@@ -1085,6 +1085,11 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
   is another): a scene started without the minimap ends when MnFdMap shows again, one started with the bars when
   MnEvFrame is gone for 10 steps; also on a question or a battle window (the player answers, + held again goes on),
   off the park scene, or after 3 minutes.
+- Loading screens ("Loading..." with the player's Pokémon, scene 0 from 15.4 to 19.3 s in `dash.txt`) hide the
+  minimap too, so they passed for story scenes and + skipped them (user report). During one, no HUD layout goes
+  through `LayoutDraw` from the HUD caller (only `poi`, from 0x801440E0), while in a story scene the hidden ones still
+  do. So a scene also needs a HUD layout drawn in the last 250 ms, and a skip ends past that. Real time, not steps: a
+  skip runs about 16 steps per drawn frame, and a 4 step limit ended the intro's skip after one step.
 - During a skip the picture is hidden (`gx::set_screen_hidden`), draws and copies are dropped
   (`gx::set_drawing_skipped`, the FIFO is still read), the sound is silenced (`audio::set_silenced`), the input alarm
   gets a sixteenth of its period through the game's setter (0x8000efa0, as the boot speed-up) and the emulated

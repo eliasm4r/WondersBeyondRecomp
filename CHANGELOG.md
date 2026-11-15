@@ -24,6 +24,7 @@ Every change to WondersBeyondRecomp, newest first.
 ### Fixed
 - Above 60 fps, an object drawn several times alike, like the red circles under the Pokémon in a minigame, could be drawn halfway to another copy on the images in between, so it seemed to jump aside for an instant. Two copies are now only blended when they could be the same object moving. In Power Bash, the rings under the target no longer slide in from the side and out again above 60 fps: they appear and leave at once, as at 30 fps.
 - Pressing the right stick quickly on a gamepad no longer flashes the aiming cursor: it only recentres it while you aim.
+- Loading screens can no longer be skipped as if they were story scenes, and a scene skip now stops when a loading screen starts.
 
 ## v0.3.0-alpha · 2026-11-15
 
