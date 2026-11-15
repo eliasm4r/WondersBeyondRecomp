@@ -74,6 +74,7 @@ struct VertexRun {
     const uint32_t* palette = nullptr;
     uint64_t palette_serial = 0;
     uint64_t key = 0;
+    uint64_t shape = 0;
     uint32_t camera = 0;
     uint32_t matrix = 0;
 };
