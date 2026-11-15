@@ -7,7 +7,7 @@
 ### PokéPark 2: Wonders Beyond, running natively on PC
 
 A static recompilation of the Wii game: its code is translated to C++ ahead of time and built into a real PC program.<br>
-No emulator, up to 120 fps, high resolutions, keyboard, mouse and modern controllers.
+No emulator, up to 240 fps, high resolutions, wide screens, keyboard, mouse and modern controllers.
 
 [![Latest release](https://img.shields.io/github/v/release/eliasm4r/WondersBeyondRecomp?include_prereleases&style=for-the-badge&label=release&color=f08a00)](https://github.com/eliasm4r/WondersBeyondRecomp/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/eliasm4r/WondersBeyondRecomp/total?style=for-the-badge&color=2e7d32)](https://github.com/eliasm4r/WondersBeyondRecomp/releases)
@@ -36,13 +36,16 @@ No emulator, up to 120 fps, high resolutions, keyboard, mouse and modern control
 
 ## Highlights
 
-- **Up to 120 fps**: 30, 45 or 60 fps gameplay (60 by default), and 90 or 120 fps with images drawn between the game's own frames. Movies and cutscenes keep their native 30 fps.
-- **Light on your PC**: the graphics card does most of the work, so laptops hold 60 fps too.
-- **Sharper picture**: internal resolution up to 6x in 16:9 or 4:3, smoothing, anisotropic filtering, color settings and custom texture packs.
+- **Up to 240 fps**: 30, 45 or 60 fps gameplay (60 by default), and 90, 120, 144, 165 or 240 fps with images drawn between the game's own frames, never above your screen's refresh rate. Movies keep their native 30 fps.
+- **Wide screens**: 16:9, 4:3, 16:10, 21:9, 32:9 or the window's own shape. The world fills the screen and shows more on the sides, while menus and text stay in the middle.
+- **Light on your PC**: the graphics card does most of the work, so laptops hold 60 fps too, and shaders compiled once are kept for the next start.
+- **Sharper picture**: internal resolution up to 6x, smoothing, anisotropic filtering, color settings, custom texture packs, and **every menu, map and font in HD with one button** (4x copies made by Real-ESRGAN on your graphics card).
 - **Keyboard and mouse**, with every key rebindable and a **free camera** that turns around Pikachu.
-- **Xbox, PlayStation and Switch controllers**, named as they are in the menus, and **real Wii Remotes**.
+- **Xbox, PlayStation and Switch controllers**, named as they are in the menus, and **real Wii Remotes**. The game's own texts and prompts show **your keys and buttons** instead of the Wii Remote's.
+- **Controls made for the four attractions**: Cake Contraption, Dance Inferno, Power Bash and Flight of Fancy play with the keyboard, the mouse or a controller.
+- **Faster text and skippable cutscenes**: dialogue 2 or 3 times faster or a page at once, and hold a button to skip a video or fast-forward a story scene.
 - **Options menu on F1**, drawn as the game's own dialog bubble, and a **performance overlay on F2**.
-- **Automatic save backups**, a play time counter and **Discord Rich Presence**.
+- **Automatic save backups**, a play time counter, **Discord Rich Presence** and an **update check** against the latest release.
 - Menu in **English, French, Spanish and Galician**.
 
 <br>
@@ -65,6 +68,8 @@ The setup downloads the build tools, translates the game code from your disc ima
 <br>
 
 Download the new setup and point it at the same folder. It sees the game already there, updates it without asking for the disc image again, and keeps your saves and settings.
+
+With **RecompLauncher**, the game is built again by itself on the first start after an update (a small window shows it, about a minute). Every option of the F1 menu can also be set from the launcher, except the key bindings.
 </details>
 
 ### Requirements
@@ -102,6 +107,8 @@ The defaults below can all be changed in the **Controls** tab of the options men
 <tr><td>Swing up and down</td><td>Mouse wheel, <kbd>T</kbd> <kbd>G</kbd></td><td><kbd>LB</kbd> + D-pad</td></tr>
 <tr><td>Tilt</td><td><kbd>I</kbd> <kbd>J</kbd> <kbd>K</kbd> <kbd>L</kbd></td><td><kbd>LB</kbd> + right stick</td></tr>
 </table>
+
+Hold <kbd>Tab</kbd> (<kbd>Start</kbd> on a controller) for a second to skip a video or fast-forward a story scene. In the attractions, the keys to press are drawn on screen.
 
 | Key | Action |
 |---|---|
