@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "wp/fast_clock.h"
+#include "wp/free_camera.h"
 #include "wp/canvas.h"
 #include "wp/color.h"
 #include "wp/control_names.h"
@@ -2106,6 +2107,13 @@ void test_options_menu() {
     CHECK(menu.handle(wp::options::Action::Accept) == "video.colors_reset");
     CHECK(wp::settings::number("video.brightness", nullptr) == 100 && wp::settings::number("video.saturation", nullptr) == 100);
 
+    menu.select_tab(6);
+    CHECK(menu.rows()[3].key == "cheats.fly_camera" && menu.rows()[3].kind == wp::options::Kind::Button && menu.rows()[3].value == "F6");
+    menu.select(3);
+    CHECK(menu.handle(wp::options::Action::Accept).empty() && wp::free_camera::flying() && !menu.open());
+    wp::free_camera::toggle_fly();
+    CHECK(!wp::free_camera::flying());
+    menu.set_open(true);
     menu.select_tab(2);
     CHECK(menu.rows()[0].key == "audio.volume");
     CHECK(menu.handle(wp::options::Action::Previous) == "audio.volume");

@@ -329,6 +329,7 @@ bool collision_between(Cpu& c, const float start[3], const float extent[3], floa
 constexpr float kFlySpeed = 20.0f;
 constexpr float kFlyFast = 4.0f;
 constexpr float kFlyPitch = 1.5f;
+constexpr float kFlyLowest = -70.0f;
 constexpr int kKeyShift = 0x10;
 constexpr int kKeyRise = 0x20;
 constexpr int kKeySink = 'C';
@@ -342,7 +343,7 @@ float fly_key(keymap::Action action) {
     return 0.0f;
 }
 
-void fly(uint32_t camera, bool start, float mouse_x, float mouse_y, float seconds, float eye[3], float target[3]) {
+void fly(Cpu& c, uint32_t camera, bool start, float mouse_x, float mouse_y, float seconds, float eye[3], float target[3]) {
     static float yaw = 0.0f;
     static float pitch = 0.0f;
     if (start) {
@@ -356,18 +357,33 @@ void fly(uint32_t camera, bool start, float mouse_x, float mouse_y, float second
         pitch = view.elevation;
         log::write("camera", "fly from %.0f %.0f %.0f", eye[0], eye[1], eye[2]);
     }
-    free_camera::Turn turn = free_camera::turn(mouse_x, mouse_y, 0.0f, 0.0f, seconds, free_camera::current());
+    float stick_x = 0.0f;
+    float stick_y = 0.0f;
+    gamepad::camera_stick(stick_x, stick_y);
+    free_camera::Turn turn = free_camera::turn(mouse_x, mouse_y, stick_x, stick_y, seconds, free_camera::current());
     yaw = free_camera::wrap(yaw + turn.yaw);
     pitch = std::clamp(pitch - turn.pitch, -kFlyPitch, kFlyPitch);
     float forward[3];
     free_camera::to_offset({yaw, pitch, 1.0f}, forward);
     float right[3] = {-std::cos(yaw), 0.0f, std::sin(yaw)};
-    float along = fly_key(keymap::Action::Up) - fly_key(keymap::Action::Down);
-    float side = fly_key(keymap::Action::Right) - fly_key(keymap::Action::Left);
-    float rise = (video::key_down(kKeyRise) ? 1.0f : 0.0f) - (video::key_down(kKeySink) ? 1.0f : 0.0f);
-    float step = kFlySpeed * seconds * (video::key_down(kKeyShift) ? kFlyFast : 1.0f);
+    float pad_along = 0.0f;
+    float pad_side = 0.0f;
+    float pad_rise = 0.0f;
+    bool pad_fast = false;
+    gamepad::fly_controls(pad_along, pad_side, pad_rise, pad_fast);
+    float along = std::clamp(fly_key(keymap::Action::Up) - fly_key(keymap::Action::Down) + pad_along, -1.0f, 1.0f);
+    float side = std::clamp(fly_key(keymap::Action::Right) - fly_key(keymap::Action::Left) + pad_side, -1.0f, 1.0f);
+    float rise = std::clamp((video::key_down(kKeyRise) ? 1.0f : 0.0f) - (video::key_down(kKeySink) ? 1.0f : 0.0f) + pad_rise, -1.0f, 1.0f);
+    float step = kFlySpeed * seconds * (video::key_down(kKeyShift) || pad_fast ? kFlyFast : 1.0f);
     for (int i = 0; i < 3; i++) {
         eye[i] += (forward[i] * along + right[i] * side + (i == 1 ? rise : 0.0f)) * step;
+    }
+    float ground = 0.0f;
+    if (ground_under(c, eye, step + kEyeClearance, kEyeClearance, ground)) {
+        eye[1] = std::max(eye[1], ground + kEyeClearance);
+    }
+    eye[1] = std::max(eye[1], kFlyLowest);
+    for (int i = 0; i < 3; i++) {
         target[i] = eye[i] + forward[i];
     }
 }
@@ -409,7 +425,7 @@ void field_camera(Cpu& c, HleFunction original) {
             game_target[i] = rdf32(camera + kCameraTarget + 4 * i);
         }
         float seconds = flew && camera == owner ? std::min(std::chrono::duration<float>(now - last).count(), 0.1f) : 0.0f;
-        fly(camera, !flew || camera != owner, mouse_x, mouse_y, seconds, our_eye, our_target);
+        fly(c, camera, !flew || camera != owner, mouse_x, mouse_y, seconds, our_eye, our_target);
         flew = true;
         owner = camera;
         last = now;

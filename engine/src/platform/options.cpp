@@ -11,6 +11,7 @@
 #include "wp/color.h"
 #include "wp/control_names.h"
 #include "wp/frame_pacing.h"
+#include "wp/free_camera.h"
 #include "wp/game.h"
 #include "wp/gamepad.h"
 #include "wp/gx_render.h"
@@ -77,6 +78,7 @@ constexpr const char* kDeviceNames[] = {"keyboard", "gamepad"};
 constexpr const char* kResetKeys = "keys.reset";
 constexpr const char* kResetPad = "pad.reset";
 constexpr const char* kResetColors = "video.colors_reset";
+constexpr const char* kFlyCamera = "cheats.fly_camera";
 constexpr const char* kUpdate = "system.update";
 constexpr const char* kHdTextures = "video.hd_textures";
 
@@ -215,14 +217,14 @@ std::vector<std::string> tab_keys(size_t tab, Device device) {
         return keys;
     }
     case 6:
-        return {"cheats.berries", "cheats.prices", "cheats.chase_speed"};
+        return {"cheats.berries", "cheats.prices", "cheats.chase_speed", kFlyCamera};
     default:
         return {};
     }
 }
 
 Kind kind(const std::string& key) {
-    if (key == kResetKeys || key == kResetPad || key == kResetColors || key == kHdTextures) {
+    if (key == kResetKeys || key == kResetPad || key == kResetColors || key == kHdTextures || key == kFlyCamera) {
         return Kind::Button;
     }
     if (key == kPlayTime || key == kUpdate) {
@@ -509,6 +511,8 @@ std::vector<Row> Menu::rows() const {
             row.value = update_text();
         } else if (key == kHdTextures) {
             row.value = hd_text();
+        } else if (key == kFlyCamera) {
+            row.value = shown_value("keys.fly_camera", settings::text("keys.fly_camera", nullptr));
         } else if (row.kind != Kind::Button) {
             std::string value = settings::text(key.c_str(), nullptr);
             row.value = shown_value(key, value);
@@ -620,6 +624,11 @@ std::string Menu::handle(Action action) {
             return "";
         }
         if (type == Kind::Button) {
+            if (key == kFlyCamera) {
+                free_camera::toggle_fly();
+                open_ = false;
+                return "";
+            }
             if (key == kHdTextures) {
                 hd_textures::start();
                 settings::store("video.custom_textures", "1");

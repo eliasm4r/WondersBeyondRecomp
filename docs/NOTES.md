@@ -329,6 +329,13 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
   units a second (4 times with Shift; Pikachu is about 4 tall). The game's eye and target are put back before its next
   update, as for the orbit camera, so its own camera keeps following Pikachu. While flying and the hook runs (the
   300 ms driving window) game input reads nothing. Space and C, not E and Q, so it is the same on AZERTY.
+- Flying down along the look went under the cliffs and the sea (surface near y -75 by the ice beach, where the eye
+  sees the sky's lower half mirrored, then grey): each step now probes the ground from the step's length above the eye,
+  so a floor crossed in that step lifts the eye back on it (walls stay open), and the eye stays above y -70.
+- On a gamepad it is only turned on from the keyboard key or the Cheats tab's button, as the user asked; the sticks,
+  triggers and RB are read straight from player 1's pad, since the game's input is blocked.
+- R3 put the pad's pointer back to the centre and showed it even when not aiming, so pressing it quickly flashed the
+  aiming cursor; it now only recentres while aiming.
 
 ## Options menu, play time and performance overlay
 
