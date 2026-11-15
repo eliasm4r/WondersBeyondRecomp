@@ -620,6 +620,10 @@ void update_statistics(double fps) {
     g_title_changed = true;
 }
 
+void request_screenshot() {
+    g_screenshot_requested = true;
+}
+
 void save_next_frame(const char* path) {
     g_next_frame_path = path;
 }
