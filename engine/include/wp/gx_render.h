@@ -49,7 +49,7 @@ struct DrawSource {
 constexpr uint16_t kNoSource = 0xFFFF;
 
 const char* api_name();
-int current_scale();
+int auto_scale();
 bool interpolating();
 void draw(const ScreenVertex* vertices, uint32_t count, const DrawSource* source = nullptr);
 
