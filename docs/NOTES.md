@@ -236,6 +236,14 @@ to the next image's time (0.1 to 1 ms), as PokePark 2 Wiicompiled's `wait_until`
 images from a thread of their own). Same scene: 239.6-239.8 fps, images 2.8 to 5.5 ms apart instead of 0.1 to 14;
 144 fps 6 to 8 ms apart, 120 fps 7.6 to 9 ms, 60 fps unchanged.
 
+- Look-alikes (user report: in a minigame the red circle under the Pokémon jumped slightly to the right at 240 fps;
+  no capture, not reproduced headless): `pair_runs` gave each model the nearest unpaired one of the last frame,
+  however far. When a copy appears or another leaves, a circle was paired with its neighbour and blended halfway
+  between them on the images in between. Like the rival recompilation's `same_object` (`gx_frames.c`), a pair is now
+  only kept when the model moved at most a tenth of its distance from the eye (after the camera's own motion, when
+  known), and only for keys drawn more than once, the only ambiguous case; refused ones are drawn where they are.
+  The `runs` log line counts them ("look-alikes too far to pair"): 0 a second walking at 240 fps, 0 to 3 while
+  dashing (`run.txt`, `dash.txt`).
 ## Presenting without waiting for the display
 
 At x6 and 240 fps the user's log (fullscreen, 240 Hz screen) showed 178-183 fps in the save spot, while a hidden

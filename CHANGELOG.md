@@ -10,6 +10,11 @@ Every change to WondersBeyondRecomp, newest first.
 
 <br>
 
+## Unreleased
+
+### Fixed
+- Above 60 fps, an object drawn several times alike, like the red circles under the Pokémon in a minigame, could be drawn halfway to another copy on the images in between, so it seemed to jump aside for an instant. Two copies are now only blended when they could be the same object moving.
+
 ## v0.3.0-alpha · 2026-11-15
 
 > **Wider and quicker.** 16:10, 21:9 and 32:9 screens, faster text, skippable cutscenes, your own keys and buttons drawn in the game, every texture in HD with one button, and 240 fps at 6x. [Download it here.](https://github.com/eliasm4r/WondersBeyondRecomp/releases/tag/v0.3.0-alpha)
