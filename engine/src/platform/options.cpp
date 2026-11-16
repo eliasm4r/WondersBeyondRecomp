@@ -51,6 +51,7 @@ constexpr Language kLanguages[] = {{"auto", nullptr}, {"en", "English"},  {"de",
 constexpr Language kInterfaceLanguages[] = {{"fr", "Français"}, {"en", "English"}, {"es", "Español"}, {"gl", "Galego"}};
 
 constexpr int kMaxScale = 6;
+constexpr int kMaxPhoneScale = 3;
 
 constexpr const char* kBackupCounts[] = {"0", "1", "3", "5", "10", "20"};
 
@@ -193,7 +194,9 @@ std::vector<std::string> tab_keys(size_t tab, Device device) {
         std::vector<std::string> keys = {"video.scale",      "video.fullscreen", "video.aspect", "system.widescreen", "video.fps", "video.vsync", "video.smooth", "video.anisotropy",
                                          color::kBrightness.key, color::kContrast.key, color::kSaturation.key, color::kGamma.key, kResetColors};
         if (kPhone) {
-            keys.erase(std::find(keys.begin(), keys.end(), "video.fullscreen"));
+            for (const char* unused : {"video.fullscreen", "video.vsync"}) {
+                keys.erase(std::find(keys.begin(), keys.end(), unused));
+            }
         }
         return keys;
     }
@@ -205,6 +208,9 @@ std::vector<std::string> tab_keys(size_t tab, Device device) {
         return keys;
     }
     case 2:
+        if (kPhone) {
+            return {"audio.volume", "audio.mute"};
+        }
         return {"audio.volume", "audio.mute", "audio.wiimote_speaker"};
     case 3: {
         if (device == Device::Keyboard && kPhone) {
@@ -232,17 +238,22 @@ std::vector<std::string> tab_keys(size_t tab, Device device) {
         if (hd_textures::available()) {
             keys.push_back(kHdTextures);
         }
-        keys.push_back("video.dump_textures");
         if (!kPhone) {
+            keys.push_back("video.dump_textures");
             keys.push_back("video.bug_recorder");
         }
         if (update::available()) {
             keys.push_back("system.check_updates");
         }
-        keys.push_back(kUpdate);
+        if (!kPhone) {
+            keys.push_back(kUpdate);
+        }
         return keys;
     }
     case 6:
+        if (kPhone) {
+            return {"cheats.run_speed", "cheats.jump", "cheats.damage_dealt", "cheats.damage_taken", "cheats.berries", "cheats.prices", "cheats.chase_speed"};
+        }
         return {kFlyCamera, "cheats.run_speed", "cheats.jump", "cheats.damage_dealt", "cheats.damage_taken", "cheats.berries", "cheats.prices", "cheats.chase_speed"};
     default:
         return {};
@@ -284,21 +295,30 @@ bool live(const std::string& key) {
 std::vector<std::string> choices(const std::string& key) {
     if (key == "video.scale") {
         std::vector<std::string> scales;
-        for (int scale = 1; scale <= kMaxScale; scale++) {
+        for (int scale = 1; scale <= (kPhone ? kMaxPhoneScale : kMaxScale); scale++) {
             scales.push_back(scale == gx::render::auto_scale() ? "0" : std::to_string(scale));
         }
         return scales;
     }
     if (key == "video.fps") {
+        if (kPhone) {
+            return {"30", "60"};
+        }
         if (!pacing::kInBetweenImages) {
             return {"30", "45", "60"};
         }
         return {"30", "45", "60", "90", "120", "144", "165", "240"};
     }
     if (key == "video.anisotropy") {
+        if (kPhone) {
+            return {"1", "2", "4"};
+        }
         return {"1", "2", "4", "8", "16"};
     }
     if (key == "video.aspect") {
+        if (kPhone) {
+            return {"16:9", "21:9", "auto"};
+        }
         return {"16:9", "16:10", "21:9", "32:9", "auto"};
     }
     if (key == "game.text_speed") {
