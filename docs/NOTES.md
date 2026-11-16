@@ -320,10 +320,18 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
 - Chase speed (`cheats.chase_speed`): the accessor a chase step is given counts as chased for 4 movement updates;
   for those its energy's target speeds (+0x28, +0x2C), top speed (+0x30, unless negative) and rates (+0x38, +0x3C)
   are scaled for the update and put back after.
-- Not done: damage dealt and taken. The rival tells Pikachu by `ModuleAccessorPlayer`'s table, but in PAL every
-  Pokémon going through the movement update shares one table (`0x8044F330`, 7 accessors in the park) and Pikachu
-  (`0x80B3EEE4`, from the camera's follow handle) is not among them; with no battle in the test scripts, a wrong guess
-  could not be caught, and would make the enemies the invincible ones.
+- The player (table `0x8044BB9C`, Pikachu at `0x80B3EEE4` in the park; the team's other playable has the same table)
+  does not go through the movement update: its body (+0x9C) keeps the position at +0x8, already moved for the frame
+  when the game hands it to its set-position step (`0x800C3FC0`, hooked; found with `WP_WATCH` on that position in a
+  `WP_TRACE_CALLS` build). The non-player callers of that step keep their own tables.
+- Running speed and jump height (`cheats.run_speed`, `cheats.jump`): the step from the position left by the previous
+  call is scaled (sideways by the speed, upward by the jump; falling is left alone) and handed on through a copy on the
+  stack, so the game's collision still applies. Steps over 3 units (warps, scene changes) are not scaled. Headless:
+  walking 0.32 to 0.70 a frame at 200 %, jumps 7.56 to 15.1 units at 200 %, landing back on the same ground height.
+- Damage (`cheats.damage_dealt`, `cheats.damage_taken`): `LifeModuleImpl` subtracts f1 from its +0x8 (`0x800B01C0`,
+  hooked, matched from the rival's USA address like the others). The player's life is its accessor's (+0xC, table
+  `0x8044B0D8`) +0x60, as in the rival; any other life losing points was hit by the player. Not seen in a battle in
+  headless runs (none in the test scripts): each scaled hit is logged under `cheats` to check it.
 - Fly camera (`keys.fly_camera`, F6): in the field camera hook, after the game's own update, the eye starts where the
   game's is and turns with the mouse (pitch within 1.5 rad); move keys go along the look, Space and C up and down, 20
   units a second (4 times with Shift; Pikachu is about 4 tall). The game's eye and target are put back before its next

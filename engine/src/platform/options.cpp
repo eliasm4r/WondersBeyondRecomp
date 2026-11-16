@@ -36,7 +36,7 @@ constexpr const char* kLiveKeys[] = {
     "video.brightness",     "video.contrast",       "video.saturation",      "video.gamma",        "video.colors_reset",
     "camera.free",          "camera.mouse_speed",   "camera.stick_speed",    "camera.invert_y",    "video.bug_recorder",
     "system.check_updates", "system.update",        "video.aspect",          "game.text_speed",
-    "game.skip_movies",     "game.button_icons",    "video.hd_textures",   "game.save_photos",     "cheats.berries",       "cheats.prices",        "cheats.chase_speed",
+    "game.skip_movies",     "game.button_icons",    "video.hd_textures",   "game.save_photos",     "cheats.berries",       "cheats.prices",        "cheats.chase_speed",   "cheats.damage_dealt",  "cheats.damage_taken",  "cheats.run_speed",     "cheats.jump",
 };
 
 struct Language {
@@ -217,7 +217,7 @@ std::vector<std::string> tab_keys(size_t tab, Device device) {
         return keys;
     }
     case 6:
-        return {kFlyCamera, "cheats.berries", "cheats.prices", "cheats.chase_speed"};
+        return {kFlyCamera, "cheats.run_speed", "cheats.jump", "cheats.damage_dealt", "cheats.damage_taken", "cheats.berries", "cheats.prices", "cheats.chase_speed"};
     default:
         return {};
     }
@@ -283,6 +283,18 @@ std::vector<std::string> choices(const std::string& key) {
     }
     if (key == "cheats.chase_speed") {
         return {"50", "75", "100", "125", "150"};
+    }
+    if (key == "cheats.damage_dealt") {
+        return {"100", "150", "200", "300", "1000"};
+    }
+    if (key == "cheats.damage_taken") {
+        return {"100", "75", "50", "25", "0"};
+    }
+    if (key == "cheats.run_speed") {
+        return {"100", "125", "150", "200"};
+    }
+    if (key == "cheats.jump") {
+        return {"100", "150", "200", "300"};
     }
     if (key == "overlay.level") {
         return {"minimal", "standard", "full"};

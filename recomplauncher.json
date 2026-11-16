@@ -224,6 +224,52 @@
       "defaults": { "cheats/chase_speed": "100" }
     },
     {
+      "id": "cheat_run_speed", "label": "Cheats: running speed",
+      "help": "How fast your Pokémon walks and runs.",
+      "choices": [
+        { "label": "100 %", "set": { "cheats/run_speed": "100" } },
+        { "label": "125 %", "set": { "cheats/run_speed": "125" } },
+        { "label": "150 %", "set": { "cheats/run_speed": "150" } },
+        { "label": "200 %", "set": { "cheats/run_speed": "200" } }
+      ],
+      "defaults": { "cheats/run_speed": "100" }
+    },
+    {
+      "id": "cheat_jump", "label": "Cheats: jump height",
+      "help": "How high your Pokémon jumps.",
+      "choices": [
+        { "label": "100 %", "set": { "cheats/jump": "100" } },
+        { "label": "150 %", "set": { "cheats/jump": "150" } },
+        { "label": "200 %", "set": { "cheats/jump": "200" } },
+        { "label": "300 %", "set": { "cheats/jump": "300" } }
+      ],
+      "defaults": { "cheats/jump": "100" }
+    },
+    {
+      "id": "cheat_damage_dealt", "label": "Cheats: damage dealt",
+      "help": "How hard your hits are in battles: higher wins faster.",
+      "choices": [
+        { "label": "100 %", "set": { "cheats/damage_dealt": "100" } },
+        { "label": "150 %", "set": { "cheats/damage_dealt": "150" } },
+        { "label": "200 %", "set": { "cheats/damage_dealt": "200" } },
+        { "label": "300 %", "set": { "cheats/damage_dealt": "300" } },
+        { "label": "1000 %", "set": { "cheats/damage_dealt": "1000" } }
+      ],
+      "defaults": { "cheats/damage_dealt": "100" }
+    },
+    {
+      "id": "cheat_damage_taken", "label": "Cheats: damage taken",
+      "help": "How hard you are hit in battles: 0% makes you unbeatable.",
+      "choices": [
+        { "label": "100 %", "set": { "cheats/damage_taken": "100" } },
+        { "label": "75 %", "set": { "cheats/damage_taken": "75" } },
+        { "label": "50 %", "set": { "cheats/damage_taken": "50" } },
+        { "label": "25 %", "set": { "cheats/damage_taken": "25" } },
+        { "label": "0 %", "set": { "cheats/damage_taken": "0" } }
+      ],
+      "defaults": { "cheats/damage_taken": "100" }
+    },
+    {
       "id": "save_backups", "label": "Save backups kept",
       "help": "How many copies of your save are kept; one is made each time the game starts.",
       "choices": [
