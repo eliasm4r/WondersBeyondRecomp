@@ -96,7 +96,7 @@ FastClock::time_point FastClock::now() noexcept {
         return time_point(std::chrono::duration_cast<duration>(std::chrono::steady_clock::now().time_since_epoch()));
     }
     uint64_t ticks = 0;
-    asm volatile("isb; mrs %0, cntvct_el0" : "=r"(ticks));
+    asm volatile("mrs %0, cntvct_el0" : "=r"(ticks));
     return time_point(duration(static_cast<int64_t>(ticks / frequency * 1000000000ull + ticks % frequency * 1000000000ull / frequency)));
 }
 #else

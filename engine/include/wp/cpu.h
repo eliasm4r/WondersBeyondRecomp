@@ -407,7 +407,7 @@ inline double force25(double value) {
     return fpr_from_bits(integral);
 }
 
-inline double madd_single(double a, double c, double b) {
+[[gnu::always_inline]] inline double madd_single(double a, double c, double b) {
     double rounded = force25(c);
     double result = fused_multiply_add(a, rounded, b);
     uint64_t bits = fpr_bits(result);
