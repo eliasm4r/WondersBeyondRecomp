@@ -1478,6 +1478,15 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
   Folders adb creates there belong to the shell user with mode `drwxrws---` (group `ext_data_rw`), and the app, which
   sees `Android/data` straight from the lower file system, could not open them: the game said its files were missing
   (Xiaomi, HyperOS 3, Android 16). The script then opens them with `chmod 777` (folders) and `666` (files).
+- First run on a phone (Redmi Note 13 Pro 5G class, Snapdragon 7s Gen 2, Adreno 710): 5 fps on the title screen with
+  the processor 80 % idle. simpleperf (the package is `profileable`) showed the drawing thread 68 % in the Adreno
+  driver's `memcpy` under `upload_run`: each `glMapBufferRange` of the 16 MB vertex ring, even unsynchronized, copied
+  the whole buffer and flushed the commands. With `GL_EXT_buffer_storage` the three run rings (vertices, indices,
+  rows) are now created once with persistent, coherent mapping and written in place. Each ring is used in two halves:
+  entering a half puts a fence after the other one and waits for the fence put when this half was left last time.
+  Result: 30 fps on the title screen, drawing 22 ms per second instead of 1050. The limit is then the game's own
+  thread (90 % busy, the DSP taking about 40 % of it). Kept models still use `glBufferSubData`: they can be rewritten
+  in place while a draw that reads them is still queued.
 - Fonts on Android come from `/system/fonts` (Roboto, Noto Sans, Droid Sans Mono).
 - On Android and in the Steam Deck's gaming mode (`SteamDeck=1` or a gamescope display) the game opens on the whole
   screen and the title bar is never drawn.

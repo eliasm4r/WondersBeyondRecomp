@@ -22,6 +22,7 @@
         android:appCategory="game"
         android:extractNativeLibs="true"
         android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+        <profileable android:shell="true" />
         <activity
             android:name="io.github.eliasm4r.wondersbeyondrecomp.GameActivity"
             android:exported="true"
