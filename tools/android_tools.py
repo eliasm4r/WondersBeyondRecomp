@@ -125,6 +125,7 @@ def install_on_phone(saves):
         adb("push", "--sync", str(ROOT / "game" / "textures"), PHONE_FOLDER + "/")
     if saves and (ROOT / "game" / "nand").is_dir():
         adb("push", "--sync", str(ROOT / "game" / "nand"), PHONE_FOLDER + "/")
+    adb("shell", f"find {PHONE_FOLDER} -type d -exec chmod 777 {{}} + ; find {PHONE_FOLDER} -type f -exec chmod 666 {{}} +")
     adb("shell", "am", "start", "-n", f"{PACKAGE}/.GameActivity", check=False)
     print("the game is on the phone", flush=True)
     return 0

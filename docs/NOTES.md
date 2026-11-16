@@ -1475,6 +1475,9 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
 - The automatic internal resolution is 2x on Android instead of 4x: phone GPUs are far slower.
 - `tools/android_tools.py --install` also downloads Android's platform tools and, through adb, installs the package,
   copies `game/extracted` (and `game/textures`, and `game/nand` with `--saves`) to the app's folder and starts it.
+  Folders adb creates there belong to the shell user with mode `drwxrws---` (group `ext_data_rw`), and the app, which
+  sees `Android/data` straight from the lower file system, could not open them: the game said its files were missing
+  (Xiaomi, HyperOS 3, Android 16). The script then opens them with `chmod 777` (folders) and `666` (files).
 - Fonts on Android come from `/system/fonts` (Roboto, Noto Sans, Droid Sans Mono).
 - On Android and in the Steam Deck's gaming mode (`SteamDeck=1` or a gamescope display) the game opens on the whole
   screen and the title bar is never drawn.
