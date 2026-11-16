@@ -24,7 +24,11 @@ struct Option {
 
 const Option kBaseOptions[] = {
     {"video.scale", "0"},
+#ifdef __ANDROID__
+    {"video.fps", "30"},
+#else
     {"video.fps", "60"},
+#endif
     {"video.fullscreen", "0"},
     {"video.vsync", "0"},
     {"video.show_fps", "1"},
