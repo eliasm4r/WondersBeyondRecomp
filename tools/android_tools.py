@@ -116,7 +116,9 @@ def install_on_phone(saves):
     ready = [line.split()[0] for line in devices if line.strip().endswith("device")]
     if len(ready) != 1:
         sys.exit("connect one phone with a USB cable, with USB debugging on (Settings > Developer options), and accept this computer on the phone")
-    adb("install", "-r", str(APK))
+    if adb("install", "-r", str(APK), check=False).returncode != 0:
+        sys.exit("the phone refused the install: keep it unlocked and accept the prompt on its screen. On Xiaomi, Redmi and POCO, also turn on "
+                 "\"Install via USB\" in Developer options (on Oppo and Realme: \"Disable permission monitoring\"), then run this again")
     adb("shell", "mkdir", "-p", PHONE_FOLDER)
     adb("push", "--sync", str(extracted), PHONE_FOLDER + "/")
     if (ROOT / "game" / "textures").is_dir():
