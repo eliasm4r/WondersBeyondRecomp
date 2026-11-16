@@ -174,7 +174,12 @@ layout(set = 1, binding = 7) uniform sampler2D t7;
 
 layout(location = 0) in vec4 v_c0;
 layout(location = 1) in vec4 v_c1;
-layout(location = 2) in vec3 v_uv[8];
+#ifndef TEX_IO
+#define TEX_IO 8
+#endif
+#if TEX_IO > 0
+layout(location = 2) in vec3 v_uv[TEX_IO];
+#endif
 
 #ifdef WP_SINGLE_OUTPUT
 layout(location = 0) out vec4 out_color;
@@ -189,16 +194,34 @@ vec2 projected(vec3 uv) {
 }
 
 vec2 select_uv(uint i) {
-    switch (i) {
-    case 0u: return projected(v_uv[0]);
+#if TEX_IO > 0
+    switch (min(i, uint(TEX_IO - 1))) {
+#if TEX_IO > 1
     case 1u: return projected(v_uv[1]);
+#endif
+#if TEX_IO > 2
     case 2u: return projected(v_uv[2]);
+#endif
+#if TEX_IO > 3
     case 3u: return projected(v_uv[3]);
+#endif
+#if TEX_IO > 4
     case 4u: return projected(v_uv[4]);
+#endif
+#if TEX_IO > 5
     case 5u: return projected(v_uv[5]);
+#endif
+#if TEX_IO > 6
     case 6u: return projected(v_uv[6]);
-    default: return projected(v_uv[7]);
+#endif
+#if TEX_IO > 7
+    case 7u: return projected(v_uv[7]);
+#endif
+    default: return projected(v_uv[0]);
     }
+#else
+    return vec2(0.0);
+#endif
 }
 
 vec4 sample_map(uint m, vec2 uv, vec2 dx, vec2 dy) {

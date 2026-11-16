@@ -172,6 +172,38 @@ if(NOT WIN32 OR WP_OPENGL)
                 "tev.frag|vk_tev_early_frag|-DWP_EARLY"
                 "tev.frag|vk_tev_single_frag|-DWP_SINGLE_OUTPUT"
                 "tev.frag|vk_tev_early_single_frag|-DWP_EARLY|-DWP_SINGLE_OUTPUT")
+            set(WP_VK_SIZED
+                "tev.vert|vk_tev_vert|kTevVertexSized|"
+                "run.vert|vk_run_vert|kRunVertexSized|"
+                "tev.frag|vk_tev_frag|kTevSized|"
+                "tev.frag|vk_tev_early_frag|kTevEarlySized|-DWP_EARLY"
+                "tev.frag|vk_tev_single_frag|kTevSingleSized|-DWP_SINGLE_OUTPUT"
+                "tev.frag|vk_tev_early_single_frag|kTevEarlySingleSized|-DWP_EARLY|-DWP_SINGLE_OUTPUT")
+            set(WP_VK_SIZED_HEADER "")
+            foreach(entry IN LISTS WP_VK_SIZED)
+                string(REPLACE "|" ";" parts "${entry}")
+                list(GET parts 0 shader_source)
+                list(GET parts 1 shader_name)
+                list(GET parts 2 array_name)
+                list(SUBLIST parts 3 -1 shader_defines)
+                list(FILTER shader_defines EXCLUDE REGEX "^$")
+                set(sizes "")
+                foreach(size RANGE 0 7)
+                    set(sized_entry "${shader_source}|${shader_name}_io${size}|-DTEX_IO=${size}")
+                    foreach(define IN LISTS shader_defines)
+                        string(APPEND sized_entry "|${define}")
+                    endforeach()
+                    list(APPEND WP_VK_SHADERS "${sized_entry}")
+                    string(APPEND WP_VK_SIZED_HEADER "const uint32_t ${array_name}${size}[] =
+#include \"${shader_name}_io${size}.inc\"
+    ;
+")
+                    string(APPEND sizes "{${array_name}${size}, sizeof ${array_name}${size}}, ")
+                endforeach()
+                string(APPEND WP_VK_SIZED_HEADER "const ShaderCode ${array_name}[8] = {${sizes}};
+")
+            endforeach()
+            file(CONFIGURE OUTPUT "${WP_VK_OUTPUT}/vk_sized_shaders.inc" CONTENT "${WP_VK_SIZED_HEADER}" @ONLY)
             set(WP_VK_HEADERS)
             foreach(entry IN LISTS WP_VK_SHADERS)
                 string(REPLACE "|" ";" parts "${entry}")

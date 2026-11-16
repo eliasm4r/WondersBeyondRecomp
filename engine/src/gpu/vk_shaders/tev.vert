@@ -1,5 +1,9 @@
 #version 450
 
+#ifndef TEX_IO
+#define TEX_IO 8
+#endif
+
 layout(set = 0, binding = 1, std430) readonly buffer Words {
     float words[];
 };
@@ -17,7 +21,9 @@ layout(push_constant) uniform Draw {
 
 layout(location = 0) out vec4 v_c0;
 layout(location = 1) out vec4 v_c1;
-layout(location = 2) out vec3 v_uv[8];
+#if TEX_IO > 0
+layout(location = 2) out vec3 v_uv[TEX_IO];
+#endif
 
 invariant gl_Position;
 
@@ -44,8 +50,10 @@ void main() {
     gl_Position = vec4(position.x, -position.y, position.z, position.w);
     v_c0 = c0;
     v_c1 = c1;
-    for (uint i = 0u; i < 8u; i++) {
+#if TEX_IO > 0
+    for (uint i = 0u; i < uint(TEX_IO); i++) {
         uint uv = at + 12u + 3u * i;
         v_uv[i] = vec3(words[uv], words[uv + 1u], words[uv + 2u]);
     }
+#endif
 }

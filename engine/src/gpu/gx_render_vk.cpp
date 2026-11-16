@@ -90,6 +90,13 @@ const uint32_t kTevEarlySingleCode[] =
 #include "vk_tev_early_single_frag.inc"
     ;
 
+struct ShaderCode {
+    const uint32_t* code;
+    size_t bytes;
+};
+
+#include "vk_sized_shaders.inc"
+
 constexpr uint32_t kVertexCapacity = 1 << 16;
 constexpr uint32_t kRingSegments = 4;
 constexpr uint32_t kScreenRingBytes = 64u << 20;
@@ -301,6 +308,9 @@ struct Device {
     VkShaderModule tev_vertex = VK_NULL_HANDLE;
     VkShaderModule run_vertex = VK_NULL_HANDLE;
     VkShaderModule tev_fragment[2] = {};
+    VkShaderModule tev_vertex_sized[8] = {};
+    VkShaderModule run_vertex_sized[8] = {};
+    VkShaderModule tev_fragment_sized[2][8] = {};
     VkRenderPass efb_passes[2][3] = {};
     VkRenderPass target_pass = VK_NULL_HANDLE;
     VkPipeline copy = VK_NULL_HANDLE;
@@ -1449,6 +1459,15 @@ VkPipeline build_tev(uint64_t key, const std::string& name) {
     PipelineShape shape;
     shape.vertex = kind ? g_device.run_vertex : g_device.tev_vertex;
     shape.fragment = g_device.tev_fragment[early ? 1 : 0];
+    if (name.size() >= kVariantHeader * sizeof(uint32_t)) {
+        uint32_t indirect = 0;
+        std::memcpy(&indirect, name.data() + 6 * sizeof(uint32_t), sizeof indirect);
+        uint32_t coords = (indirect >> 8) & 15;
+        if (coords < 8 && g_device.tev_fragment_sized[early ? 1 : 0][coords]) {
+            shape.vertex = kind ? g_device.run_vertex_sized[coords] : g_device.tev_vertex_sized[coords];
+            shape.fragment = g_device.tev_fragment_sized[early ? 1 : 0][coords];
+        }
+    }
     shape.specialization = &specialization.info;
     shape.layout = g_device.tev_layout;
     shape.pass = g_device.efb_passes[0][0];
@@ -2034,6 +2053,18 @@ bool create_device_objects() {
     } else {
         g_device.tev_fragment[0] = make_module(kTevSingleCode, sizeof kTevSingleCode);
         g_device.tev_fragment[1] = make_module(kTevEarlySingleCode, sizeof kTevEarlySingleCode);
+    }
+    for (int size = 0; size < 8; size++) {
+        const ShaderCode& plain = g_vk.dual_source ? kTevSized[size] : kTevSingleSized[size];
+        const ShaderCode& early = g_vk.dual_source ? kTevEarlySized[size] : kTevEarlySingleSized[size];
+        g_device.tev_vertex_sized[size] = make_module(kTevVertexSized[size].code, kTevVertexSized[size].bytes);
+        g_device.run_vertex_sized[size] = make_module(kRunVertexSized[size].code, kRunVertexSized[size].bytes);
+        g_device.tev_fragment_sized[0][size] = make_module(plain.code, plain.bytes);
+        g_device.tev_fragment_sized[1][size] = make_module(early.code, early.bytes);
+        if (!g_device.tev_vertex_sized[size] || !g_device.run_vertex_sized[size] || !g_device.tev_fragment_sized[0][size] || !g_device.tev_fragment_sized[1][size]) {
+            g_device.tev_fragment_sized[0][size] = VK_NULL_HANDLE;
+            g_device.tev_fragment_sized[1][size] = VK_NULL_HANDLE;
+        }
     }
     if (!g_device.static_pool || !g_device.fullscreen_vertex || !g_device.present_fragment || !g_device.present_smooth_fragment || !g_device.overlay_fragment ||
         !g_device.clear_fragment || !g_device.copy_fragment || !g_device.tev_vertex || !g_device.run_vertex || !g_device.tev_fragment[0] || !g_device.tev_fragment[1]) {
