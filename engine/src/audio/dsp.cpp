@@ -73,6 +73,7 @@ constexpr uint32_t kFramesPerBlock = 8;
 constexpr uint16_t kIramWords = 0x1000;
 constexpr double kMaxPumpStep = 0.0005;
 constexpr int kCatchUpRate = 4;
+constexpr double kMaxBehind = 0.25;
 
 using Clock = wp::FastClock;
 
@@ -102,6 +103,7 @@ struct Statistics {
     double worst_start = 0.0;
     double dsp_seconds = 0.0;
     double dsp_cycles = 0.0;
+    double skipped = 0.0;
     Clock::time_point since = Clock::now();
 };
 
@@ -482,9 +484,14 @@ void pump_audio_dma(Clock::time_point wall) {
     Clock::duration elapsed = std::min(wall - g_audio_dma.last_call, step);
     g_audio_dma.last_call = wall;
     g_audio_dma.clock = std::min(wall, g_audio_dma.clock + elapsed * kCatchUpRate);
-    Clock::time_point now = g_audio_dma.clock;
     uint32_t rate = (rd32(kAudioControl) & kAudioDmaRate32k) ? 32000 : 48000;
     const auto block = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(double(kFramesPerBlock) / rate));
+    if (std::chrono::duration<double>(wall - g_audio_dma.clock).count() > kMaxBehind) {
+        g_statistics.skipped += std::chrono::duration<double>(wall - g_audio_dma.clock).count();
+        g_audio_dma.clock = wall;
+        g_audio_dma.next_block = std::max(g_audio_dma.next_block, wall - block);
+    }
+    Clock::time_point now = g_audio_dma.clock;
     while (true) {
         bool enabled = (g_audio_dma.control & 0x8000) != 0;
         uint32_t source = 0;
@@ -537,10 +544,10 @@ void report(Clock::time_point now) {
     }
     g_load_percent = 100.0 * g_statistics.dsp_seconds / seconds;
     if (log::enabled()) {
-        log::write("audio", "buffers %.1f/s, late starts %u, %u stale and %u overwritten blocks, worst start %.2f ms, DSP %.1f Mcycles/s using %.1f%% of the CPU thread, DMA %.2f ms behind",
+        log::write("audio", "buffers %.1f/s, late starts %u, %u stale and %u overwritten blocks, worst start %.2f ms, DSP %.1f Mcycles/s using %.1f%% of the CPU thread, DMA %.2f ms behind, %.0f ms skipped after stalls",
                    g_statistics.buffers / seconds, g_statistics.late_starts, g_statistics.stale_blocks, g_statistics.overwritten_blocks, g_statistics.worst_start * 1000.0,
                    g_statistics.dsp_cycles / seconds / 1e6, 100.0 * g_statistics.dsp_seconds / seconds,
-                   std::chrono::duration<double>(now - g_audio_dma.clock).count() * 1000.0);
+                   std::chrono::duration<double>(now - g_audio_dma.clock).count() * 1000.0, g_statistics.skipped * 1000.0);
     }
     g_statistics = Statistics{};
     g_statistics.since = now;

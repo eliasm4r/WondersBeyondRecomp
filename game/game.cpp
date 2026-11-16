@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "attractions.h"
+#include "modifiers.h"
 #include "prompts.h"
 #include "wp/audio.h"
 #include "wp/cpu.h"
@@ -17,10 +18,12 @@
 #include "wp/free_camera.h"
 #include "wp/gamepad.h"
 #include "wp/input.h"
+#include "wp/keymap.h"
 #include "wp/log.h"
 #include "wp/memory.h"
 #include "wp/runtime.h"
 #include "wp/settings.h"
+#include "wp/video.h"
 #include "lookup.h"
 
 namespace wp::game {
@@ -215,6 +218,7 @@ constexpr float kHeightRate = 10.0f;
 constexpr float kFloorRiseRate = 16.0f;
 constexpr float kFloorFallRate = 8.0f;
 constexpr auto kCameraIdle = std::chrono::milliseconds(500);
+constexpr float kCameraStepSeconds = 1.0f / 59.94f;
 constexpr auto kPlaceLogPeriod = std::chrono::seconds(2);
 
 void write_vector(uint32_t address, const float value[3]) {
@@ -323,6 +327,86 @@ bool collision_between(Cpu& c, const float start[3], const float extent[3], floa
     return found;
 }
 
+constexpr float kFlySpeed = 20.0f;
+constexpr float kFlyFast = 4.0f;
+constexpr float kFlyPitch = 1.5f;
+constexpr float kFlyLowest = -70.0f;
+constexpr float kFlyNewPlace = 40.0f;
+constexpr uint32_t kCameraFollowed = 0xb8;
+constexpr uint32_t kNobodyFollowed = 0xFFFFFFFF;
+
+uint32_t g_flown_camera = 0;
+
+void camera_view(Cpu& c, HleFunction original) {
+    uint32_t camera = c.r[3];
+    if (camera == 0 || camera != g_flown_camera || !free_camera::flying()) {
+        original(c);
+        return;
+    }
+    uint32_t followed = rd32(camera + kCameraFollowed);
+    wr32(camera + kCameraFollowed, kNobodyFollowed);
+    original(c);
+    wr32(camera + kCameraFollowed, followed);
+}
+
+constexpr int kKeyShift = 0x10;
+constexpr int kKeyRise = 0x20;
+constexpr int kKeySink = 'C';
+
+float fly_key(keymap::Action action) {
+    for (int code : input::bindings().of(action)) {
+        if (code > 0 && code < 0x100 && video::key_down(code)) {
+            return 1.0f;
+        }
+    }
+    return 0.0f;
+}
+
+void fly(Cpu& c, uint32_t camera, bool start, float mouse_x, float mouse_y, float seconds, float eye[3], float target[3]) {
+    static float yaw = 0.0f;
+    static float pitch = 0.0f;
+    if (start) {
+        float look[3];
+        for (uint32_t i = 0; i < 3; i++) {
+            eye[i] = rdf32(camera + kCameraEye + 4 * i);
+            look[i] = rdf32(camera + kCameraTarget + 4 * i) - eye[i];
+        }
+        free_camera::View view = free_camera::from_offset(look[0], look[1], look[2]);
+        yaw = view.yaw;
+        pitch = view.elevation;
+        log::write("camera", "fly from %.0f %.0f %.0f", eye[0], eye[1], eye[2]);
+    }
+    float stick_x = 0.0f;
+    float stick_y = 0.0f;
+    gamepad::camera_stick(stick_x, stick_y);
+    free_camera::Turn turn = free_camera::turn(mouse_x, mouse_y, stick_x, stick_y, seconds, free_camera::current());
+    yaw = free_camera::wrap(yaw + turn.yaw);
+    pitch = std::clamp(pitch - turn.pitch, -kFlyPitch, kFlyPitch);
+    float forward[3];
+    free_camera::to_offset({yaw, pitch, 1.0f}, forward);
+    float right[3] = {-std::cos(yaw), 0.0f, std::sin(yaw)};
+    float pad_along = 0.0f;
+    float pad_side = 0.0f;
+    float pad_rise = 0.0f;
+    bool pad_fast = false;
+    gamepad::fly_controls(pad_along, pad_side, pad_rise, pad_fast);
+    float along = std::clamp(fly_key(keymap::Action::Up) - fly_key(keymap::Action::Down) + pad_along, -1.0f, 1.0f);
+    float side = std::clamp(fly_key(keymap::Action::Right) - fly_key(keymap::Action::Left) + pad_side, -1.0f, 1.0f);
+    float rise = std::clamp((video::key_down(kKeyRise) ? 1.0f : 0.0f) - (video::key_down(kKeySink) ? 1.0f : 0.0f) + pad_rise, -1.0f, 1.0f);
+    float step = kFlySpeed * seconds * (video::key_down(kKeyShift) || pad_fast ? kFlyFast : 1.0f);
+    for (int i = 0; i < 3; i++) {
+        eye[i] += (forward[i] * along + right[i] * side + (i == 1 ? rise : 0.0f)) * step;
+    }
+    float ground = 0.0f;
+    if (ground_under(c, eye, step + kEyeClearance, kEyeClearance, ground)) {
+        eye[1] = std::max(eye[1], ground + kEyeClearance);
+    }
+    eye[1] = std::max(eye[1], kFlyLowest);
+    for (int i = 0; i < 3; i++) {
+        target[i] = eye[i] + forward[i];
+    }
+}
+
 void field_camera(Cpu& c, HleFunction original) {
     static free_camera::Orbit orbit;
     static uint32_t owner = 0;
@@ -353,11 +437,35 @@ void field_camera(Cpu& c, HleFunction original) {
     float mouse_y = 0.0f;
     free_camera::take_mouse(mouse_x, mouse_y);
     bool recenter = free_camera::take_recenter();
+    static bool flew = false;
+    if (free_camera::flying()) {
+        float moved = 0.0f;
+        for (uint32_t i = 0; i < 3; i++) {
+            float target = rdf32(camera + kCameraTarget + 4 * i);
+            moved += (target - game_target[i]) * (target - game_target[i]);
+            game_eye[i] = rdf32(camera + kCameraEye + 4 * i);
+            game_target[i] = target;
+        }
+        bool start = !flew || (camera != owner && moved > kFlyNewPlace * kFlyNewPlace);
+        fly(c, camera, start, mouse_x, mouse_y, start ? 0.0f : kCameraStepSeconds, our_eye, our_target);
+        flew = true;
+        owner = camera;
+        last = now;
+        write_vector(camera + kCameraEye, our_eye);
+        write_vector(camera + kCameraShownEye, our_eye);
+        write_vector(camera + kCameraTarget, our_target);
+        wrote = true;
+        g_flown_camera = camera;
+        free_camera::note_driving();
+        return;
+    }
+    flew = false;
+    g_flown_camera = 0;
     if (!settings.enabled) {
         owner = 0;
         return;
     }
-    float seconds = fresh ? 0.0f : std::min(std::chrono::duration<float>(now - last).count(), 0.1f);
+    float seconds = fresh ? 0.0f : kCameraStepSeconds;
     float offset[3];
     for (uint32_t i = 0; i < 3; i++) {
         game_eye[i] = rdf32(camera + kCameraEye + 4 * i);
@@ -628,17 +736,16 @@ int64_t steady_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
-void movie_scene_update(Cpu& c, HleFunction original) {
+bool movie_skip_step(uint32_t owner, bool playing) {
     static const settings::LiveFlag enabled("game.skip_movies", "WP_SKIP_MOVIES");
     MovieSkip& skip = g_movie_skip;
-    uint32_t scene = c.r[3];
-    if (scene != skip.scene) {
+    if (owner != skip.scene) {
         if (skip.charging) {
             gx::set_veil(0.0f, kVeilRelease);
         }
         lift_movie_veil(kVeilOut);
         skip = MovieSkip{};
-        skip.scene = scene;
+        skip.scene = owner;
     }
     bool held = (input::held(0) & kSkipButtons) != 0;
     if (!held) {
@@ -647,7 +754,6 @@ void movie_scene_update(Cpu& c, HleFunction original) {
     } else if (skip.armed && skip.since == 0) {
         skip.since = steady_ms();
     }
-    bool playing = rd8(scene + kMovieSceneStarted) != 0 && rd8(kMoviePlayer + kMovieState) == kMoviePlaying;
     int64_t held_for = skip.since != 0 ? steady_ms() - skip.since : 0;
     if (!enabled() || !playing || skip.since == 0) {
         if (skip.charging) {
@@ -655,7 +761,9 @@ void movie_scene_update(Cpu& c, HleFunction original) {
             gx::set_veil(0.0f, kVeilRelease);
         }
         hint::hide();
-    } else if (held_for >= kSkipHoldMs) {
+        return false;
+    }
+    if (held_for >= kSkipHoldMs) {
         log::write("game", "movie skipped");
         wr8(kMoviePlayer + kMovieState, kMovieEnded);
         skip.armed = false;
@@ -664,13 +772,24 @@ void movie_scene_update(Cpu& c, HleFunction original) {
         gx::set_veil(1.0f, kVeilOut);
         g_movie_veiled = steady_ms();
         hint::hide();
-    } else {
-        if (!skip.charging) {
-            skip.charging = true;
-            gx::set_veil(kChargeVeil, (kSkipHoldMs - held_for) / 1000.0);
-        }
-        hint::hold("hint.skip_movie", kSkipHoldMs / 1000.0, held_for / 1000.0);
+        return true;
     }
+    if (!skip.charging) {
+        skip.charging = true;
+        gx::set_veil(kChargeVeil, (kSkipHoldMs - held_for) / 1000.0);
+    }
+    hint::hold("hint.skip_movie", kSkipHoldMs / 1000.0, held_for / 1000.0);
+    return true;
+}
+
+constexpr int64_t kLoneMovieMs = 250;
+int64_t g_movie_scene_seen = 0;
+bool g_lone_movie = false;
+
+void movie_scene_update(Cpu& c, HleFunction original) {
+    uint32_t scene = c.r[3];
+    g_movie_scene_seen = steady_ms();
+    movie_skip_step(scene, rd8(scene + kMovieSceneStarted) != 0 && rd8(kMoviePlayer + kMovieState) == kMoviePlaying);
     original(c);
     if (c.r[3] != 0) {
         hint::hide();
@@ -754,6 +873,23 @@ bool skip_scene(Cpu& c, bool scene, bool over) {
     if (g_movie_veiled != 0 && now - g_movie_veiled >= kMovieVeilLongestMs) {
         lift_movie_veil(0.0);
     }
+    uint8_t movie = rd8(kMoviePlayer + kMovieState);
+    if (now - g_movie_scene_seen > kLoneMovieMs) {
+        bool playing = movie == kMoviePlaying;
+        if (playing || g_lone_movie) {
+            if (playing && !g_lone_movie) {
+                log::write("game", "movie playing outside a movie scene");
+            }
+            g_lone_movie = playing;
+            movie_skip_step(kMoviePlayer, playing);
+            if (playing) {
+                return false;
+            }
+        }
+        if (g_movie_veiled != 0 && !playing && movie != kMovieEnded) {
+            lift_movie_veil(kVeilOut);
+        }
+    }
     bool active = state.active;
     if (active && (over || now - state.started >= kSkipLongestMs)) {
         active = false;
@@ -833,9 +969,10 @@ HookFunction hook(const char* name) {
                    {"FindResourceByNumber", find_resource_by_number},
                    {"AddSceneParameter", add_scene_parameter}, {"PickScene", pick_scene}, {"SceneManagerRunBegin", scene_manager_run_begin},
                    {"DanceFrame", dance_frame}, {"DanceFrameSecondPart", dance_frame_second_part},
-                   {"DanceJudge", dance_judge}, {"CullingFrustum", culling_frustum},
+                   {"DanceJudge", dance_judge}, {"CullingFrustum", culling_frustum}, {"CameraView", camera_view},
                    {"DialogueWriterStep", dialogue_writer_step}, {"MovieSceneUpdate", movie_scene_update},
-                   {"FontResource", font_resource}, {"TextureBind", texture_bind}, {"MessageUpdate", message_update}, {"LayoutDraw", layout_draw}};
+                   {"FontResource", font_resource}, {"TextureBind", texture_bind}, {"MessageUpdate", message_update}, {"LayoutDraw", layout_draw},
+                   {"KineticEnergyUpdate", kinetic_energy_update}, {"ChaseStep", chase_step}, {"PlayerMove", player_move}, {"LifeDamage", life_damage}};
     for (const auto& entry : kHooks) {
         if (std::strcmp(entry.name, name) == 0) {
             return entry.function;

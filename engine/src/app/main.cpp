@@ -87,6 +87,7 @@ LONG WINAPI report_crash(EXCEPTION_POINTERS* info) {
                      static_cast<unsigned long long>(record->ExceptionInformation[1] - reinterpret_cast<uintptr_t>(wp::g_memory)));
     }
     std::fputc(10, stderr);
+    wp::log::flush();
     print_host_stack(*info->ContextRecord);
     wp::print_guest_registers();
     wp::print_call_stack();
@@ -100,6 +101,7 @@ void report_crash(int signal) {
     std::fprintf(stderr, "crash: signal %d", signal);
     std::fputc(10, stderr);
     wp::log::write("crash", "signal %d", signal);
+    wp::log::flush();
     wp::print_guest_registers();
     wp::print_call_stack();
     wp::print_thread_stacks();
@@ -123,6 +125,7 @@ void report_terminate() {
         wp::log::write("crash", "unhandled exception of an unknown type");
     }
     std::fputc(10, stderr);
+    wp::log::flush();
     wp::print_guest_registers();
     wp::print_call_stack();
     wp::print_thread_stacks();
@@ -221,6 +224,7 @@ int run(int argc, char** argv) {
             wp::ipc::report();
             wp::print_profile();
             wp::play_time::save();
+            wp::log::flush();
             std::_Exit(3);
         }).detach();
     }

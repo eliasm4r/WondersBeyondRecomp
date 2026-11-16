@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdint>
 #include <cstdlib>
@@ -65,7 +66,7 @@ bool hide_cursor() {
 std::atomic<bool> g_captured{false};
 
 void update_capture(HWND window) {
-    bool capture = free_camera::current().enabled && free_camera::driving() && GetForegroundWindow() == window && !IsIconic(window) &&
+    bool capture = (free_camera::current().enabled || free_camera::flying()) && free_camera::driving() && GetForegroundWindow() == window && !IsIconic(window) &&
                    !options::menu_open() && !free_camera::pointer_held();
     RECT client{};
     if (capture && GetClientRect(window, &client)) {
@@ -153,6 +154,9 @@ void note_press(int code, int side = 0) {
     if (keys.has(keymap::Action::Screenshot, code) || (side != 0 && keys.has(keymap::Action::Screenshot, side))) {
         g_screenshot_requested = true;
     }
+    if (keys.has(keymap::Action::FlyCamera, code) || (side != 0 && keys.has(keymap::Action::FlyCamera, side))) {
+        free_camera::toggle_fly();
+    }
 }
 
 bool toggle_overlay(HWND window, WPARAM key, LPARAM lparam) {
@@ -194,6 +198,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
     case WM_CLOSE:
     case WM_DESTROY:
         play_time::save();
+        log::flush();
         std::_Exit(0);
     case kTitleMessage: {
         std::string title;
@@ -569,6 +574,7 @@ void save_recent_images() {
     }
     std::string folder = std::string(screenshot::kFolder) + "/" + screenshot::recent_folder(game::description().short_name, local_time());
     std::thread([images = std::move(images), folder] {
+        SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN);
         std::error_code error;
         std::filesystem::create_directories(folder, error);
         for (size_t i = 0; i < images.size(); i++) {
@@ -581,6 +587,13 @@ void save_recent_images() {
 void present_on_gpu(HWND window, double aspect) {
     if (window) {
         gx::render::present_frame(window, aspect);
+    }
+    static const char* recent_at = std::getenv("WP_RECENT_AT");
+    static const auto started = std::chrono::steady_clock::now();
+    if (recent_at && *recent_at && std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count() >= std::atof(recent_at)) {
+        const char* comma = std::strchr(recent_at, ',');
+        recent_at = comma ? comma + 1 : nullptr;
+        save_recent_images();
     }
     if (g_screenshot_requested.exchange(false)) {
         save_screenshot();

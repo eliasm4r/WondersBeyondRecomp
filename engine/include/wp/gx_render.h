@@ -49,6 +49,7 @@ struct DrawSource {
 constexpr uint16_t kNoSource = 0xFFFF;
 
 const char* api_name();
+int auto_scale();
 bool interpolating();
 void draw(const ScreenVertex* vertices, uint32_t count, const DrawSource* source = nullptr);
 
@@ -73,6 +74,7 @@ struct VertexRun {
     const uint32_t* palette = nullptr;
     uint64_t palette_serial = 0;
     uint64_t key = 0;
+    uint64_t shape = 0;
     uint32_t camera = 0;
     uint32_t matrix = 0;
 };

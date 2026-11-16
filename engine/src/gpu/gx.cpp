@@ -78,7 +78,7 @@ void publish_performance(double fps, double game_fps, double seconds, double gam
     sample.refresh_hz = gpu.refresh_hz;
     sample.cpu_name = perf::cpu_name();
     sample.api = render::api_name();
-    sample.scale = scale();
+    sample.scale = scale() == 0 ? render::auto_scale() : scale();
     sample.vsync = vsync();
     perf::publish(sample);
 }
@@ -1685,6 +1685,7 @@ void pack_run(uint32_t count, uint32_t helpers) {
                                      g_format.stride | (static_cast<uint64_t>(rows) << 16) | (static_cast<uint64_t>(cull) << 32),
                                      (static_cast<uint64_t>(g_bp[0x94]) << 32) | g_bp[0x88]};
                 run.key = render::hash_bytes(reinterpret_cast<const uint8_t*>(words), sizeof words) | 1;
+                run.shape = render::hash_bytes(reinterpret_cast<const uint8_t*>(words + 1), 4 * sizeof words[0]) | 1;
                 for (uint32_t reg = 0x101A; reg <= 0x1026; reg++) {
                     run.camera = (run.camera ^ g_xf[reg]) * 0x9E3779B1u;
                 }

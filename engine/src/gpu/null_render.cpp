@@ -34,6 +34,10 @@ const char* api_name() {
     return "no renderer";
 }
 
+int auto_scale() {
+    return 4;
+}
+
 bool interpolating() {
     return false;
 }

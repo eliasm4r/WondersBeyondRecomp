@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "wp/fast_clock.h"
+#include "wp/free_camera.h"
 #include "wp/canvas.h"
 #include "wp/color.h"
 #include "wp/control_names.h"
@@ -1514,7 +1515,7 @@ void test_settings_file_keys() {
     wp::settings::load(path);
     CHECK(wp::settings::text("keys.a", nullptr) == "K, MouseX1");
     CHECK(wp::settings::text("keys.screenshot", nullptr) == "F9");
-    CHECK(wp::settings::text("video.scale", nullptr) == "1");
+    CHECK(wp::settings::text("video.scale", nullptr) == "0");
     std::ifstream file(path, std::ios::binary);
     std::stringstream contents;
     contents << file.rdbuf();
@@ -1522,7 +1523,7 @@ void test_settings_file_keys() {
     CHECK(text.find("[keys]\n") != std::string::npos);
     CHECK(text.find("a=K, MouseX1\n") != std::string::npos);
     CHECK(text.find("unknown") == std::string::npos);
-    CHECK(text.find("[video]\nscale=1\n") == 0);
+    CHECK(text.find("[video]\nscale=0\n") == 0);
     for (size_t i = 0; i < wp::keymap::kActionCount; i++) {
         std::string line = "\n" + std::string(wp::keymap::action(i).name) + "=";
         CHECK(text.find(line, text.find("[keys]")) != std::string::npos);
@@ -1583,7 +1584,7 @@ void test_live_settings() {
     wp::settings::LiveFlag mute("audio.mute", nullptr);
     wp::settings::LiveNumber scale("video.scale", nullptr);
     CHECK(!mute());
-    CHECK(scale() == 1);
+    CHECK(scale() == 0);
     uint32_t revision = wp::settings::revision();
     wp::settings::store("audio.mute", "1");
     wp::settings::store("video.scale", "3");
@@ -1614,7 +1615,7 @@ void test_live_settings() {
     CHECK(wp::settings::flag("system.options_menu", nullptr));
     wp::settings::load("");
     CHECK(!mute());
-    CHECK(scale() == 1);
+    CHECK(scale() == 0);
     std::remove(path);
 }
 
@@ -1925,26 +1926,28 @@ void test_options_menu() {
         }
     }
     wp::ui::set_language(wp::ui::Language::English);
-    CHECK(wp::options::kTabCount == 6);
+    CHECK(wp::options::kTabCount == 7);
     CHECK(std::strcmp(wp::ui::label("tab.screen", wp::ui::Language::French), "Écran") == 0);
     CHECK(std::strcmp(wp::ui::label("tab.advanced", wp::ui::Language::English), "Advanced") == 0);
     CHECK(std::strcmp(wp::ui::label("tab.controls", wp::ui::Language::Galician), "Controls") != 0);
     CHECK(std::strcmp(wp::ui::label("help.video.scale", wp::ui::Language::Spanish), wp::ui::label("help.video.scale", wp::ui::Language::English)) != 0);
-    CHECK((wp::options::tab_keys(0) == std::vector<std::string>{"video.scale", "video.fullscreen", "system.widescreen", "video.aspect", "video.vsync", "video.smooth", "video.anisotropy",
+    CHECK((wp::options::tab_keys(0) == std::vector<std::string>{"video.scale", "video.fullscreen", "video.aspect", "system.widescreen", "video.fps", "video.vsync", "video.smooth", "video.anisotropy",
                                                                  "video.brightness", "video.contrast", "video.saturation", "video.gamma", "video.colors_reset"}));
     CHECK(std::strcmp(wp::ui::label("video.colors_reset", wp::ui::Language::French), "Couleurs d'origine") == 0);
     CHECK(std::strcmp(wp::ui::label("video.brightness", wp::ui::Language::French), "Luminosité") == 0);
-    CHECK((wp::options::tab_keys(1) == std::vector<std::string>{"video.fps", "game.text_speed", "game.skip_movies", "game.button_icons", "saves.backups", "system.discord", "stats.play_time"}));
+    CHECK((wp::options::tab_keys(1) == std::vector<std::string>{"game.text_speed", "game.skip_movies", "game.button_icons", "game.save_photos", "saves.backups", "system.discord", "stats.play_time"}));
     CHECK((wp::options::tab_keys(2) == std::vector<std::string>{"audio.volume", "audio.mute", "audio.wiimote_speaker"}));
+    CHECK((wp::options::tab_keys(6) == std::vector<std::string>{"cheats.fly_camera", "cheats.run_speed", "cheats.jump", "cheats.damage_dealt", "cheats.damage_taken", "cheats.berries", "cheats.prices", "cheats.chase_speed"}));
+    CHECK((wp::options::choices("cheats.damage_taken") == std::vector<std::string>{"100", "75", "50", "25", "0"}) && wp::settings::number("cheats.jump", nullptr) == 100);
     CHECK((wp::options::tab_keys(4) == std::vector<std::string>{"system.interface_language", "system.language"}));
     CHECK((wp::options::tab_keys(5) == std::vector<std::string>{"overlay.show", "overlay.level", "overlay.corner", "video.show_fps", "video.custom_textures", "video.hd_textures", "video.dump_textures", "video.bug_recorder", "system.update"}));
     CHECK(wp::options::kind("system.update") == wp::options::Kind::Info);
     CHECK(wp::options::kind("video.hd_textures") == wp::options::Kind::Button);
     std::vector<std::string> keyboard = wp::options::tab_keys(3, wp::options::Device::Keyboard);
-    CHECK(keyboard[0] == "controls.device" && keyboard[1] == "input.hide_cursor" && keyboard.back() == "keys.reset");
+    CHECK(keyboard[0] == "controls.device" && keyboard[1] == "camera.free" && keyboard.back() == "keys.reset");
     CHECK(std::find(keyboard.begin(), keyboard.end(), "keys.overlay") != keyboard.end());
     std::vector<std::string> gamepad = wp::options::tab_keys(3, wp::options::Device::Gamepad);
-    CHECK(gamepad[0] == "controls.device" && gamepad[1] == "input.gamepads" && gamepad.back() == "pad.reset");
+    CHECK(gamepad[0] == "controls.device" && gamepad[1] == "camera.free" && gamepad.back() == "pad.reset");
     CHECK(wp::options::kind("stats.play_time") == wp::options::Kind::Info);
     CHECK(wp::options::kind("controls.device") == wp::options::Kind::Choice);
     CHECK(wp::options::kind("overlay.show") == wp::options::Kind::Toggle);
@@ -1993,30 +1996,33 @@ void test_options_menu() {
     wp::options::Menu menu;
     menu.set_open(true);
     std::vector<wp::options::Row> rows = menu.rows();
-    CHECK(rows[0].key == "video.scale" && rows[0].value == "Native" && rows[0].live);
+    CHECK(rows[0].key == "video.scale" && rows[0].value == "Auto (4x)" && rows[0].live);
+    CHECK((wp::options::choices("video.scale") == std::vector<std::string>{"1", "2", "3", "0", "5", "6"}));
     CHECK(menu.handle(wp::options::Action::Next) == "video.scale");
-    CHECK(wp::settings::number("video.scale", nullptr) == 2);
+    CHECK(wp::settings::number("video.scale", nullptr) == 5);
     CHECK(menu.handle(wp::options::Action::Previous) == "video.scale");
     CHECK(menu.handle(wp::options::Action::Previous) == "video.scale");
-    CHECK(wp::settings::number("video.scale", nullptr) == 6);
+    CHECK(wp::settings::number("video.scale", nullptr) == 3);
     CHECK(menu.handle(wp::options::Action::Up).empty());
     CHECK(menu.selection() == rows.size() - 1);
 
     CHECK(menu.handle(wp::options::Action::TabNext).empty());
     CHECK(menu.tab() == 1 && menu.selection() == 0);
     rows = menu.rows();
-    CHECK(rows[1].key == "game.text_speed" && rows[1].kind == wp::options::Kind::Choice && rows[1].live && rows[1].value == "Original");
-    menu.select(1);
+    CHECK(rows[0].key == "game.text_speed" && rows[0].kind == wp::options::Kind::Choice && rows[0].live && rows[0].value == "Original");
+    menu.select(0);
     CHECK(menu.handle(wp::options::Action::Next) == "game.text_speed" && wp::settings::number("game.text_speed", nullptr) == 2);
-    CHECK(menu.rows()[1].value == "2x");
+    CHECK(menu.rows()[0].value == "2x");
     CHECK(menu.handle(wp::options::Action::Next) == "game.text_speed" && menu.handle(wp::options::Action::Next) == "game.text_speed");
-    CHECK(wp::settings::number("game.text_speed", nullptr) == 0 && menu.rows()[1].value == "Instant");
+    CHECK(wp::settings::number("game.text_speed", nullptr) == 0 && menu.rows()[0].value == "Instant");
     wp::settings::store("game.text_speed", "1");
     rows = menu.rows();
-    CHECK(rows[2].key == "game.skip_movies" && rows[2].kind == wp::options::Kind::Toggle && rows[2].live);
+    CHECK(rows[1].key == "game.skip_movies" && rows[1].kind == wp::options::Kind::Toggle && rows[1].live);
     CHECK(wp::settings::flag("game.skip_movies", nullptr));
-    CHECK(rows[3].key == "game.button_icons" && rows[3].kind == wp::options::Kind::Toggle && rows[3].live);
+    CHECK(rows[2].key == "game.button_icons" && rows[2].kind == wp::options::Kind::Toggle && rows[2].live);
     CHECK(wp::settings::flag("game.button_icons", nullptr));
+    CHECK(rows[3].key == "game.save_photos" && rows[3].kind == wp::options::Kind::Toggle && rows[3].live);
+    CHECK(wp::settings::flag("game.save_photos", nullptr));
     menu.select(6);
     rows = menu.rows();
     CHECK(rows[6].kind == wp::options::Kind::Info && !rows[6].value.empty() && rows[6].live);
@@ -2055,7 +2061,7 @@ void test_options_menu() {
     menu.select(0);
     CHECK(menu.handle(wp::options::Action::Next).empty());
     rows = menu.rows();
-    CHECK(menu.device() == wp::options::Device::Gamepad && rows[1].key == "input.gamepads" && rows[0].value == "Gamepad");
+    CHECK(menu.device() == wp::options::Device::Gamepad && rows[1].key == "camera.free" && rows[0].value == "Gamepad");
     CHECK(menu.selection() == 0 && menu.scroll() == 0);
     menu.select(rows.size() - 2);
     CHECK(menu.handle(wp::options::Action::Accept).empty() && menu.capture_kind() == wp::options::Kind::Pad);
@@ -2085,24 +2091,31 @@ void test_options_menu() {
 
     menu.select_tab(0);
     std::vector<wp::options::Row> screen = menu.rows();
-    CHECK(screen.size() == 12 && screen[3].key == "video.aspect" && screen[3].kind == wp::options::Kind::Choice && screen[3].live);
-    CHECK(screen[3].value == "16:9 (original)" && screen[7].key == "video.brightness" && screen[11].key == "video.colors_reset");
-    for (size_t i = 7; i < 11; i++) {
+    CHECK(screen.size() == 13 && screen[2].key == "video.aspect" && screen[2].kind == wp::options::Kind::Choice && screen[2].live);
+    CHECK(screen[2].value == "16:9 (original)" && screen[8].key == "video.brightness" && screen[12].key == "video.colors_reset");
+    for (size_t i = 8; i < 12; i++) {
         CHECK(screen[i].kind == wp::options::Kind::Slider && screen[i].value == "100%" && screen[i].live && screen[i].fraction == 0.5);
     }
-    CHECK(screen[11].kind == wp::options::Kind::Button && screen[11].live);
-    menu.select(3);
+    CHECK(screen[12].kind == wp::options::Kind::Button && screen[12].live);
+    menu.select(2);
     CHECK(menu.handle(wp::options::Action::Next) == "video.aspect");
     CHECK(wp::settings::text("video.aspect", nullptr) == "16:10");
     wp::settings::store("video.aspect", "16:9");
-    menu.select(7);
+    menu.select(8);
     CHECK(menu.handle(wp::options::Action::Next) == "video.brightness");
     CHECK(wp::settings::number("video.brightness", nullptr) == 105);
     wp::settings::store("video.saturation", "0");
-    menu.select(11);
+    menu.select(12);
     CHECK(menu.handle(wp::options::Action::Accept) == "video.colors_reset");
     CHECK(wp::settings::number("video.brightness", nullptr) == 100 && wp::settings::number("video.saturation", nullptr) == 100);
 
+    menu.select_tab(6);
+    CHECK(menu.rows()[0].key == "cheats.fly_camera" && menu.rows()[0].kind == wp::options::Kind::Button && menu.rows()[0].value == "F6");
+    menu.select(0);
+    CHECK(menu.handle(wp::options::Action::Accept).empty() && wp::free_camera::flying() && !menu.open());
+    wp::free_camera::toggle_fly();
+    CHECK(!wp::free_camera::flying());
+    menu.set_open(true);
     menu.select_tab(2);
     CHECK(menu.rows()[0].key == "audio.volume");
     CHECK(menu.handle(wp::options::Action::Previous) == "audio.volume");
@@ -2172,7 +2185,7 @@ void test_options_layout() {
     wp::options::Rect fitted = wp::options::place(640, 480, small.width, small.height);
     CHECK(fitted.x >= 0 && fitted.y >= 0 && fitted.x + fitted.width <= 640 && fitted.y + fitted.height <= 480);
 
-    CHECK(wp::options::hit_test(frame, placed, placed.x + last_tab.x + 4, placed.y + last_tab.y + 4).tab == 5);
+    CHECK(wp::options::hit_test(frame, placed, placed.x + last_tab.x + 4, placed.y + last_tab.y + 4).tab == wp::options::kTabCount - 1);
     auto centre = [&](const wp::options::Rect& r, int dx = 0) {
         return wp::options::hit_test(frame, placed, placed.x + r.x + r.width / 2 + dx, placed.y + r.y + r.height / 2);
     };

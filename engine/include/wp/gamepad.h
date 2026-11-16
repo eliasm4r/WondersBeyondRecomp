@@ -33,6 +33,7 @@ struct State {
 bool connected(uint32_t slot);
 State poll(uint32_t slot, bool sideways);
 bool camera_stick(float& x, float& y);
+bool fly_controls(float& forward, float& side, float& rise, bool& fast);
 void set_outputs(uint32_t slot, bool rumble, uint8_t leds);
 uint32_t menu_buttons();
 int held_physical();

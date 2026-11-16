@@ -1,4 +1,5 @@
 #include "attractions.h"
+#include "modifiers.h"
 #include "prompts.h"
 
 #include <algorithm>
@@ -68,6 +69,7 @@ uint64_t g_hud_step = 0;
 uint64_t g_map_step = 0;
 uint64_t g_choice_step = 0;
 uint64_t g_frame_step = 0;
+std::chrono::steady_clock::time_point g_hud_drawn{};
 bool g_skipping = false;
 bool g_skipping_framed = false;
 
@@ -120,6 +122,9 @@ void layout_draw(Cpu& c, HleFunction original) {
     constexpr uint32_t kLayoutShown = 0x2C;
     bool hud = c.lr == kHudLayoutReturn;
     bool minimap = hud && guest_text_is(c.r[3] + kLayoutName, "MnFdMap");
+    if (hud) {
+        g_hud_drawn = std::chrono::steady_clock::now();
+    }
     if (hud && rd8(c.r[3] + kLayoutShown) != 0) {
         if (minimap) {
             g_map_step = g_hud_step;
@@ -151,12 +156,15 @@ void scene_manager_run_begin(Cpu& c, HleFunction original) {
     bool choice_shown = g_hud_step - g_choice_step <= kShownSteps;
     bool framed = g_frame_step != 0 && g_hud_step - g_frame_step <= kShownSteps;
     bool frame_gone = g_frame_step == 0 || g_hud_step - g_frame_step > kFrameGoneSteps;
+    constexpr auto kLoadingAfter = std::chrono::milliseconds(250);
+    bool loading = std::chrono::steady_clock::now() - g_hud_drawn > kLoadingAfter;
     if (!g_skipping) {
         g_skipping_framed = framed;
     }
-    bool scene = park && !choice_shown && (framed || g_hud_step - g_map_step > kSceneHiddenSteps);
-    bool over = !park || choice_shown || (g_skipping_framed ? frame_gone : map_shown);
+    bool scene = park && !loading && !choice_shown && (framed || g_hud_step - g_map_step > kSceneHiddenSteps);
+    bool over = !park || loading || choice_shown || (g_skipping_framed ? frame_gone : map_shown);
     g_skipping = skip_scene(c, scene, over);
+    modifiers_frame(c, park);
     if (attraction::mode() == attraction::Mode::Shake) {
         label_bomb_button();
     }

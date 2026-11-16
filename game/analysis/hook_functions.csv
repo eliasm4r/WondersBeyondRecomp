@@ -20,3 +20,8 @@ address,name
 0x8020a9a0,MovieSceneUpdate
 0x80277e30,FontResource
 0x8031ebc0,TextureBind
+0x800a9300,KineticEnergyUpdate
+0x801e1b80,ChaseStep
+0x80019b20,CameraView
+0x800c3fc0,PlayerMove
+0x800b01c0,LifeDamage

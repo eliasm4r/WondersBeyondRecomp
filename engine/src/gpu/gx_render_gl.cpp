@@ -981,7 +981,8 @@ void prepare_texture_pack() {
 
 int requested_scale() {
     static const settings::LiveNumber scale("video.scale", "WP_SCALE");
-    return std::clamp(scale(), 1, 6);
+    int wanted = scale();
+    return std::clamp(wanted == 0 ? 4 : wanted, 1, 6);
 }
 
 void APIENTRY report_gl_message(GLenum, GLenum type, GLuint id, GLenum severity, GLsizei, const GLchar* message, const void*) {
@@ -1381,6 +1382,10 @@ void use_fullscreen(const Program& program, float flip) {
 
 const char* api_name() {
     return "OpenGL";
+}
+
+int auto_scale() {
+    return 4;
 }
 
 bool interpolating() {

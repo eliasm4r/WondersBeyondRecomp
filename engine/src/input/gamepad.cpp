@@ -327,7 +327,7 @@ Snapshot read(Pad& pad, float dt) {
         }
     }
     bool recenter = snapshot.buttons[SDL_GAMEPAD_BUTTON_RIGHT_STICK];
-    if (recenter && !pad.recenter_held) {
+    if (recenter && !pad.recenter_held && aiming) {
         pad.pointer_x = 0.0f;
         pad.pointer_y = 0.0f;
         pad.pointer_active = true;
@@ -538,6 +538,16 @@ bool camera_stick(float& x, float& y) {
     x = current.right_x;
     y = current.right_y;
     return true;
+}
+
+bool fly_controls(float& forward, float& side, float& rise, bool& fast) {
+    Snapshot current = snapshot(0);
+    auto live = [](float value) { return std::fabs(value) > kStickDeadZone ? value : 0.0f; };
+    forward = -live(current.left_y);
+    side = live(current.left_x);
+    rise = live(current.right_trigger) - live(current.left_trigger);
+    fast = current.buttons[SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER];
+    return current.connected;
 }
 
 void set_outputs(uint32_t slot, bool rumble, uint8_t leds) {

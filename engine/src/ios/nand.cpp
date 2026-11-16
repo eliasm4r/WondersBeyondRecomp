@@ -18,6 +18,7 @@
 #include "wp/log.h"
 #include "wp/memory.h"
 #include "wp/save_backup.h"
+#include "wp/screenshot.h"
 #include "wp/settings.h"
 
 namespace wp::nand {
@@ -471,10 +472,21 @@ int32_t read(int32_t handle, uint32_t destination, uint32_t length) {
     return static_cast<int32_t>(std::fread(host(destination), 1, length, it->second.file));
 }
 
+static bool changes(std::FILE* file, const uint8_t* data, uint32_t length) {
+    long position = std::ftell(file);
+    std::vector<uint8_t> before(length);
+    size_t found = std::fread(before.data(), 1, length, file);
+    std::fseek(file, position, SEEK_SET);
+    return found != length || std::memcmp(before.data(), data, length) != 0;
+}
+
 int32_t write(int32_t handle, uint32_t source, uint32_t length) {
     auto it = g_files.find(handle);
     if (it == g_files.end()) {
         return kInvalid;
+    }
+    if (it->second.path.filename().string().rfind("Pic", 0) == 0 && screenshot::photo_pending() && changes(it->second.file, host(source), length)) {
+        screenshot::photo_stored();
     }
     int32_t written = static_cast<int32_t>(std::fwrite(host(source), 1, length, it->second.file));
     std::fflush(it->second.file);

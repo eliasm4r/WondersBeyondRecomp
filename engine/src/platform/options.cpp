@@ -11,8 +11,10 @@
 #include "wp/color.h"
 #include "wp/control_names.h"
 #include "wp/frame_pacing.h"
+#include "wp/free_camera.h"
 #include "wp/game.h"
 #include "wp/gamepad.h"
+#include "wp/gx_render.h"
 #include "wp/hd_textures.h"
 #include "wp/keymap.h"
 #include "wp/padmap.h"
@@ -34,7 +36,7 @@ constexpr const char* kLiveKeys[] = {
     "video.brightness",     "video.contrast",       "video.saturation",      "video.gamma",        "video.colors_reset",
     "camera.free",          "camera.mouse_speed",   "camera.stick_speed",    "camera.invert_y",    "video.bug_recorder",
     "system.check_updates", "system.update",        "video.aspect",          "game.text_speed",
-    "game.skip_movies",     "game.button_icons",    "video.hd_textures",
+    "game.skip_movies",     "game.button_icons",    "video.hd_textures",   "game.save_photos",     "cheats.berries",       "cheats.prices",        "cheats.chase_speed",   "cheats.damage_dealt",  "cheats.damage_taken",  "cheats.run_speed",     "cheats.jump",
 };
 
 struct Language {
@@ -67,7 +69,7 @@ constexpr Slider kSliders[] = {{"audio.volume", 0, 300, 5},
                                {color::kSaturation.key, color::kSaturation.low, color::kSaturation.high, 5},
                                {color::kGamma.key, color::kGamma.low, color::kGamma.high, 5}};
 
-constexpr const char* kTabLabels[kTabCount] = {"tab.screen", "tab.game", "tab.sound", "tab.controls", "tab.language", "tab.advanced"};
+constexpr const char* kTabLabels[kTabCount] = {"tab.screen", "tab.game", "tab.sound", "tab.controls", "tab.language", "tab.advanced", "tab.cheats"};
 
 constexpr const char* kDevice = "controls.device";
 constexpr const char* kPlayTime = "stats.play_time";
@@ -76,6 +78,7 @@ constexpr const char* kDeviceNames[] = {"keyboard", "gamepad"};
 constexpr const char* kResetKeys = "keys.reset";
 constexpr const char* kResetPad = "pad.reset";
 constexpr const char* kResetColors = "video.colors_reset";
+constexpr const char* kFlyCamera = "cheats.fly_camera";
 constexpr const char* kUpdate = "system.update";
 constexpr const char* kHdTextures = "video.hd_textures";
 
@@ -177,22 +180,22 @@ const char* tab_label(size_t tab) {
 std::vector<std::string> tab_keys(size_t tab, Device device) {
     switch (tab) {
     case 0:
-        return {"video.scale",      "video.fullscreen", "system.widescreen", "video.aspect", "video.vsync", "video.smooth", "video.anisotropy",
+        return {"video.scale",      "video.fullscreen", "video.aspect", "system.widescreen", "video.fps", "video.vsync", "video.smooth", "video.anisotropy",
                 color::kBrightness.key, color::kContrast.key, color::kSaturation.key, color::kGamma.key, kResetColors};
     case 1:
-        return {"video.fps", "game.text_speed", "game.skip_movies", "game.button_icons", "saves.backups", "system.discord", kPlayTime};
+        return {"game.text_speed", "game.skip_movies", "game.button_icons", "game.save_photos", "saves.backups", "system.discord", kPlayTime};
     case 2:
         return {"audio.volume", "audio.mute", "audio.wiimote_speaker"};
     case 3: {
         if (device == Device::Keyboard) {
-            std::vector<std::string> keys = {kDevice, "input.hide_cursor", "camera.free", "camera.mouse_speed", "camera.invert_y"};
+            std::vector<std::string> keys = {kDevice, "camera.free", "camera.mouse_speed", "camera.invert_y", "input.hide_cursor"};
             for (size_t i = 0; i < keymap::kActionCount; i++) {
                 keys.push_back(keymap::setting_key(i));
             }
             keys.push_back(kResetKeys);
             return keys;
         }
-        std::vector<std::string> keys = {kDevice, "input.gamepads", "input.rumble", "input.stick_deadzone", "camera.free", "camera.stick_speed", "camera.invert_y"};
+        std::vector<std::string> keys = {kDevice, "camera.free", "camera.stick_speed", "camera.invert_y", "input.gamepads", "input.rumble", "input.stick_deadzone"};
         for (size_t i = 0; i < padmap::kActionCount; i++) {
             keys.push_back(padmap::setting_key(i));
         }
@@ -213,13 +216,15 @@ std::vector<std::string> tab_keys(size_t tab, Device device) {
         keys.push_back(kUpdate);
         return keys;
     }
+    case 6:
+        return {kFlyCamera, "cheats.run_speed", "cheats.jump", "cheats.damage_dealt", "cheats.damage_taken", "cheats.berries", "cheats.prices", "cheats.chase_speed"};
     default:
         return {};
     }
 }
 
 Kind kind(const std::string& key) {
-    if (key == kResetKeys || key == kResetPad || key == kResetColors || key == kHdTextures) {
+    if (key == kResetKeys || key == kResetPad || key == kResetColors || key == kHdTextures || key == kFlyCamera) {
         return Kind::Button;
     }
     if (key == kPlayTime || key == kUpdate) {
@@ -254,7 +259,7 @@ std::vector<std::string> choices(const std::string& key) {
     if (key == "video.scale") {
         std::vector<std::string> scales;
         for (int scale = 1; scale <= kMaxScale; scale++) {
-            scales.push_back(std::to_string(scale));
+            scales.push_back(scale == gx::render::auto_scale() ? "0" : std::to_string(scale));
         }
         return scales;
     }
@@ -269,6 +274,27 @@ std::vector<std::string> choices(const std::string& key) {
     }
     if (key == "game.text_speed") {
         return {"1", "2", "3", "0"};
+    }
+    if (key == "cheats.berries") {
+        return {"100", "200", "300", "500", "1000"};
+    }
+    if (key == "cheats.prices") {
+        return {"100", "75", "50", "25", "0"};
+    }
+    if (key == "cheats.chase_speed") {
+        return {"50", "75", "100", "125", "150"};
+    }
+    if (key == "cheats.damage_dealt") {
+        return {"100", "150", "200", "300", "1000"};
+    }
+    if (key == "cheats.damage_taken") {
+        return {"100", "75", "50", "25", "0"};
+    }
+    if (key == "cheats.run_speed") {
+        return {"100", "125", "150", "200"};
+    }
+    if (key == "cheats.jump") {
+        return {"100", "150", "200", "300"};
     }
     if (key == "overlay.level") {
         return {"minimal", "standard", "full"};
@@ -314,6 +340,9 @@ std::vector<std::string> choices(const std::string& key) {
 std::string shown_value(const std::string& key, const std::string& value) {
     const ui::Text& text = ui::text();
     if (key == "video.scale") {
+        if (value == "0") {
+            return std::string(ui::label("menu.scale.auto")) + " (" + std::to_string(gx::render::auto_scale()) + "x)";
+        }
         return value == "1" ? text.menu_native : value + "x";
     }
     if (key == "video.fps") {
@@ -330,6 +359,9 @@ std::string shown_value(const std::string& key, const std::string& value) {
     }
     if (key == "video.aspect") {
         return value == "auto" ? ui::label("menu.aspect.auto") : value == "16:9" ? ui::label("menu.aspect.original") : value;
+    }
+    if (starts_with(key, "cheats.")) {
+        return value + " %";
     }
     if (key == "game.text_speed") {
         return value == "1" ? ui::label("menu.text_speed.original") : value == "0" ? ui::label("menu.text_speed.instant") : value + "x";
@@ -491,6 +523,8 @@ std::vector<Row> Menu::rows() const {
             row.value = update_text();
         } else if (key == kHdTextures) {
             row.value = hd_text();
+        } else if (key == kFlyCamera) {
+            row.value = shown_value("keys.fly_camera", settings::text("keys.fly_camera", nullptr));
         } else if (row.kind != Kind::Button) {
             std::string value = settings::text(key.c_str(), nullptr);
             row.value = shown_value(key, value);
@@ -602,6 +636,11 @@ std::string Menu::handle(Action action) {
             return "";
         }
         if (type == Kind::Button) {
+            if (key == kFlyCamera) {
+                free_camera::toggle_fly();
+                open_ = false;
+                return "";
+            }
             if (key == kHdTextures) {
                 hd_textures::start();
                 settings::store("video.custom_textures", "1");

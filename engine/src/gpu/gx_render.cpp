@@ -288,7 +288,11 @@ cbuffer Motion : register(b1) {
     row_major float4x4 motion[8];
 };
 
-PixelInput vertex_moved(VertexInput input, float4 moved : MOVED) {
+PixelInput vertex_moved(VertexInput input, float4 moved : MOVED0, float4 moved_c0 : MOVED1, float4 moved_c1 : MOVED2) {
+    if (moved_c0.w > -0.5) {
+        input.c0 = moved_c0;
+        input.c1 = moved_c1;
+    }
     if (moved.w < -1.5e30) {
         input.position = mul(motion[uint(moved.x)], input.position);
     } else if (moved.w > -1e29) {
@@ -839,6 +843,7 @@ struct PendingBatch : BatchState {
 struct RecordedDraw {
     uint64_t key = 0;
     uint64_t exact = 0;
+    uint64_t material = 0;
     uint32_t camera = 0;
     uint32_t first_position = 0;
     uint32_t positions = 0;
@@ -886,6 +891,7 @@ struct RunDraw {
     uint32_t matrix = 0;
     uint32_t camera = 0;
     uint64_t key = 0;
+    uint64_t shape = 0;
     bool kept = false;
 };
 
@@ -920,9 +926,15 @@ struct RecordedTarget {
     bool twin = false;
 };
 
+struct MovedVertex {
+    std::array<float, 4> position;
+    std::array<float, 4> color[2];
+};
+
 struct FrameRecord {
     std::vector<uint16_t> source_of;
     std::vector<std::array<float, 4>> positions;
+    std::vector<std::array<std::array<float, 4>, 2>> colors;
     std::vector<RecordedDraw> draws;
     std::vector<RecordedCommand> commands;
     std::vector<RecordedTarget> targets;
@@ -940,6 +952,26 @@ bool g_recording = false;
 bool g_record_broken = false;
 FrameRecord g_record;
 FrameRecord g_previous;
+
+struct CommandColors {
+    bool runs = false;
+    size_t begin = 0;
+    size_t end = 0;
+    uint64_t shape = 0;
+    float initial[4][4] = {};
+    float konst[4][4] = {};
+};
+
+std::vector<CommandColors> g_previous_colors;
+
+uint64_t command_shape(const BatchState& batch) {
+    const Constants& constants = batch.constants;
+    return hash_bytes(reinterpret_cast<const uint8_t*>(constants.stage), sizeof constants.stage) ^
+           hash_bytes(reinterpret_cast<const uint8_t*>(constants.header), sizeof constants.header) * 31 ^
+           hash_bytes(reinterpret_cast<const uint8_t*>(constants.swaps), sizeof constants.swaps) * 961 ^ batch.blend;
+}
+
+std::vector<uint32_t> g_color_partner;
 uint32_t g_interpolated_ready = 0;
 std::atomic<uint32_t> g_interpolated_frames{0};
 TexturePack g_pack;
@@ -953,6 +985,22 @@ uint64_t g_frame = 0;
 constexpr uint64_t kWriteBackFrames = 2;
 uint64_t g_texture_epoch = 0;
 int g_scale = 1;
+int g_auto_scale = 4;
+constexpr double kAutoScaleMargin = 1.25;
+
+int scale_for_screen(HMONITOR monitor) {
+    MONITORINFOEXA info{};
+    info.cbSize = sizeof info;
+    DEVMODEA mode{};
+    mode.dmSize = sizeof mode;
+    if (!monitor || !GetMonitorInfoA(monitor, &info) || !EnumDisplaySettingsA(info.szDevice, ENUM_CURRENT_SETTINGS, &mode)) {
+        return 4;
+    }
+    double width = mode.dmPelsWidth;
+    double height = std::min<double>(mode.dmPelsHeight, width * 9.0 / 16.0);
+    double needed = kAutoScaleMargin * std::max(height * 16.0 / 9.0 / kEfbWidth, height / kPictureHeight);
+    return std::clamp(static_cast<int>(std::ceil(needed - 0.01)), 1, 6);
+}
 Canvas g_canvas;
 int g_canvas_kind = kInPicture;
 std::atomic<uint32_t> g_shared_margins{0};
@@ -1573,6 +1621,8 @@ bool create_pipeline() {
         ID3DBlob* moved_code = nullptr;
         if (ok && compile(kShaderSource, "vertex_moved", "vs_5_0", &moved_code)) {
             elements.push_back({"MOVED", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0, D3D11_INPUT_PER_VERTEX_DATA, 0});
+            elements.push_back({"MOVED", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 16, D3D11_INPUT_PER_VERTEX_DATA, 0});
+            elements.push_back({"MOVED", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 32, D3D11_INPUT_PER_VERTEX_DATA, 0});
             if (FAILED(g_device.device->CreateVertexShader(moved_code->GetBufferPointer(), moved_code->GetBufferSize(), nullptr, &g_device.moved_shader)) ||
                 FAILED(g_device.device->CreateInputLayout(elements.data(), static_cast<UINT>(elements.size()), moved_code->GetBufferPointer(),
                                                           moved_code->GetBufferSize(), &g_device.moved_layout))) {
@@ -1594,7 +1644,7 @@ bool create_pipeline() {
     if (FAILED(g_device.device->CreateBuffer(&buffer, nullptr, &g_device.vertex_buffer))) {
         return false;
     }
-    buffer.ByteWidth = kVertexCapacity * sizeof(float[4]);
+    buffer.ByteWidth = kVertexCapacity * sizeof(MovedVertex);
     if (g_device.moved_shader && FAILED(g_device.device->CreateBuffer(&buffer, nullptr, &g_device.moved_buffer))) {
         release(g_device.moved_shader);
     }
@@ -1635,7 +1685,8 @@ void prepare_texture_pack() {
 
 int requested_scale() {
     static const settings::LiveNumber scale("video.scale", "WP_SCALE");
-    return std::clamp(scale(), 1, 6);
+    int wanted = scale();
+    return std::clamp(wanted == 0 ? g_auto_scale : wanted, 1, 6);
 }
 
 IDXGIAdapter* fastest_adapter() {
@@ -1679,6 +1730,7 @@ bool initialize() {
     if (g_device.failed) {
         return false;
     }
+    g_auto_scale = scale_for_screen(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY));
     g_scale = requested_scale();
     D3D_FEATURE_LEVEL level;
     // WP_D3D_WARP=1 renders with the Windows software rasterizer, to tell driver faults from renderer ones.
@@ -1737,6 +1789,11 @@ void note_texture(uint32_t map, uint32_t address, uint32_t width, uint32_t heigh
     std::fprintf(g_texture_notes, "map %u address %08x %ux%u format %u: %s\n", map, address, width, height, format, source);
 }
 
+bool keep_photos() {
+    static const settings::LiveFlag enabled("game.save_photos", "WP_SAVE_PHOTOS");
+    return enabled();
+}
+
 ID3D11ShaderResourceView* custom_texture(const std::string& key, bool mipmaps) {
     auto [found, inserted] = g_pack.loaded.try_emplace(key);
     CustomTexture& custom = found->second;
@@ -1744,6 +1801,11 @@ ID3D11ShaderResourceView* custom_texture(const std::string& key, bool mipmaps) {
         return custom.view;
     }
     const std::filesystem::path* path = g_pack.index.find(key);
+    std::filesystem::path direct(key);
+    std::error_code error;
+    if (!path && std::filesystem::is_regular_file(direct, error)) {
+        path = &direct;
+    }
     std::vector<std::vector<uint32_t>> images(1);
     uint32_t width = 0;
     uint32_t height = 0;
@@ -1875,6 +1937,14 @@ ID3D11ShaderResourceView* texture_for(uint32_t map) {
             if (!resolved.empty()) {
                 custom = custom_texture(resolved, mipmaps);
             }
+        }
+    }
+    if (format == 6 && width == screenshot::kPhotoWidth && height == screenshot::kPhotoHeight && levels == 1 && copied == g_device.copies.end() && !custom && keep_photos()) {
+        std::vector<std::vector<uint32_t>> photo = decode_levels(request);
+        std::string path = screenshot::photo_matching(screenshot::photo_signature(photo[0].data(), width, height, true));
+        if (!path.empty()) {
+            custom = custom_texture(path, false);
+            log::write("photo", "shown from %s", path.c_str());
         }
     }
     if (custom && !g_pack.dump) {
@@ -2310,7 +2380,7 @@ void set_batch_state(const BatchState& pending, bool moved) {
     context->OMSetBlendState(blend_for(pending.blend), blend_factor, 0xFFFFFFFF);
     context->OMSetDepthStencilState(depth_for(pending.depth), 0);
     ID3D11Buffer* buffers[2] = {g_device.vertex_buffer, g_device.moved_buffer};
-    UINT strides[2] = {sizeof(ScreenVertex), sizeof(float[4])};
+    UINT strides[2] = {sizeof(ScreenVertex), sizeof(MovedVertex)};
     UINT offsets[2] = {0, 0};
     context->IASetVertexBuffers(0, moved ? 2 : 1, buffers, strides, offsets);
     context->IASetInputLayout(moved ? g_device.moved_layout : g_device.layout);
@@ -2620,6 +2690,7 @@ void append(const ScreenVertex* vertices, uint32_t count, const DrawSource* sour
         RecordedDraw draw;
         draw.key = source->key;
         draw.exact = source->exact;
+        draw.material = command_shape(g_pending);
         draw.camera = source->camera;
         draw.first_position = static_cast<uint32_t>(g_record.positions.size());
         draw.positions = source->count;
@@ -2629,6 +2700,14 @@ void append(const ScreenVertex* vertices, uint32_t count, const DrawSource* sour
         const auto* positions = reinterpret_cast<const std::array<float, 4>*>(source->positions);
         g_record.positions.insert(g_record.positions.end(), positions, positions + source->count);
         g_record.source_of.insert(g_record.source_of.end(), source->source_of, source->source_of + count);
+        g_record.colors.resize(g_record.positions.size());
+        for (uint32_t v = 0; v < count; v++) {
+            if (source->source_of[v] != kNoSource) {
+                auto& color = g_record.colors[draw.first_position + source->source_of[v]];
+                std::copy(vertices[v].color[0], vertices[v].color[0] + 4, color[0].begin());
+                std::copy(vertices[v].color[1], vertices[v].color[1] + 4, color[1].begin());
+            }
+        }
     } else {
         g_record.source_of.insert(g_record.source_of.end(), count, kNoSource);
     }
@@ -2640,6 +2719,10 @@ void service_deferred();
 
 const char* api_name() {
     return "Direct3D 11";
+}
+
+int auto_scale() {
+    return g_auto_scale;
 }
 
 bool interpolating() {
@@ -2782,6 +2865,7 @@ bool add_run(const VertexRun& run, uint32_t bytes, uint32_t index_count) {
     draw.matrix = run.palette ? g_run_palette + run.matrix : g_run_row_used + 4;
     draw.camera = run.camera;
     draw.key = run.key;
+    draw.shape = run.shape;
     g_run_draws.push_back(draw);
     g_run_row_used += run.row_count;
     return true;
@@ -3194,6 +3278,30 @@ void prune_twins() {
     }
 }
 
+bool read_texture(ID3D11Texture2D* texture, std::vector<uint32_t>& pixels, uint32_t& width, uint32_t& height);
+
+void keep_photo(ID3D11Texture2D* texture, int x, int y, int width, int height, int canvas_width, int canvas_height) {
+    std::vector<uint32_t> pixels;
+    uint32_t full_width = 0;
+    uint32_t full_height = 0;
+    if (!texture || canvas_width <= 0 || canvas_height <= 0 || !read_texture(texture, pixels, full_width, full_height)) {
+        return;
+    }
+    uint32_t left = std::min(full_width, static_cast<uint32_t>(std::max(0, x)) * full_width / static_cast<uint32_t>(canvas_width));
+    uint32_t top = std::min(full_height, static_cast<uint32_t>(std::max(0, y)) * full_height / static_cast<uint32_t>(canvas_height));
+    uint32_t photo_width = std::min(full_width - left, static_cast<uint32_t>(width) * full_width / static_cast<uint32_t>(canvas_width));
+    uint32_t photo_height = std::min(full_height - top, static_cast<uint32_t>(height) * full_height / static_cast<uint32_t>(canvas_height));
+    if (photo_width == 0 || photo_height == 0) {
+        return;
+    }
+    std::vector<uint32_t> photo(static_cast<size_t>(photo_width) * photo_height);
+    for (uint32_t row = 0; row < photo_height; row++) {
+        const uint32_t* source = pixels.data() + static_cast<size_t>(top + row) * full_width + left;
+        std::copy(source, source + photo_width, photo.begin() + static_cast<size_t>(row) * photo_width);
+    }
+    screenshot::photo_taken(std::move(photo), photo_width, photo_height);
+}
+
 void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width, int height, bool half, uint32_t format, bool intensity, bool depth, bool alpha,
                      const CopyFilter& filter) {
     if (!initialize()) {
@@ -3269,6 +3377,9 @@ void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width,
         command.copy = {entry.converted_target, target_width, target_height, canvas_x, canvas_y, canvas_w, canvas_h, format, intensity, alpha || depth, depth, filter};
         entry.converted_target->AddRef();
         g_record.commands.push_back(command);
+    }
+    if (!recurring && !half && format == 6 && logical_width == screenshot::kPhotoWidth && logical_height == screenshot::kPhotoHeight && keep_photos()) {
+        keep_photo(entry.converted, x + g_canvas.margin_x - canvas_x, y + g_canvas.margin_y - canvas_y, width, height, canvas_w, canvas_h);
     }
     entry.view = entry.converted_view;
     entry.whole_canvas = canvas_w > width;
@@ -3346,6 +3457,7 @@ void release_record(FrameRecord& record) {
     record.commands.clear();
     record.source_of.clear();
     record.positions.clear();
+    record.colors.clear();
     record.draws.clear();
     record.runs.clear();
     record.rows.clear();
@@ -3516,7 +3628,7 @@ RunCamera g_run_camera;
 bool g_run_cut = false;
 std::array<std::string, 256> g_pair_notes;
 bool g_pair_notes_wanted = false;
-uint32_t g_run_counts[4] = {};
+uint32_t g_run_counts[6] = {};
 std::vector<Row> g_replay_rows;
 std::vector<RunDraw> g_replay_draws;
 
@@ -3570,8 +3682,11 @@ void lerp_rows(Row* out, const Row* a, const Row* b, uint32_t count, float t) {
 }
 
 void blend_matrix(Row* out, const Row* a, const Row* b, float t) {
-    if (matrix_change(a, b) == kNearMatrix) {
+    MatrixChange change = matrix_change(a, b);
+    if (change == kNearMatrix) {
         lerp_rows(out, a, b, 3, t);
+    } else if (change == kOtherMatrix && t < 0.5f) {
+        std::copy(a, a + 3, out);
     }
 }
 
@@ -3588,10 +3703,58 @@ bool texture_jumped(const Row* a, const Row* b) {
     return false;
 }
 
-void blend_texture_matrix(Row* out, const Row* a, const Row* b, float t, bool from_coordinates) {
+struct TextureScroll {
+    uint64_t frame = 0;
+    float now[2] = {};
+    float before[2] = {};
+};
+
+std::unordered_map<uint64_t, TextureScroll> g_scrolls;
+
+float unwrapped(float step) {
+    return step - std::round(step);
+}
+
+bool scrolls_steadily(uint64_t key, const Row* a, const Row* b) {
+    if (g_scrolls.size() > 8192) {
+        g_scrolls.clear();
+    }
+    TextureScroll& scroll = g_scrolls[key];
+    if (scroll.frame != g_frame) {
+        for (int i = 0; i < 2; i++) {
+            scroll.before[i] = scroll.frame + 1 == g_frame ? scroll.now[i] : NAN;
+            scroll.now[i] = unwrapped(b[i][3] - a[i][3]);
+        }
+        scroll.frame = g_frame;
+    }
+    for (int i = 0; i < 2; i++) {
+        if (!(std::fabs(scroll.now[i] - scroll.before[i]) < 2e-3f) || std::fabs(scroll.now[i]) >= 0.45f) {
+            return false;
+        }
+    }
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            if (a[i][j] != b[i][j]) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+void blend_texture_matrix(Row* out, const Row* a, const Row* b, float t, bool from_coordinates, uint64_t key) {
+    bool steady = from_coordinates && scrolls_steadily(key, a, b);
+    if (steady && texture_jumped(a, b)) {
+        for (int i = 0; i < 2; i++) {
+            out[i][3] = b[i][3] - unwrapped(b[i][3] - a[i][3]) * (1.0f - t);
+        }
+        return;
+    }
     MatrixChange change = from_coordinates && texture_jumped(a, b) ? kOtherMatrix : matrix_change(a, b);
     if (change == kNearMatrix) {
         lerp_rows(out, a, b, 3, t);
+    } else if (change == kOtherMatrix && t < 0.5f) {
+        std::copy(a, a + 3, out);
     }
     g_run_counts[3] += change == kOtherMatrix;
 }
@@ -3615,7 +3778,7 @@ bool same_shape(const RunDraw& before, const RunDraw& now, const Row* a, const R
     return !lit || a[light] == b[light];
 }
 
-void blend_run(Row* out, const Row* a, const Row* b, float t) {
+void blend_run(Row* out, const Row* a, const Row* b, float t, uint64_t key) {
     lerp_rows(out, a, b, 2, t);
     bool own = b[1][3] != 0.0f;
     if (own) {
@@ -3627,9 +3790,9 @@ void blend_run(Row* out, const Row* a, const Row* b, float t) {
         uint32_t at = kRunHeaderRows + kRunUnitRows * i;
         bool from_coordinates = b[at][0] >= kFirstTexCoordSource && b[at][0] <= kLastTexCoordSource;
         if (b[at][2] != 0.0f) {
-            blend_texture_matrix(out + at + 1, a + at + 1, b + at + 1, t, from_coordinates);
+            blend_texture_matrix(out + at + 1, a + at + 1, b + at + 1, t, from_coordinates, key * 31 + i * 2);
         }
-        blend_texture_matrix(out + at + 4, a + at + 4, b + at + 4, t, from_coordinates);
+        blend_texture_matrix(out + at + 4, a + at + 4, b + at + 4, t, from_coordinates, key * 31 + i * 2 + 1);
     }
     if (setup & 32u) {
         uint32_t light = kRunHeaderRows + kRunUnitRows * units;
@@ -3642,9 +3805,86 @@ void blend_run(Row* out, const Row* a, const Row* b, float t) {
     }
 }
 
+bool split_matrix(const Row* m, float (&q)[4], float (&scale)[3]) {
+    float r[3][3];
+    for (int j = 0; j < 3; j++) {
+        scale[j] = std::sqrt(m[0][j] * m[0][j] + m[1][j] * m[1][j] + m[2][j] * m[2][j]);
+        if (!std::isfinite(scale[j]) || scale[j] < 1e-6f) {
+            return false;
+        }
+        for (int i = 0; i < 3; i++) {
+            r[i][j] = m[i][j] / scale[j];
+        }
+    }
+    float det = r[0][0] * (r[1][1] * r[2][2] - r[1][2] * r[2][1]) - r[0][1] * (r[1][0] * r[2][2] - r[1][2] * r[2][0]) + r[0][2] * (r[1][0] * r[2][1] - r[1][1] * r[2][0]);
+    if (det < 0.9f || det > 1.1f) {
+        return false;
+    }
+    float w = std::sqrt(std::max(0.0f, 1.0f + r[0][0] + r[1][1] + r[2][2])) / 2;
+    float x = std::copysign(std::sqrt(std::max(0.0f, 1.0f + r[0][0] - r[1][1] - r[2][2])) / 2, r[2][1] - r[1][2]);
+    float y = std::copysign(std::sqrt(std::max(0.0f, 1.0f - r[0][0] + r[1][1] - r[2][2])) / 2, r[0][2] - r[2][0]);
+    float z = std::copysign(std::sqrt(std::max(0.0f, 1.0f - r[0][0] - r[1][1] + r[2][2])) / 2, r[1][0] - r[0][1]);
+    float length = std::sqrt(w * w + x * x + y * y + z * z);
+    q[0] = w / length;
+    q[1] = x / length;
+    q[2] = y / length;
+    q[3] = z / length;
+    return true;
+}
+
+constexpr float kLargestBoneTurn = 1.6f;
+
+bool blend_turn(Row* out, const Row* a, const Row* b, float t) {
+    float qa[4], qb[4], sa[3], sb[3];
+    if (!split_matrix(a, qa, sa) || !split_matrix(b, qb, sb)) {
+        return false;
+    }
+    float step = 0.0f;
+    float length = 0.0f;
+    for (int i = 0; i < 3; i++) {
+        if (std::fabs(sa[i] - sb[i]) > 0.1f * std::max(sa[i], sb[i])) {
+            return false;
+        }
+        step += (b[i][3] - a[i][3]) * (b[i][3] - a[i][3]);
+        length += b[i][3] * b[i][3];
+    }
+    if (std::sqrt(step) > 0.5f * std::sqrt(length) + 200.0f) {
+        return false;
+    }
+    float dot = qa[0] * qb[0] + qa[1] * qb[1] + qa[2] * qb[2] + qa[3] * qb[3];
+    float sign = dot < 0.0f ? -1.0f : 1.0f;
+    float angle = std::acos(std::min(1.0f, std::fabs(dot)));
+    if (2 * angle > kLargestBoneTurn) {
+        return false;
+    }
+    float wa = 1.0f - t;
+    float wb = t;
+    if (angle > 1e-4f) {
+        wa = std::sin((1.0f - t) * angle) / std::sin(angle);
+        wb = std::sin(t * angle) / std::sin(angle);
+    }
+    float q[4];
+    for (int i = 0; i < 4; i++) {
+        q[i] = wa * qa[i] + wb * sign * qb[i];
+    }
+    float w = q[0], x = q[1], y = q[2], z = q[3];
+    float r[3][3] = {{1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)},
+                     {2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)},
+                     {2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)}};
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            out[i][j] = r[i][j] * (sa[j] + (sb[j] - sa[j]) * t);
+        }
+        out[i][3] = a[i][3] + (b[i][3] - a[i][3]) * t;
+    }
+    return true;
+}
+
 void blend_palette(Row* out, const Row* a, const Row* b, float t) {
     for (uint32_t m = 0; m + 3 <= 64; m += 3) {
-        blend_matrix(out + m, a + m, b + m, t);
+        if (matrix_change(a + m, b + m) != kOtherMatrix || !blend_turn(out + m, a + m, b + m, t)) {
+            blend_matrix(out + m, a + m, b + m, t);
+        }
     }
     lerp_rows(out + kPaletteRows, a + kPaletteRows, b + kPaletteRows, kNormalRows, t);
 }
@@ -3812,6 +4052,9 @@ void find_run_camera(const std::vector<uint32_t>& unique) {
     }
 }
 
+constexpr float kFarthestStep = 0.1f;
+constexpr float kTeleportStep = 0.75f;
+
 float run_distance(const RecordedRun& before, const RecordedRun& run) {
     const Row* a = &g_previous.rows[before.draw.matrix];
     const Row* b = &g_record.rows[run.draw.matrix];
@@ -3827,6 +4070,15 @@ float run_distance(const RecordedRun& before, const RecordedRun& run) {
         }
     }
     return std::isfinite(distance) ? distance : 1e30f;
+}
+
+bool same_object(const RecordedRun& before, const RecordedRun& run, float distance, float step) {
+    if (!run_perspective(g_previous, before) || !run_perspective(g_record, run)) {
+        return true;
+    }
+    const Row* b = &g_record.rows[run.draw.matrix];
+    float away = std::sqrt(b[0][3] * b[0][3] + b[1][3] * b[1][3] + b[2][3] * b[2][3]);
+    return distance <= step * away;
 }
 
 void pair_runs() {
@@ -3922,10 +4174,55 @@ void pair_runs() {
         if (taken) {
             continue;
         }
+        bool alone = best_distance == 0.0f;
+        if (!same_object(before[*best], run, alone ? run_distance(before[*best], run) : best_distance, alone ? kTeleportStep : kFarthestStep)) {
+            g_run_counts[alone ? 5 : 4]++;
+            continue;
+        }
         run.match = *best;
         *best = next[*best];
         paired++;
         rejected += matrix_change(&g_previous.rows[before[run.match].draw.matrix], &g_record.rows[run.draw.matrix]) == kOtherMatrix;
+    }
+    static std::vector<uint8_t> used;
+    static std::vector<uint32_t> left;
+    used.assign(before.size(), 0);
+    for (const RecordedRun& run : runs) {
+        if (run.match != kUnmatched) {
+            used[run.match] = 1;
+        }
+    }
+    left.clear();
+    for (uint32_t k = 0; k < before.size(); k++) {
+        if (!used[k] && before[k].draw.shape != 0) {
+            left.push_back(k);
+        }
+    }
+    for (size_t i = 0; i < runs.size() && !left.empty(); i++) {
+        RecordedRun& run = runs[i];
+        if (run.match != kUnmatched || run.draw.shape == 0) {
+            continue;
+        }
+        size_t best = left.size();
+        float best_distance = 0.0f;
+        for (size_t k = 0; k < left.size(); k++) {
+            const RecordedRun& other = before[left[k]];
+            if (other.draw.shape != run.draw.shape || other.draw.camera != run.draw.camera) {
+                continue;
+            }
+            float distance = run_distance(other, run);
+            if (best == left.size() || distance < best_distance) {
+                best = k;
+                best_distance = distance;
+            }
+        }
+        if (best == left.size() || !same_object(before[left[best]], run, best_distance, kFarthestStep)) {
+            continue;
+        }
+        run.match = left[best];
+        left[best] = left.back();
+        left.pop_back();
+        paired++;
     }
     g_run_cut = rejected > 8 && rejected * 3 > paired;
     if (g_pair_notes_wanted) {
@@ -4035,7 +4332,7 @@ bool replay_runs(const RecordedCommand& command, float t) {
         g_replay_rows.insert(g_replay_rows.end(), now, now + run.draw.rows);
         Row* out = &g_replay_rows[at];
         if (before) {
-            blend_run(out, then, now, t);
+            blend_run(out, then, now, t, run.draw.key);
         }
         if (run.draw.palette != kNoPalette) {
             out[3][2] = static_cast<float>(static_cast<int>(palette_at) - static_cast<int>(at));
@@ -4055,8 +4352,9 @@ bool replay_between(const std::vector<std::pair<uint32_t, uint32_t>>& matches, f
     if (FAILED(context->Map(g_device.moved_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
         return false;
     }
-    auto* moved = static_cast<std::array<float, 4>*>(mapped.pData);
-    constexpr std::array<float, 4> kKeep = {0.0f, 0.0f, 0.0f, -1e30f};
+    auto* moved = static_cast<MovedVertex*>(mapped.pData);
+    constexpr std::array<float, 4> kOwnColor = {0.0f, 0.0f, 0.0f, -1.0f};
+    constexpr MovedVertex kKeep = {{0.0f, 0.0f, 0.0f, -1e30f}, {kOwnColor, kOwnColor}};
     float motion[kMaxCameras][4][4];
     for (size_t k = 0; k < kMaxCameras; k++) {
         for (int r = 0; r < 4; r++) {
@@ -4072,7 +4370,7 @@ bool replay_between(const std::vector<std::pair<uint32_t, uint32_t>>& matches, f
         size_t camera = p >= kByCamera ? p - kByCamera : g_world_camera[d];
         if (p >= kByCamera || (camera < kMaxCameras && !g_world_moving[d])) {
             written = draw.first_vertex + draw.vertices;
-            std::fill(moved + draw.first_vertex, moved + written, std::array<float, 4>{static_cast<float>(camera), 0.0f, 0.0f, -2e30f});
+            std::fill(moved + draw.first_vertex, moved + written, MovedVertex{{static_cast<float>(camera), 0.0f, 0.0f, -2e30f}, {kOwnColor, kOwnColor}});
             continue;
         }
         const RecordedDraw& before = g_previous.draws[p];
@@ -4092,7 +4390,7 @@ bool replay_between(const std::vector<std::pair<uint32_t, uint32_t>>& matches, f
                 size_t follow = stillness(*a, *b, g_cameras[camera]) != kMoved ? camera
                                 : second < kMaxCameras && stillness(*a, *b, g_cameras[second]) == kStill ? second : kMaxCameras;
                 if (follow < kMaxCameras) {
-                    moved[index] = {static_cast<float>(follow), 0.0f, 0.0f, -2e30f};
+                    moved[index] = {{static_cast<float>(follow), 0.0f, 0.0f, -2e30f}, {kOwnColor, kOwnColor}};
                     continue;
                 }
                 double world[4];
@@ -4100,8 +4398,10 @@ bool replay_between(const std::vector<std::pair<uint32_t, uint32_t>>& matches, f
                     double seen = forward[r][0] * (*a)[0] + forward[r][1] * (*a)[1] + forward[r][2] * (*a)[2] + forward[r][3] * (*a)[3];
                     world[r] = seen + ((*b)[r] - seen) * t;
                 }
+                moved[index].color[0] = kOwnColor;
+                moved[index].color[1] = kOwnColor;
                 for (int r = 0; r < 4; r++) {
-                    moved[index][r] = static_cast<float>(now[r][0] * world[0] + now[r][1] * world[1] + now[r][2] * world[2] + now[r][3] * world[3]);
+                    moved[index].position[r] = static_cast<float>(now[r][0] * world[0] + now[r][1] * world[1] + now[r][2] * world[2] + now[r][3] * world[3]);
                 }
             }
             written = draw.first_vertex + draw.vertices;
@@ -4118,11 +4418,39 @@ bool replay_between(const std::vector<std::pair<uint32_t, uint32_t>>& matches, f
             }
             float ax = (*a)[0] + g_decal_shift[d][0];
             float ay = (*a)[1] + g_decal_shift[d][1];
-            moved[index] = {ax + ((*b)[0] - ax) * t, ay + ((*b)[1] - ay) * t, (*a)[2] + ((*b)[2] - (*a)[2]) * t, (*a)[3] + ((*b)[3] - (*a)[3]) * t};
+            moved[index] = {{ax + ((*b)[0] - ax) * t, ay + ((*b)[1] - ay) * t, (*a)[2] + ((*b)[2] - (*a)[2]) * t, (*a)[3] + ((*b)[3] - (*a)[3]) * t}, {kOwnColor, kOwnColor}};
         }
         written = draw.first_vertex + draw.vertices;
     }
     std::fill(moved + written, moved + g_frame_vertices, kKeep);
+    for (size_t d = 0; d < g_record.draws.size() && d < g_color_partner.size(); d++) {
+        const RecordedDraw& draw = g_record.draws[d];
+        uint32_t p = g_color_partner[d];
+        if (p >= kRejected || p >= g_previous.draws.size() || g_previous.draws[p].positions != draw.positions || draw.positions == 0 ||
+            g_previous.draws[p].material != draw.material) {
+            continue;
+        }
+        const RecordedDraw& before = g_previous.draws[p];
+        for (uint32_t v = 0; v < draw.vertices && draw.first_vertex + v < g_frame_vertices; v++) {
+            size_t index = draw.first_vertex + v;
+            uint16_t source = g_record.source_of[index];
+            if (source == kNoSource) {
+                continue;
+            }
+            const auto& a = g_previous.colors[before.first_position + source];
+            const auto& b = g_record.colors[draw.first_position + source];
+            if (a == b) {
+                continue;
+            }
+            for (int c = 0; c < 2; c++) {
+                float alpha = a[c][3] + (b[c][3] - a[c][3]) * t;
+                for (int k = 0; k < 3; k++) {
+                    moved[index].color[c][k] = alpha > 0.0f ? (a[c][k] * a[c][3] + (b[c][k] * b[c][3] - a[c][k] * a[c][3]) * t) / alpha : b[c][k];
+                }
+                moved[index].color[c][3] = alpha;
+            }
+        }
+    }
     context->Unmap(g_device.moved_buffer, 0);
     auto filled = std::chrono::steady_clock::now();
     g_time_filling += std::chrono::duration<double>(filled - started).count();
@@ -4154,17 +4482,79 @@ bool replay_between(const std::vector<std::pair<uint32_t, uint32_t>>& matches, f
         }
         return target;
     };
+    static std::vector<uint32_t> command_partner;
+    static uint64_t partnered_frame = ~0ull;
+    if (partnered_frame != g_frame) {
+        partnered_frame = g_frame;
+        command_partner.assign(g_record.commands.size(), ~0u);
+        static std::vector<uint32_t> lists[2];
+        lists[0].clear();
+        lists[1].clear();
+        for (uint32_t i = 0; i < g_previous_colors.size(); i++) {
+            lists[g_previous_colors[i].runs].push_back(i);
+        }
+        auto previous_command = [](bool runs, size_t at) {
+            const std::vector<uint32_t>& list = lists[runs];
+            auto found = std::upper_bound(list.begin(), list.end(), at, [](size_t value, uint32_t i) { return value < g_previous_colors[i].begin; });
+            if (found == list.begin()) {
+                return ~0u;
+            }
+            uint32_t i = *(found - 1);
+            return at < g_previous_colors[i].end ? i : ~0u;
+        };
+        size_t d = 0;
+        for (size_t c = 0; c < g_record.commands.size(); c++) {
+            const RecordedCommand& command = g_record.commands[c];
+            if (command.kind == RecordedCommand::kRuns) {
+                for (size_t r = command.begin; r < command.end; r++) {
+                    if (g_record.runs[r].match != kUnmatched) {
+                        command_partner[c] = previous_command(true, g_record.runs[r].match);
+                        break;
+                    }
+                }
+            } else if (command.kind == RecordedCommand::kBatch) {
+                while (d < g_record.draws.size() && g_record.draws[d].first_vertex < command.begin) {
+                    d++;
+                }
+                for (size_t e = d; e < g_record.draws.size() && g_record.draws[e].first_vertex < command.end; e++) {
+                    uint32_t p = e < g_color_partner.size() ? g_color_partner[e] : kUnmatched;
+                    if (p < kRejected && p < g_previous.draws.size() && g_previous.draws[p].material == g_record.draws[e].material) {
+                        command_partner[c] = previous_command(false, g_previous.draws[p].first_vertex);
+                        break;
+                    }
+                }
+            }
+        }
+    }
     BatchState swapped;
-    for (const RecordedCommand& command : g_record.commands) {
+    BatchState blended;
+    for (size_t c = 0; c < g_record.commands.size(); c++) {
+        const RecordedCommand& command = g_record.commands[c];
         switch (command.kind) {
         case RecordedCommand::kBatch:
         case RecordedCommand::kRuns: {
             const BatchState* state = &command.batch;
+            uint32_t partner = command_partner[c];
+            if (partner != ~0u) {
+                const CommandColors& before = g_previous_colors[partner];
+                const Constants& now = command.batch.constants;
+                if ((std::memcmp(before.initial, now.initial, sizeof before.initial) != 0 || std::memcmp(before.konst, now.konst, sizeof before.konst) != 0) &&
+                    before.shape == command_shape(command.batch)) {
+                    blended = command.batch;
+                    for (int i = 0; i < 4; i++) {
+                        for (int k = 0; k < 4; k++) {
+                            blended.constants.initial[i][k] = before.initial[i][k] + (now.initial[i][k] - before.initial[i][k]) * t;
+                            blended.constants.konst[i][k] = before.konst[i][k] + (now.konst[i][k] - before.konst[i][k]) * t;
+                        }
+                    }
+                    state = &blended;
+                }
+            }
             for (size_t map = 0; map < kTextureMaps; map++) {
                 for (const auto& [recorded, twin] : twins) {
                     if (command.batch.views[map] == recorded->view) {
                         if (state != &swapped) {
-                            swapped = command.batch;
+                            swapped = *state;
                             state = &swapped;
                         }
                         swapped.views[map] = twin->view;
@@ -4324,6 +4714,7 @@ void match_by(uint64_t RecordedDraw::*key, bool trusted, std::vector<uint32_t>& 
             continue;
         }
         candidates.emplace_back(static_cast<uint32_t>(d), p);
+        g_color_partner[d] = p;
     }
     close.assign(candidates.size(), 0);
     parallel_for(candidates.size(), [](size_t i) {
@@ -4577,6 +4968,7 @@ void pair_frame() {
     static std::vector<uint32_t> partner;
     static std::vector<uint8_t> taken;
     partner.assign(g_record.draws.size(), kUnmatched);
+    g_color_partner.assign(g_record.draws.size(), kUnmatched);
     taken.assign(g_previous.draws.size(), 0);
     uint32_t moved_too_far = 0;
     static std::vector<uint8_t> kind;
@@ -4678,13 +5070,28 @@ bool g_show_real = true;
 double g_planned_slot = 1.0 / 120.0;
 
 void end_record() {
+    g_previous_colors.clear();
     if (g_recording && !g_record_broken) {
+        for (const RecordedCommand& command : g_record.commands) {
+            if (command.kind == RecordedCommand::kBatch || command.kind == RecordedCommand::kRuns) {
+                CommandColors colors;
+                colors.runs = command.kind == RecordedCommand::kRuns;
+                colors.begin = command.begin;
+                colors.end = command.end;
+                colors.shape = command_shape(command.batch);
+                std::memcpy(colors.initial, command.batch.constants.initial, sizeof colors.initial);
+                std::memcpy(colors.konst, command.batch.constants.konst, sizeof colors.konst);
+                g_previous_colors.push_back(colors);
+            }
+        }
         g_previous.positions.swap(g_record.positions);
+        g_previous.colors.swap(g_record.colors);
         g_previous.draws.swap(g_record.draws);
         g_previous.runs.swap(g_record.runs);
         g_previous.rows.swap(g_record.rows);
     } else {
         g_previous.positions.clear();
+        g_previous.colors.clear();
         g_previous.draws.clear();
         g_previous.runs.clear();
         g_previous.rows.clear();
@@ -4828,7 +5235,7 @@ void finish_frame() {
                        frames, with_images, late_frames, seconds * 1000.0 / frames, g_time_pairing * 1000.0 / frames, g_time_filling * 1000.0 / frames, g_time_sending * 1000.0 / frames, draws / frames, g_match[0] / n, g_match[1] / n, g_match[2] / n, g_match[3] / n, g_match[4] / n,
                        g_match[5] / n, static_cast<uint32_t>(std::count_if(std::begin(g_cameras), std::end(g_cameras), [](const CameraMotion& c) { return c.known; })));
             if (g_run_counts[0] != 0) {
-                log::write("runs", "%u models per frame redrawn for the images: %u paired, %u moved too far, %u texture matrices turned in all", g_run_counts[0] / n, g_run_counts[1] / n, g_run_counts[2] / n, g_run_counts[3]);
+                log::write("runs", "%u models per frame redrawn for the images: %u paired, %u moved too far, %u texture matrices turned in all, %u look-alikes too far to pair, %u teleports", g_run_counts[0] / n, g_run_counts[1] / n, g_run_counts[2] / n, g_run_counts[3], g_run_counts[4], g_run_counts[5]);
             }
             std::fill(std::begin(g_match), std::end(g_match), 0u);
             std::fill(std::begin(g_run_counts), std::end(g_run_counts), 0u);
@@ -5168,6 +5575,7 @@ bool present_view(HWND window, double aspect, ID3D11ShaderResourceView* view) {
     }
     D3D11_VIEWPORT viewport{static_cast<float>((client.right - width) / 2), static_cast<float>((client.bottom - height) / 2),
                             static_cast<float>(width), static_cast<float>(height), 0.0f, 1.0f};
+    g_auto_scale = scale_for_screen(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST));
     context->RSSetViewports(1, &viewport);
     context->RSSetState(g_device.present_rasterizer);
     context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
@@ -5199,6 +5607,7 @@ bool present_view(HWND window, double aspect, ID3D11ShaderResourceView* view) {
     static double shortest = 1e9;
     static double total = 0.0;
     static uint32_t shown = 0;
+    static uint32_t held = 0;
     auto now = std::chrono::steady_clock::now();
     double interval = std::chrono::duration<double, std::milli>(now - last).count();
     last = now;
@@ -5206,8 +5615,12 @@ bool present_view(HWND window, double aspect, ID3D11ShaderResourceView* view) {
     shortest = std::min(shortest, interval);
     total += interval;
     shown++;
+    if (interval > g_slot * 1500.0) {
+        held++;
+    }
     if (now - report >= std::chrono::seconds(1)) {
-        log::write("present", "%u frames shown, %.1f ms apart on average, from %.1f to %.1f ms", shown, total / shown, shortest, longest);
+        log::write("present", "%u frames shown, %.1f ms apart on average, from %.1f to %.1f ms, %u held over 1.5 slots", shown, total / shown, shortest, longest, held);
+        held = 0;
         report = now;
         longest = 0.0;
         shortest = 1e9;
@@ -5462,6 +5875,11 @@ bool present_frame(void* window_handle, double aspect) {
             last = g_last_shown;
         }
         g_slot = std::clamp(g_planned_slot, 0.002, 0.025);
+        uint32_t queued = g_interpolated_ready + (g_show_real ? 1 : 0);
+        if (queued > 0) {
+            double lead = std::chrono::duration<double>(last - now).count();
+            g_slot = std::clamp(g_slot - (lead - g_slot / 4) * 0.1 / queued, g_slot * 0.9, g_slot * 1.1);
+        }
         auto step = std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(g_slot));
         auto slot = std::max(now, last + step);
         for (uint32_t i = 0; i < g_interpolated_ready; i++) {

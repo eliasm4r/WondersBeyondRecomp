@@ -10,6 +10,30 @@ Every change to WondersBeyondRecomp, newest first.
 
 <br>
 
+## v0.3.1-alpha · 2026-11-16
+
+> **Cheats and a fly camera.** A Cheats tab (speed, jump, damage, berries, prices), a camera that flies around the map, sharper photos, an automatic resolution, smoother 240 fps and a freeze fixed. [Download it here.](https://github.com/eliasm4r/WondersBeyondRecomp/releases/tag/v0.3.1-alpha)
+
+### Added
+- **Cheats** tab in the options menu (and in RecompLauncher), all off by default: berries collected up to 10 times, prices down to free, the Pokémon you chase in the chase games slower or faster, running speed up to 2 times, jumps up to 3 times higher, damage dealt up to 10 times and damage taken down to none.
+- **Fly camera** (F6, can be changed in Controls, or from the Cheats tab, which shows its key): detaches the camera to look around the map, through walls but never under the ground or the sea. Keyboard: mouse to look, move keys to fly, Space up, C down, Shift faster. Gamepad: left stick to fly, right stick to look, RT up, LT down, RB faster. The game waits meanwhile; F6 again brings the camera back.
+- Photos saved in the game are also written as PNG files, at the internal resolution (1920x1050 at 3x, 3840x2100 at 6x), to a `photos` folder next to the game, named with the date and time. Photos you choose not to save are not written. The Pad and its album then show these photos from the PNG instead of the game's small JPEG, so they look sharp too. Turn both off with Options > Game > Save photos as PNG.
+- **Auto internal resolution**, now the default: the game picks, from your screen's resolution, the lowest scale that draws at least 1.25 times the picture's size in fullscreen, across and down, so the smoothing has pixels to spare (4x on a 1080p screen, 3x at 720p, 5x at 1440p, 6x above). It takes that scale's place in the list (Native, 2x, 3x, Auto (4x), 5x, 6x on a 1080p screen) and does not change while you play. Settings saved by an earlier build keep their choice.
+
+### Changed
+- The options menu is in a clearer order: the frame-rate limit is with the screen settings, the camera comes first in Controls and the fly camera first in Cheats.
+- The options menu's bottom bar follows the device used last: with a gamepad it shows its own buttons (Xbox, PlayStation shapes or Switch) for confirming, changing tab and closing, and it adds "select" (Enter or A) on rows that need it, like key bindings and buttons.
+
+### Fixed
+- The game no longer freezes for many seconds after a few F9 bug captures in a row: on a slow disk, a log write could stall every thread of the game. The log is now written from its own thread, and the sound skips what it missed instead of playing it fast.
+- Above 60 fps, the pictures in between stay locked to the game's frames (no more short hold every few seconds), running legs no longer jump, and fades, lit colours, scrolling textures, facial expressions and scene changes are smoothed instead of switching at once.
+- Above 60 fps, an object drawn several times alike, like the red circles under the Pokémon in a minigame, could be drawn halfway to another copy on the images in between, so it seemed to jump aside for an instant. Two copies are now only blended when they could be the same object moving. In Power Bash, the rings under the target no longer slide in from the side and out again above 60 fps: they appear and leave at once, as at 30 fps.
+- Pressing the right stick quickly on a gamepad no longer flashes the aiming cursor: it only recentres it while you aim.
+- Loading screens can no longer be skipped as if they were story scenes, and a scene skip now stops when a loading screen starts.
+- Every video can now be skipped by holding A or +, including the ones the game plays outside its usual video scenes, like a long story video that starts in the park and the video before the title screen.
+- The fly camera no longer jumps or turns around when a wall, a tree or a hill stands between it and your Pokémon, or when it flies past the edge of the map: the game was still pulling the view back in front of the obstacle.
+- The mouse and the right stick turn the camera by the same amount on every game frame, so a turn no longer speeds up and slows down from one frame to the next.
+
 ## v0.3.0-alpha · 2026-11-15
 
 > **Wider and quicker.** 16:10, 21:9 and 32:9 screens, faster text, skippable cutscenes, your own keys and buttons drawn in the game, every texture in HD with one button, and 240 fps at 6x. [Download it here.](https://github.com/eliasm4r/WondersBeyondRecomp/releases/tag/v0.3.0-alpha)

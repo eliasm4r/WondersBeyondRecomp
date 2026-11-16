@@ -54,5 +54,7 @@ void set_pointer_held(bool held);
 bool pointer_held();
 void note_driving();
 bool driving();
+void toggle_fly();
+bool flying();
 
 }

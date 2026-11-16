@@ -236,6 +236,23 @@ to the next image's time (0.1 to 1 ms), as PokePark 2 Wiicompiled's `wait_until`
 images from a thread of their own). Same scene: 239.6-239.8 fps, images 2.8 to 5.5 ms apart instead of 0.1 to 14;
 144 fps 6 to 8 ms apart, 120 fps 7.6 to 9 ms, 60 fps unchanged.
 
+- Look-alikes (user report: in a minigame the red circle under the Pokémon jumped slightly to the right at 240 fps;
+  no capture, not reproduced headless): `pair_runs` gave each model the nearest unpaired one of the last frame,
+  however far. When a copy appears or another leaves, a circle was paired with its neighbour and blended halfway
+  between them on the images in between. Like the rival recompilation's `same_object` (`gx_frames.c`), a pair is now
+  only kept when the model moved at most a tenth of its distance from the eye (after the camera's own motion, when
+  known), and only for keys drawn more than once, the only ambiguous case; refused ones are drawn where they are.
+  The `runs` log line counts them ("look-alikes too far to pair"): 0 a second walking at 240 fps, 0 to 3 while
+  dashing (`run.txt`, `dash.txt`).
+- Teleports (the same report, found with the user's F9 capture): it was Power Bash. The target's disc and its red,
+  orange and white rings are single models parked at x = -50 in view space (off screen, left) and moved to x = 0
+  under the target in one frame, then back; with one copy only, the pair was never checked and they slid in and out
+  on the images in between. A model drawn once is now refused too when it moved more than 0.75 of its distance from
+  the eye (`kTeleportStep`); the rings jump 0.8 to 1.3, Pikachu's fastest strikes up to about 0.7. Logged as
+  "teleports" on the `runs` line: 2 to 18 a second in Power Bash, 0 in the park (`dash.txt`).
+- `WP_RECENT_AT=s1,s2,...` saves the bug recorder's images (as F9 does) at those seconds after start, for headless
+  runs (with `WP_BUG_RECORDER=1`).
+
 ## Presenting without waiting for the display
 
 At x6 and 240 fps the user's log (fullscreen, 240 Hz screen) showed 178-183 fps in the save spot, while a hidden
@@ -292,13 +309,74 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
 - Discord shows the game when `system.discord` is on and `discord_application` in the game description holds an
   Application ID; it talks to the local client over its IPC pipe and retries every 15 s.
 
+## Cheats
+
+- Taken from the rival recompilation's `hle_modifiers.c` (CC0), its USA addresses matched to PAL by the sizes of the
+  25 functions around each (one match each): `GlobalManager::Get` `0x80074C10`, `KineticEnergyControl` movement update
+  `0x800A9300` (hooked), the chase action's step `FieldAIActionChallengeChase::virt0x14` `0x801E1B80` (hooked).
+- Berries (`cheats.berries`, `cheats.prices`): the save data (`GlobalManager::Get()` +0x48) keeps them at +0x1474
+  (305 in the test save, as the game shows). In the park, each frame's change is scaled by the gain or the price
+  percentage and written back, at most 99999.
+- Chase speed (`cheats.chase_speed`): the accessor a chase step is given counts as chased for 4 movement updates;
+  for those its energy's target speeds (+0x28, +0x2C), top speed (+0x30, unless negative) and rates (+0x38, +0x3C)
+  are scaled for the update and put back after.
+- The player (table `0x8044BB9C`, Pikachu at `0x80B3EEE4` in the park; the team's other playable has the same table)
+  does not go through the movement update: its body (+0x9C) keeps the position at +0x8, already moved for the frame
+  when the game hands it to its set-position step (`0x800C3FC0`, hooked; found with `WP_WATCH` on that position in a
+  `WP_TRACE_CALLS` build). The non-player callers of that step keep their own tables.
+- Running speed and jump height (`cheats.run_speed`, `cheats.jump`): the step from the position left by the previous
+  call is scaled (sideways by the speed, upward by the jump; falling is left alone) and handed on through a copy on the
+  stack, so the game's collision still applies. Steps over 3 units (warps, scene changes) are not scaled. Headless:
+  walking 0.32 to 0.70 a frame at 200 %, jumps 7.56 to 15.1 units at 200 %, landing back on the same ground height.
+- Damage (`cheats.damage_dealt`, `cheats.damage_taken`): `LifeModuleImpl` subtracts f1 from its +0x8 (`0x800B01C0`,
+  hooked, matched from the rival's USA address like the others). The player's life is its accessor's (+0xC, table
+  `0x8044B0D8`) +0x60, as in the rival; any other life losing points was hit by the player. Not seen in a battle in
+  headless runs (none in the test scripts): each scaled hit is logged under `cheats` to check it.
+- Fly camera (`keys.fly_camera`, F6): in the field camera hook, after the game's own update, the eye starts where the
+  game's is and turns with the mouse (pitch within 1.5 rad); move keys go along the look, Space and C up and down, 20
+  units a second (4 times with Shift; Pikachu is about 4 tall). The game's eye and target are put back before its next
+  update, as for the orbit camera, so its own camera keeps following Pikachu. While flying and the hook runs (the
+  300 ms driving window) game input reads nothing. Space and C, not E and Q, so it is the same on AZERTY.
+- Flying down along the look went under the cliffs and the sea (surface near y -75 by the ice beach, where the eye
+  sees the sky's lower half mirrored, then grey): each step now probes the ground from the step's length above the eye,
+  so a floor crossed in that step lifts the eye back on it (walls stay open), and the eye stays above y -70.
+- User report: the fly camera "teleported" when an obstacle stood between it and the Pokémon, and when flown far.
+  The eye and target written by the hook are not what the picture uses: `0x80019B20` (hooked as `CameraView`, called
+  later through `0x8001A090` with the target at +0x28 and the eye at +0x0C) builds the view from them and keeps the
+  final eye at +0xCC, the final target at +0xD8 and the view matrix at +0x48. When the camera follows someone (+0xB8,
+  -1 for nobody) it casts the field collision from the followed position to the eye and, if met (+0xE8 set to 1), puts
+  the eye at the point met. Flying backward out of the town, the final eye stayed on the hill's edge at 384, 49, 308
+  while the target went on to 567, 92, 376, so the view turned around and seemed frozen on a tree. While flying,
+  `CameraView` on the flown camera now runs with +0xB8 set to -1 and put back after: the final eye follows the fly
+  eye through the hill and past it (headless run, 22 seconds backward from Pikachu in the town).
+- A change of camera object while flying only starts the flight over from the game's eye when the game's target moved
+  more than 40 units (a new place), not on every change. The fly and orbit steps use one game frame (1 / 59.94 s)
+  instead of the real time between updates, which came 11 to 25 ms apart and made the turn vary by -35 to +45 %.
+- On a gamepad it is only turned on from the keyboard key or the Cheats tab's button, as the user asked; the sticks,
+  triggers and RB are read straight from player 1's pad, since the game's input is blocked.
+- R3 put the pad's pointer back to the centre and showed it even when not aiming, so pressing it quickly flashed the
+  aiming cursor; it now only recentres while aiming.
+
 ## Options menu, play time and performance overlay
+
+- Auto internal resolution (`video.scale=0`, the default): `scale_for_screen` takes the monitor's display mode (real pixels: the game is not DPI aware, so `rcMonitor` would be shrunk by Windows scaling) (the
+  primary one at start, then the window's), fits a 16:9 picture in it and returns `ceil(1.25 * size / logical size)`
+  across (640) and down (456), the larger of the two, 1 to 6: 4 at 1080p, 3 at 720p, 5 at 1440p, 6 above. A first
+  version measured the picture's box in the window every frame: at start, while the window went fullscreen and the
+  canvas margins settled, it moved 3, 2, 1, 4, 6, 5, 6, 4, 1, 4 within three seconds, rebuilding the targets each
+  time. At 3x on a 1080p 16:9 screen the picture is drawn 1920 wide for 1920 pixels, so `pixel_smooth` (16 taps over
+  each screen pixel) has nothing to average across and edges stay jagged; the user saw the difference with 4x (1.33
+  across, 1.69 down) but none between 4x and 5x, hence 1.25. In the menu Auto takes the place of the scale it picks
+  (Native, 2x, 3x, Auto (4x), 5x, 6x), as the user asked. OpenGL uses 4x for Auto.
 
 - The F1 menu is drawn on the CPU into one image (`options_render_stb.cpp`, on the shared canvas of `canvas.cpp`) that
   the renderer shows over the game. Its size follows the window height: `unit = clamp(height / 40, 14, 40)`, the panel
   is 60 units wide, and its orange edge, `max(3, unit * 3 / 5)` pixels, is the outline polygon drawn once offset in
   orange and once in place in the panel colour. Tabs sit in a column on the left, skewed by 12 degrees; rows on the
   right, then a help line and the key hints.
+- The key hints follow `input::gamepad_in_use()`: on a gamepad they name the buttons of `gamepad::shown_family()`
+  (confirm is East and close South on Switch, as `gamepad::menu_buttons` reads them; PlayStation cross and circle are
+  drawn as shapes), and "select" is added only on rows that need a press (key, button and action rows).
 - Palette: panel `#F8F8F6`, orange `#F27D0C`, ink `#3B3531`, selected row `#FFEBD2`, red marker `#E2343B`.
 - Font: Nunito ExtraBold and Black (SIL Open Font License, `third_party/fonts/nunito`), embedded in the executable with
   `.incbin` so the menu looks the same everywhere. The performance overlay uses Consolas, or DejaVu Sans Mono.
@@ -970,6 +1048,15 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
   see past 2000 by the canvas's shape: 21:9 at 240 fps x3 drew 21.9 million vertices a second instead of 21.3, still
   at 239.8 fps.
 
+## Photos as PNG
+
+- The Pad camera copies the picture into RAM as 640x350 RGBA8 (EFB copy format 6), and the game stores it as a JPEG of up to 100 KB in a slot of `data/Pic0` or `Pic1` (one file per save slot, slots 0x19000 bytes apart) once "Save Photo data?" is answered yes.
+- `copy_to_texture` reads back the copy's internal-resolution texture for every one-off copy of that size and format (`keep_photo`, the picture's part only, so wide shapes give the same framing as the game's photo) and hands it to `screenshot::photo_taken`.
+- The PNG is written only when the game writes bytes that differ from the file's into a `Pic` file within two minutes of the copy (`changes` in nand.cpp, compared only while a photo waits). Answering no writes nothing to `Pic`, so no PNG; a photo is written once. Checked with `photo1.txt` (yes: 1920x1050 PNG at 3x) and the same script without its left press (no: no file). Colour settings are applied like on screenshots.
+- The album and the Pad's main page decode the JPEG into a 640x350 RGBA8 texture (not a copy). Its hash cannot be known when the photo is saved, so each saved PNG gets a line in `game/photos.txt`: its path and a 16x9 grid of average colours taken before the colour settings. When a 640x350 RGBA8 texture is made from memory, its grid is compared with every line, and the closest PNG under a mean difference of 6 (out of 255) that still exists is drawn instead (`photo_matching`, `custom_texture` now also takes a file path). Checked: the Pad's page showed the PNG of the photo just taken (log `photo shown from`).
+- The Pad's main page shows a random saved photo; old photos saved while the photo copy never reached memory (before the fix in "60 fps") are black with pink streaks in the save itself, which is not a rendering bug.
+- Option `game.save_photos` (`WP_SAVE_PHOTOS`), Game tab, on by default, covers both. Only the Direct3D renderer keeps and shows the photos.
+
 ## Text speed
 
 - `game.text_speed` (Game tab, live): `1` (the game's), `2`, `3`, or `0` for a whole page at once. Idea from the rival
@@ -997,6 +1084,13 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
 - While held, `wp::hint` draws a small box with "Hold to skip" and a gauge in the bottom right corner (both
   renderers, above the game and the statistics, below the options menu); the image is made again only when the
   gauge moves by a 32nd.
+- User report: a video still could not be skipped. It was `DmCh0000_00` (78 seconds, started from the park after a
+  message), and no `MovieSceneUpdate` ran during it: some videos are played by the movie player without the movie
+  scene, as is the boot video `DmCh0000_01`. While held, the scene skip saw a loading screen (no HUD layout drawn) and
+  left it alone. Now, each `SceneManagerRunBegin`, when the player's state is 3 and no `MovieSceneUpdate` ran for
+  250 ms, the same hold (A or +, real time, gauge and veil) writes 5 into the state; the scene skip is not offered
+  meanwhile, and the veil lifts once the state is neither 3 nor 5 (or after 4 seconds, as before). Headless: + held
+  from 3 s, the boot video ended at 4.4 s and the title screen came up as usual.
 - Tests: `WP_MOVIE=n` with `WP_ATTRACTION=1,8` gives the scene parameter `Movie` instead of `AttractionId`, which
   starts movie `n` of the table at 0x80468C28 from the park (2 is DmCh1110_01).
 
@@ -1018,6 +1112,11 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
   is another): a scene started without the minimap ends when MnFdMap shows again, one started with the bars when
   MnEvFrame is gone for 10 steps; also on a question or a battle window (the player answers, + held again goes on),
   off the park scene, or after 3 minutes.
+- Loading screens ("Loading..." with the player's Pokémon, scene 0 from 15.4 to 19.3 s in `dash.txt`) hide the
+  minimap too, so they passed for story scenes and + skipped them (user report). During one, no HUD layout goes
+  through `LayoutDraw` from the HUD caller (only `poi`, from 0x801440E0), while in a story scene the hidden ones still
+  do. So a scene also needs a HUD layout drawn in the last 250 ms, and a skip ends past that. Real time, not steps: a
+  skip runs about 16 steps per drawn frame, and a 4 step limit ended the intro's skip after one step.
 - During a skip the picture is hidden (`gx::set_screen_hidden`), draws and copies are dropped
   (`gx::set_drawing_skipped`, the FIFO is still read), the sound is silenced (`audio::set_silenced`), the input alarm
   gets a sixteenth of its period through the game's setter (0x8000efa0, as the boot speed-up) and the emulated

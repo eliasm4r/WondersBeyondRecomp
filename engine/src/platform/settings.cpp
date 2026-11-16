@@ -23,7 +23,7 @@ struct Option {
 };
 
 const Option kBaseOptions[] = {
-    {"video.scale", "1"},
+    {"video.scale", "0"},
     {"video.fps", "60"},
     {"video.fullscreen", "0"},
     {"video.vsync", "0"},
@@ -65,6 +65,14 @@ const Option kBaseOptions[] = {
     {"game.text_speed", "1"},
     {"game.skip_movies", "1"},
     {"game.button_icons", "1"},
+    {"game.save_photos", "1"},
+    {"cheats.berries", "100"},
+    {"cheats.prices", "100"},
+    {"cheats.chase_speed", "100"},
+    {"cheats.damage_dealt", "100"},
+    {"cheats.damage_taken", "100"},
+    {"cheats.run_speed", "100"},
+    {"cheats.jump", "100"},
     {"system.options_menu", "1"},
     {"system.discord", "1"},
     {"system.check_updates", "1"},
