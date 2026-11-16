@@ -69,6 +69,8 @@ struct Gl {
 Gl gl;
 bool g_es = false;
 bool g_dual_source = true;
+using BufferStorage = void (*)(GLenum, GLsizeiptr, const void*, GLbitfield);
+BufferStorage g_buffer_storage = nullptr;
 
 bool load_functions() {
     bool ok = true;
@@ -1207,6 +1209,9 @@ bool create_pipeline() {
         if (has_extension("GL_EXT_clip_control")) {
             gl.ClipControl = reinterpret_cast<decltype(gl.ClipControl)>(SDL_GL_GetProcAddress("glClipControlEXT"));
         }
+        if (has_extension("GL_EXT_buffer_storage")) {
+            g_buffer_storage = reinterpret_cast<BufferStorage>(SDL_GL_GetProcAddress("glBufferStorageEXT"));
+        }
     } else if (version >= 45 || has_extension("GL_ARB_clip_control")) {
         gl.ClipControl = reinterpret_cast<decltype(gl.ClipControl)>(SDL_GL_GetProcAddress("glClipControl"));
     }
@@ -1302,6 +1307,41 @@ void allocate(GLuint buffer, uint32_t bytes, GLenum usage) {
     gl.BufferData(GL_ARRAY_BUFFER, bytes, nullptr, usage);
 }
 
+struct MappedRing {
+    GLuint buffer = 0;
+    uint8_t* memory = nullptr;
+    uint32_t capacity = 0;
+    uint32_t segment = 0;
+    GLsync done[2] = {};
+};
+
+MappedRing g_mapped_vertices;
+MappedRing g_mapped_indices;
+MappedRing g_mapped_rows;
+
+bool map_ring(MappedRing& ring, GLuint& buffer, uint32_t bytes) {
+    constexpr GLbitfield kPersistent = 0x0040;
+    constexpr GLbitfield kCoherent = 0x0080;
+    constexpr GLbitfield kFlags = GL_MAP_WRITE_BIT | kPersistent | kCoherent;
+    clear_errors();
+    GLuint mapped = 0;
+    gl.GenBuffers(1, &mapped);
+    gl.BindBuffer(GL_ARRAY_BUFFER, mapped);
+    g_buffer_storage(GL_ARRAY_BUFFER, bytes, nullptr, kFlags);
+    void* memory = gl.GetError() == GL_NO_ERROR ? gl.MapBufferRange(GL_ARRAY_BUFFER, 0, bytes, kFlags) : nullptr;
+    if (!memory) {
+        gl.DeleteBuffers(1, &mapped);
+        clear_errors();
+        return false;
+    }
+    gl.DeleteBuffers(1, &buffer);
+    buffer = mapped;
+    ring.buffer = mapped;
+    ring.memory = static_cast<uint8_t*>(memory);
+    ring.capacity = bytes;
+    return true;
+}
+
 bool create_run_pipeline() {
     static bool tried = false;
     if (tried) {
@@ -1339,6 +1379,12 @@ bool create_run_pipeline() {
         allocate(g_device.run_vertices, kRunVertexBytes, GL_STREAM_DRAW);
         allocate(g_device.run_indices, kRunIndexBytes, GL_STREAM_DRAW);
         allocate(g_device.run_rows, kRunRowCapacity * sizeof(float[4]), GL_STREAM_DRAW);
+        if (g_buffer_storage) {
+            bool mapped = map_ring(g_mapped_vertices, g_device.run_vertices, kRunVertexBytes) &&
+                          map_ring(g_mapped_indices, g_device.run_indices, kRunIndexBytes) &&
+                          map_ring(g_mapped_rows, g_device.run_rows, kRunRowCapacity * sizeof(float[4]));
+            log::write("video", mapped ? "vertex buffers mapped once and kept mapped" : "vertex buffers mapped for each draw: persistent mapping refused");
+        }
         gl.GenTextures(1, &g_device.run_rows_texture);
         gl.ActiveTexture(GL_TEXTURE0 + kRowsUnit);
         gl.BindTexture(GL_TEXTURE_BUFFER, g_device.run_rows_texture);
@@ -1928,8 +1974,65 @@ void reserve_run(std::vector<T>& values, size_t wanted) {
     }
 }
 
+void write_buffer(GLenum target, size_t offset, size_t size, const void* data) {
+    void* mapped = gl.MapBufferRange(target, static_cast<GLintptr>(offset), static_cast<GLsizeiptr>(size),
+                                     GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
+    if (!mapped) {
+        gl.BufferSubData(target, static_cast<GLintptr>(offset), static_cast<GLsizeiptr>(size), data);
+        return;
+    }
+    std::memcpy(mapped, data, size);
+    gl.UnmapBuffer(target);
+}
+
+MappedRing* mapped_ring(GLuint buffer) {
+    for (MappedRing* ring : {&g_mapped_vertices, &g_mapped_indices, &g_mapped_rows}) {
+        if (ring->buffer == buffer && ring->memory) {
+            return ring;
+        }
+    }
+    return nullptr;
+}
+
+bool reserve(MappedRing& ring, uint32_t& cursor, uint32_t size, uint32_t& start) {
+    uint32_t half = ring.capacity / 2;
+    if (size > half) {
+        return false;
+    }
+    uint32_t at = cursor >= ring.capacity ? 0 : cursor;
+    uint32_t segment = at >= half ? 1 : 0;
+    if (at + size > (segment + 1) * half) {
+        segment ^= 1;
+        at = segment * half;
+    }
+    if (segment != ring.segment) {
+        GLsync& left = ring.done[ring.segment];
+        if (left) {
+            gl.DeleteSync(left);
+        }
+        left = gl.FenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        GLsync& reused = ring.done[segment];
+        if (reused) {
+            gl.ClientWaitSync(reused, GL_SYNC_FLUSH_COMMANDS_BIT, kWaitForever);
+            gl.DeleteSync(reused);
+            reused = nullptr;
+        }
+        ring.segment = segment;
+    }
+    start = at;
+    cursor = at + size;
+    return true;
+}
+
 bool upload_run(GLuint buffer, uint32_t& cursor, uint32_t capacity, const void* data, uint32_t size, uint32_t& start) {
     if (size == 0) {
+        return true;
+    }
+    if (MappedRing* ring = mapped_ring(buffer)) {
+        if (!reserve(*ring, cursor, size, start)) {
+            return false;
+        }
+        std::memcpy(ring->memory + start, data, size);
         return true;
     }
     gl.BindBuffer(GL_ARRAY_BUFFER, buffer);
@@ -2132,8 +2235,7 @@ void flush_pending() {
             gl.BufferData(GL_ARRAY_BUFFER, kVertexCapacity * sizeof(ScreenVertex), nullptr, GL_STREAM_DRAW);
             g_vertex_cursor = 0;
         }
-        gl.BufferSubData(GL_ARRAY_BUFFER, static_cast<GLintptr>(g_vertex_cursor) * sizeof(ScreenVertex), batch * sizeof(ScreenVertex),
-                         pending.vertices.data() + offset);
+        write_buffer(GL_ARRAY_BUFFER, static_cast<size_t>(g_vertex_cursor) * sizeof(ScreenVertex), batch * sizeof(ScreenVertex), pending.vertices.data() + offset);
         gl.DrawArrays(GL_TRIANGLES, static_cast<GLint>(g_vertex_cursor), static_cast<GLsizei>(batch));
         g_vertex_cursor += batch;
         offset += batch;
