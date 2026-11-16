@@ -2,6 +2,7 @@ import collections
 import ctypes
 import hashlib
 import os
+import platform
 import plistlib
 import re
 import shutil
@@ -14,11 +15,13 @@ import zipfile
 from pathlib import Path
 
 MAC = sys.platform == "darwin"
+LINUX = sys.platform.startswith("linux")
+ARM = platform.machine().lower() in ("aarch64", "arm64")
 GAME = "pokepark2"
 DISC_ID = "S2LP01"
 OLD_FOLDER = Path("games") / GAME
 FOLDER_NAME = "WondersBeyondRecomp"
-EXECUTABLE = "pokepark2" if MAC else "pokepark2.exe"
+EXECUTABLE = "pokepark2" if MAC or LINUX else "pokepark2.exe"
 SHORTCUT_NAME = "PokePark 2 Wonders Beyond"
 APP_IDENTIFIER = "io.github.eliasm4r.wondersbeyondrecomp"
 NEEDED_GIGABYTES = 4
@@ -54,6 +57,25 @@ if MAC:
          "path": "ninja", "megabytes": 1},
     ]
 
+if LINUX:
+    machine = "aarch64" if ARM else "x86_64"
+    TOOLS = [
+        {"name": "nodtool 1.4.4", "url": f"https://github.com/encounter/nod/releases/download/v1.4.4/nodtool-linux-{machine}",
+         "sha256": "4180f9501dc0de2fb4841c865604fad91899798280f49015e7be8f89890ee37e" if ARM else "cf20828d1a437ca14ed7acfd5545e1a0e62c082f5a77240a399aa4f172119fc4",
+         "file": "nodtool", "folder": "nodtool", "kind": "single", "path": "nodtool", "megabytes": 4},
+        {"name": "CMake 4.4.3", "url": f"https://github.com/Kitware/CMake/releases/download/v4.4.3/cmake-4.4.3-linux-{machine}.tar.gz",
+         "sha256": "2efc974dbd63b4444c0e8494b92f2e80c2d7e635b4b80eac2916985ddd8f72a6" if ARM else "d6c83076c575bc00b823522ac974bda66d0af05d6ddc30e739c12385cf32c6cc",
+         "file": f"cmake-4.4.3-linux-{machine}.tar.gz", "folder": "cmake", "kind": "tar", "path": f"cmake/cmake-4.4.3-linux-{machine}/bin", "megabytes": 62},
+        {"name": "Ninja 1.13.2", "url": "https://github.com/ninja-build/ninja/releases/download/v1.13.2/" + ("ninja-linux-aarch64.zip" if ARM else "ninja-linux.zip"),
+         "sha256": "fd2cacc8050a7f12a16a2e48f9e06fca5c14fc4c2bee2babb67b58be17a607fc" if ARM else "5749cbc4e668273514150a80e387a957f933c6ed3f5f11e03fb30955e2bbead6",
+         "file": "ninja-linux-aarch64.zip" if ARM else "ninja-linux.zip", "folder": "ninja", "kind": "zip", "path": "ninja", "megabytes": 1},
+        {"name": "Zig 0.17.1", "url": f"https://ziglang.org/download/0.17.1/zig-{machine}-linux-0.17.1.tar.xz",
+         "sha256": "a1546d5646eb184437918d6635ca6b762a0e889eac09cef720ee7a1ed3fe7795" if ARM else "3581863e3cbcfd0fce0efc682ce7e9e93da96668a977791d356a26d2a7e9b17a",
+         "file": f"zig-{machine}-linux-0.17.1.tar.xz", "folder": "zig", "kind": "tar", "path": f"zig/zig-{machine}-linux-0.17.1", "megabytes": 55},
+    ]
+
+UNIX = MAC or LINUX
+SDL_BUNDLE = Path("installer") / "sdl3"
 HIDDEN = 0x08000000
 
 
@@ -66,7 +88,7 @@ class Failure(Exception):
 
 
 def default_folder():
-    if MAC:
+    if UNIX:
         return str(Path.home() / FOLDER_NAME)
     local = os.environ.get("LOCALAPPDATA", "")
     if local and local.isascii():
@@ -137,6 +159,13 @@ def built_elsewhere(root):
 
 def compile_jobs():
     cores = os.cpu_count() or 1
+    if LINUX:
+        try:
+            with open("/proc/meminfo", encoding="ascii") as file:
+                kilobytes = next(int(line.split()[1]) for line in file if line.startswith("MemTotal:"))
+        except (OSError, StopIteration, ValueError):
+            return cores
+        return max(1, min(cores, ((kilobytes >> 10) - 1536) // 640))
     if MAC:
         try:
             megabytes = int(subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True).stdout) >> 20
@@ -209,7 +238,7 @@ class Install:
         self.stop = threading.Event()
         self.process = None
         self.log = None
-        self.python = str(self.bundle / "python" / "bin" / "python3") if MAC else str(self.bundle / "python" / "python.exe")
+        self.python = str(self.bundle / "python" / "bin" / "python3") if UNIX else str(self.bundle / "python" / "python.exe")
         self.launch = str(Path.home() / "Applications" / (SHORTCUT_NAME + ".app")) if MAC else str(self.root / EXECUTABLE)
         self.tools = self.root / "toolchain"
         self.environment = dict(os.environ)
@@ -222,7 +251,10 @@ class Install:
         self.stop.set()
         process = self.process
         if process and process.poll() is None:
-            subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], creationflags=HIDDEN, capture_output=True)
+            if UNIX:
+                process.kill()
+            else:
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], creationflags=HIDDEN, capture_output=True)
 
     def plan(self):
         t = self.texts
@@ -286,7 +318,7 @@ class Install:
 
     def program(self, name):
         for tool in TOOLS:
-            candidate = self.tools / Path(tool["path"]) / (name if MAC else name + ".exe")
+            candidate = self.tools / Path(tool["path"]) / (name if UNIX else name + ".exe")
             if candidate.is_file():
                 return str(candidate)
         return name
@@ -294,7 +326,7 @@ class Install:
     def run(self, arguments, line_seen=None):
         self.note("> " + " ".join(arguments))
         process = subprocess.Popen(arguments, cwd=self.root, env=self.environment, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                   stderr=subprocess.STDOUT, creationflags=0 if MAC else HIDDEN, encoding="utf-8", errors="replace")
+                                   stderr=subprocess.STDOUT, creationflags=0 if UNIX else HIDDEN, encoding="utf-8", errors="replace")
         self.process = process
         tail = collections.deque(maxlen=8)
         output = []
@@ -324,6 +356,9 @@ class Install:
                 archive.extract(name, self.root)
                 if index % 20 == 0:
                     move(index / len(names))
+        sdl = self.bundle / SDL_BUNDLE
+        if LINUX and sdl.is_dir() and sdl.resolve() != (self.root / SDL_BUNDLE).resolve():
+            shutil.copytree(sdl, self.root / SDL_BUNDLE, dirs_exist_ok=True)
 
     def tool_ready(self, tool):
         stamp = self.tools / tool["folder"] / ".ready"
@@ -382,14 +417,14 @@ class Install:
         elif tool["kind"] == "zip":
             with zipfile.ZipFile(archive) as content:
                 content.extractall(folder)
-        elif MAC:
-            self.run(["/usr/bin/tar", "-xzf", str(archive), "-C", str(folder)])
+        elif UNIX:
+            self.run(["tar", "-xf", str(archive), "-C", str(folder)])
         else:
             tar = Path(os.environ.get("SystemRoot", "C:\\Windows")) / "System32" / "tar.exe"
             self.run([str(tar), "-xf", str(archive), "-C", str(folder)])
         if self.stop.is_set():
             raise Stopped()
-        if MAC and tool["kind"] != "tar":
+        if UNIX and tool["kind"] != "tar":
             for file in folder.rglob("*"):
                 if file.is_file():
                     file.chmod(0o755)
@@ -425,7 +460,26 @@ class Install:
         if built_elsewhere(self.root):
             self.note("build/out was configured in another folder, configuring again")
             shutil.rmtree(self.root / "build" / "out", ignore_errors=True)
-        self.run([self.program("cmake"), "-S", ".", "-B", "build/out", "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release"])
+        command = [self.program("cmake"), "-S", ".", "-B", "build/out", "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release"]
+        if LINUX:
+            command += self.linux_options()
+        self.run(command)
+
+    def linux_options(self):
+        zig = self.tools / Path(next(tool["path"] for tool in TOOLS if tool["folder"] == "zig")) / "zig"
+        wrappers = self.root / "build" / "zig"
+        wrappers.mkdir(parents=True, exist_ok=True)
+        options = []
+        for name, variable in (("cc", "CMAKE_C_COMPILER"), ("c++", "CMAKE_CXX_COMPILER"), ("ar", "CMAKE_AR"), ("ranlib", "CMAKE_RANLIB")):
+            wrapper = wrappers / name
+            wrapper.write_text("#!/bin/sh" + chr(10) + f'exec "{zig}" {name} "$@"' + chr(10))
+            wrapper.chmod(0o755)
+            options.append(f"-D{variable}={wrapper}")
+        self.environment["ZIG_GLOBAL_CACHE_DIR"] = str(self.root / "build" / "zig-cache")
+        self.environment["ZIG_LOCAL_CACHE_DIR"] = str(self.root / "build" / "zig-cache")
+        sdl = self.root / SDL_BUNDLE
+        return options + [f"-DSDL3_DIR={sdl / 'lib' / 'cmake' / 'SDL3'}", "-DWP_FETCH_SDL3=OFF", "-DWP_REQUIRE_SDL3=ON",
+                          "-DCMAKE_BUILD_RPATH=$ORIGIN", "-DCMAKE_INSTALL_RPATH=$ORIGIN"]
 
     def build(self, move):
         pattern = re.compile(r"^\[(\d+)/(\d+)\]")
@@ -443,12 +497,18 @@ class Install:
             raise Failure(EXECUTABLE)
         for file in [built / EXECUTABLE] + sorted(built.glob("*.dll")):
             shutil.copyfile(file, self.root / file.name)
+        if LINUX:
+            (self.root / EXECUTABLE).chmod(0o755)
+            for library in sorted((self.root / SDL_BUNDLE / "lib").glob("libSDL3.so*")):
+                shutil.copyfile(library, self.root / library.name)
         if not (self.root / "python").exists():
             shutil.copytree(Path(self.python).parent, self.root / "python")
         (self.root / BUILT_FROM).write_text(sources_digest(self.bundle))
         shutil.rmtree(self.root / "downloads", ignore_errors=True)
         if MAC:
             return self.make_app()
+        if LINUX:
+            return self.make_desktop_entry()
         links = [shell_folder(0x02)] if self.menu else []
         if self.shortcut:
             links.append(shell_folder(0x10))
@@ -457,6 +517,32 @@ class Install:
                 create_shortcut(folder / (SHORTCUT_NAME + ".lnk"), self.root / EXECUTABLE, self.root)
             except OSError as error:
                 self.note(f"shortcut in {folder}: {error}")
+
+    def make_desktop_entry(self):
+        icon = self.root / "game" / "res" / (GAME + ".png")
+        entry = chr(10).join([
+            "[Desktop Entry]",
+            "Type=Application",
+            f"Name={SHORTCUT_NAME}",
+            "Comment=PokePark 2: Wonders Beyond, rebuilt for this computer",
+            f'Exec=env WP_ROOT="{self.root}" "{self.root / EXECUTABLE}"',
+            f"Path={self.root}",
+            f"Icon={icon}",
+            "Terminal=false",
+            "Categories=Game;",
+            "",
+        ])
+        folders = [Path.home() / ".local" / "share" / "applications"] if self.menu else []
+        if self.shortcut:
+            folders.append(Path.home() / "Desktop")
+        for folder in folders:
+            try:
+                folder.mkdir(parents=True, exist_ok=True)
+                target = folder / (APP_IDENTIFIER + ".desktop")
+                target.write_text(entry, encoding="utf-8")
+                target.chmod(0o755)
+            except OSError as error:
+                self.note(f"desktop entry in {folder}: {error}")
 
     def make_app(self):
         app = Path(self.launch)
