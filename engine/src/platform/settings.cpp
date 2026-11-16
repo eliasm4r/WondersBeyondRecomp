@@ -4,6 +4,7 @@
 #include <windows.h>
 #elif defined(WP_SDL_PLATFORM)
 #include <SDL3/SDL_locale.h>
+#include <SDL3/SDL_system.h>
 #endif
 
 #include <atomic>
@@ -156,7 +157,12 @@ std::string system_language() {
     std::string code;
 #ifdef WP_SDL_PLATFORM
     int count = 0;
-    if (SDL_Locale** locales = SDL_GetPreferredLocales(&count)) {
+#ifdef __ANDROID__
+    SDL_Locale** locales = SDL_GetAndroidJNIEnv() ? SDL_GetPreferredLocales(&count) : nullptr;
+#else
+    SDL_Locale** locales = SDL_GetPreferredLocales(&count);
+#endif
+    if (locales) {
         if (count > 0 && locales[0] && locales[0]->language) {
             code = locales[0]->language;
         }
