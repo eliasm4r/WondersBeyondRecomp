@@ -229,11 +229,7 @@ uint8_t console_language() {
         return kLanguageEnglish;
     }
 #else
-    const char* locale = std::getenv("LC_ALL");
-    if (!locale || !*locale) {
-        locale = std::getenv("LANG");
-    }
-    std::string code = locale ? std::string(locale).substr(0, 2) : "";
+    std::string code = settings::system_language();
     for (const Name& name : kNames) {
         if (code == name.code) {
             return name.language;

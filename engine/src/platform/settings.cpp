@@ -1,5 +1,11 @@
 #include "wp/settings.h"
 
+#ifdef _WIN32
+#include <windows.h>
+#elif defined(WP_SDL_PLATFORM)
+#include <SDL3/SDL_locale.h>
+#endif
+
 #include <atomic>
 #include <cstdlib>
 #include <fstream>
@@ -104,6 +110,12 @@ const std::vector<Option>& options() {
         for (size_t i = 0; i < padmap::kActionCount; i++) {
             result.push_back({padmap::setting_key(i), padmap::format_binding(padmap::default_binding(i, game::description().sideways_grip))});
         }
+        std::string system = system_language();
+        for (Option& option : result) {
+            if (option.key == "system.interface_language" && (system == "fr" || system == "es" || system == "gl")) {
+                option.fallback = system;
+            }
+        }
         return result;
     }();
     return list;
@@ -114,6 +126,50 @@ std::string g_path;
 std::string g_snapshot;
 std::map<std::string, std::string> g_values;
 std::atomic<uint32_t> g_revision{1};
+
+}
+
+std::string system_language() {
+#ifdef _WIN32
+    switch (PRIMARYLANGID(GetUserDefaultUILanguage())) {
+    case LANG_FRENCH:
+        return "fr";
+    case LANG_GERMAN:
+        return "de";
+    case LANG_SPANISH:
+        return "es";
+    case LANG_ITALIAN:
+        return "it";
+    case LANG_DUTCH:
+        return "nl";
+    case LANG_GALICIAN:
+        return "gl";
+    default:
+        return "en";
+    }
+#else
+    std::string code;
+#ifdef WP_SDL_PLATFORM
+    int count = 0;
+    if (SDL_Locale** locales = SDL_GetPreferredLocales(&count)) {
+        if (count > 0 && locales[0] && locales[0]->language) {
+            code = locales[0]->language;
+        }
+        SDL_free(locales);
+    }
+#endif
+    if (code.empty()) {
+        const char* locale = std::getenv("LC_ALL");
+        if (!locale || !*locale) {
+            locale = std::getenv("LANG");
+        }
+        code = locale ? std::string(locale) : "";
+    }
+    return code.substr(0, 2);
+#endif
+}
+
+namespace {
 
 std::string fallback_of(const char* key) {
     for (const Option& option : options()) {

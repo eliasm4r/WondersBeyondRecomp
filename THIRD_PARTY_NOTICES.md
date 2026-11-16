@@ -115,6 +115,13 @@ All components adapted from the **Dolphin Emulator** originate from a source sna
 
 These dependencies are dynamically linked during runtime or retrieved through automated build scripts; no code is hosted directly inside the repository.
 
+### nod (nodtool)
+- **Usage Area:** reads the player's disc image on Android and unpacks it into the app's storage (`android/java/io/github/eliasm4r/wondersbeyondrecomp/SetupActivity.java`); the setup on computers runs the same tool.
+- **Version:** 1.4.4, the release binaries `nodtool-linux-aarch64` and `nodtool-linux-x86_64`, downloaded and checked by SHA-256 in `tools/build_apk.py` and packed into the APK as `libnodtool.so`.
+- **Upstream Origin:** https://github.com/encounter/nod
+- **License:** **MIT License** or **Apache License 2.0**, at the user's choice (compatible with GPL-3.0-or-later).
+- **Copyright:** Copyright (c) Luke Street.
+
 ### SDL3 Development Package
 - **Usage Area:** Hardware gamepad mappings (Sticks, gyroscope, accelerometer processing) inside `engine/src/input/gamepad.cpp`; outside Windows also the window, OpenGL context, keyboard, mouse, audio output and PNG loading (`video_sdl.cpp`, `gx_render_gl.cpp`, `audio.cpp`, `custom_textures.cpp`), linked to the SDL3 installed on the system.
 - **Version:** 3.4.16 (Retrieved by `tools/fetch_sdl.py` into build tree).

@@ -1,9 +1,11 @@
 import argparse
+import hashlib
 import os
 import re
 import shutil
 import subprocess
 import sys
+import urllib.request
 import zipfile
 from pathlib import Path
 
@@ -14,6 +16,13 @@ KEY_ALIAS = "wondersbeyond"
 KEY_PASSWORD = "wondersbeyond"
 WINDOWS = sys.platform == "win32"
 OUTPUTS = {"pokepark2": "apk", "android_smoke": "smoke"}
+NODTOOL = {
+    "arm64-v8a": ("https://github.com/encounter/nod/releases/download/v1.4.4/nodtool-linux-aarch64",
+                  "4180f9501dc0de2fb4841c865604fad91899798280f49015e7be8f89890ee37e"),
+    "x86_64": ("https://github.com/encounter/nod/releases/download/v1.4.4/nodtool-linux-x86_64",
+               "cf20828d1a437ca14ed7acfd5545e1a0e62c082f5a77240a399aa4f172119fc4"),
+}
+FONTS = ROOT / "third_party" / "fonts" / "nunito"
 
 
 def newest(folder, pattern):
@@ -77,6 +86,23 @@ def strip(options, library, target):
         shutil.copyfile(library, target)
 
 
+def fetch_nodtool(abi, folder):
+    if abi not in NODTOOL:
+        sys.exit(f"no nodtool build for {abi}")
+    url, wanted = NODTOOL[abi]
+    target = folder / f"nodtool-{abi}"
+    if not (target.is_file() and hashlib.sha256(target.read_bytes()).hexdigest() == wanted):
+        print(f"downloading {url}", flush=True)
+        folder.mkdir(parents=True, exist_ok=True)
+        request = urllib.request.Request(url, headers={"User-Agent": "WondersBeyondRecomp-Android"})
+        with urllib.request.urlopen(request, timeout=60) as response:
+            data = response.read()
+        if hashlib.sha256(data).hexdigest() != wanted:
+            sys.exit("nodtool did not download correctly, try again")
+        target.write_bytes(data)
+    return target
+
+
 def compile_java(options, build, work, android_jar):
     sdl_java = build / "_deps" / "sdl3-src" / "android-project" / "app" / "src" / "main" / "java"
     if not sdl_java.is_dir():
@@ -90,8 +116,11 @@ def compile_java(options, build, work, android_jar):
     dex = work / "dex"
     shutil.rmtree(dex, ignore_errors=True)
     dex.mkdir()
-    run([options.d8, "--release", "--min-api", str(MIN_SDK), "--lib", android_jar, "--output", dex] + sorted(str(path) for path in classes.rglob("*.class")),
-        env=options.environment)
+    bundle = work / "classes.jar"
+    with zipfile.ZipFile(bundle, "w", zipfile.ZIP_STORED) as archive:
+        for path in sorted(classes.rglob("*.class")):
+            archive.write(path, path.relative_to(classes).as_posix())
+    run([options.d8, "--release", "--min-api", str(MIN_SDK), "--lib", android_jar, "--output", dex, bundle], env=options.environment)
     return dex / "classes.dex"
 
 
@@ -104,7 +133,12 @@ def link_resources(options, work, android_jar):
     compiled = work / "resources.zip"
     run([options.aapt2, "compile", "--dir", resources, "-o", compiled])
     base = work / "base.apk"
-    run([options.aapt2, "link", "-o", base, "-I", android_jar, "--manifest", ROOT / "android" / "AndroidManifest.xml", "--min-sdk-version", str(MIN_SDK),
+    assets = work / "assets"
+    shutil.rmtree(assets, ignore_errors=True)
+    (assets / "fonts").mkdir(parents=True)
+    for name in ("Nunito-Black.ttf", "Nunito-ExtraBold.ttf", "OFL.txt"):
+        shutil.copyfile(FONTS / name, assets / "fonts" / name)
+    run([options.aapt2, "link", "-o", base, "-I", android_jar, "-A", assets, "--manifest", ROOT / "android" / "AndroidManifest.xml", "--min-sdk-version", str(MIN_SDK),
          "--target-sdk-version", str(options.target_sdk), "--version-code", str(version_code()), "--version-name", project_value("WP_VERSION"), compiled])
     return base
 
@@ -150,6 +184,7 @@ def main():
     library = build_library(options, build)
     stripped = work / "lib" / options.abi / "libmain.so"
     strip(options, library, stripped)
+    nodtool = fetch_nodtool(options.abi, build / "downloads")
     dex = compile_java(options, build, work, android_jar)
     base = link_resources(options, work, android_jar)
 
@@ -158,6 +193,7 @@ def main():
     with zipfile.ZipFile(unaligned, "a", zipfile.ZIP_DEFLATED) as archive:
         archive.write(dex, "classes.dex")
         archive.write(stripped, f"lib/{options.abi}/libmain.so")
+        archive.write(nodtool, f"lib/{options.abi}/libnodtool.so")
     aligned = work / "aligned.apk"
     run([zipalign, "-p", "-f", "4", unaligned, aligned])
     keystore = ensure_key(options)

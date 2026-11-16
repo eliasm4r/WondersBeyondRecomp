@@ -327,6 +327,8 @@ void update_insets(SDL_Window* window) {
     }
     float density = SDL_GetWindowPixelDensity(window);
     density = density > 0.0f ? density : 1.0f;
+    float scale = SDL_GetWindowDisplayScale(window);
+    touch::set_density(scale > 0.0f ? scale : 0.0f);
     touch::set_insets(static_cast<int>(safe.x * density), static_cast<int>(safe.y * density), static_cast<int>((width - safe.x - safe.w) * density),
                       static_cast<int>((height - safe.y - safe.h) * density));
 }

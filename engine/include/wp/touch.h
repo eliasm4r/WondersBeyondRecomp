@@ -23,6 +23,7 @@ bool enabled();
 void set_enabled(bool on);
 bool in_use();
 void set_insets(int left, int top, int right, int bottom);
+void set_density(float pixels_per_dp);
 void finger(int64_t id, Phase phase, float x, float y, int width, int height);
 void other_input();
 void phone_motion(float x, float y, float z);
