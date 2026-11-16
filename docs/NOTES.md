@@ -1421,6 +1421,44 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
 - Measured headless on an RTX 4070, frames 1500-1505 of `still.txt`: 2 % of pixels differ from Direct3D, as between
   two Direct3D runs.
 
+## Linux, Steam Deck and Android
+
+- OpenGL ES 3.2: on Android, or with `WP_GLES=1` elsewhere, the window asks for an ES 3.2 context and every shader
+  of the OpenGL renderer is rewritten for it at compile time (`for_context`): `#version 320 es`, high precision
+  for floats, integers and samplers, and dual-source blending through `GL_EXT_blend_func_extended`. Without that
+  extension `WP_SINGLE_OUTPUT` keeps one colour output. On an NVIDIA desktop, `WP_GLES=1` gives an "OpenGL ES 3.2"
+  context, which is how the Android renderer is tested on Windows: same picture, 60 fps.
+- Fibers: bionic has no `ucontext`, so `WP_ASM_FIBERS` (on by default on Android) switches stacks with a small
+  assembly routine for aarch64 and x86_64 that saves the callee-saved registers, the floating-point control words
+  and the return address. The Linux CI builds the whole engine with it and runs the fiber test (1000 switches).
+- Stack traces on Android use `_Unwind_Backtrace`, since bionic has no `execinfo.h`.
+- Android package (`tools/build_apk.py`): the game is a shared library `libmain.so` loaded by SDL's Java activity
+  (`GameActivity` only names the library). The script builds it with the NDK, compiles SDL's Java sources and
+  `android/java`, then runs d8, aapt2, zipalign and apksigner itself, with no Gradle. The key is made once in
+  `game/android.keystore`, which stays on the player's PC like the rest of `game/`. `tools/android_tools.py`
+  downloads the NDK r30, build tools 36.1, the Android 16 platform and Temurin JDK 17 into `toolchain/android`,
+  checks each against the digest of Google's repository list or Adoptium's API, then calls `build_apk.py`.
+- The game data is not in the package: at start the game moves into the app's external files folder
+  (`Android/data/io.github.eliasm4r.wondersbeyondrecomp/files`) and needs `game/extracted` there, copied by USB.
+  Without it a message box says where to copy it.
+- The activity takes every configuration change itself, as in SDL's own template: with a shorter list, the first
+  rotation to landscape restarted the activity and SDL ended the app.
+- Touch controls (`touch.cpp`): a floating stick in the left 45 % of the screen and the Wii Remote buttons on the
+  right, sized from the screen's height, drawn over the game at half resolution. They hide when a gamepad or a key
+  is used and come back at the next touch. The Menu button and Android's back button open the options menu, where
+  touches act as mouse clicks. `WP_TOUCH=1` turns them on elsewhere.
+- Fonts on Android come from `/system/fonts` (Roboto, Noto Sans, Droid Sans Mono).
+- On Android and in the Steam Deck's gaming mode (`SteamDeck=1` or a gamescope display) the game opens on the whole
+  screen and the title bar is never drawn.
+- Linux setup: `Setup.sh` downloads python-build-standalone 3.12 (digest checked), then the same setup as on Windows
+  downloads nodtool, CMake, Ninja and Zig 0.17.1. Zig is the compiler (`zig cc` and `zig c++` behind small wrapper
+  scripts in `build/zig`), so nothing has to be installed on the system, which matters on SteamOS where the system
+  is read-only. SDL3 is built by the CI on Ubuntu 22.04 (old glibc, so it loads on newer systems) and shipped in the
+  setup zip under `installer/sdl3`; the game finds `libSDL3.so` next to itself through an `$ORIGIN` run path.
+  The number of compile jobs follows the memory (640 MB each above 1.5 GB) so a 16 GB Steam Deck does not swap.
+  The setup writes a `.desktop` entry in `~/.local/share/applications` (and on the desktop if asked); on the Steam
+  Deck, "Add to Steam" on that entry puts the game in gaming mode.
+
 ## Code notes
 
 What the code added for frame interpolation, the timers and the input changes does, kept here since the sources hold no comments (CONTRIBUTING.md). Each entry names the declaration or line it describes.
