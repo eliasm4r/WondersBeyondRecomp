@@ -1715,3 +1715,7 @@ What the code added for frame interpolation, the timers and the input changes do
 - `std::function<std::string(const std::string&)> file_reader(...)`: Reads a settings file kept in a map, as `outdated` reads settings.ini.
 - `custom["keys.a"] = "Space";`: A player who put Space on A keeps the old 2 key: the new default of 2 would share Space with A.
 - `menu.select(1);`: An on/off box ignores left and right, so a stick drifting sideways never flips it.
+
+## Native AX mixer
+
+- `hle_audio::wanted()` is on for Android and macOS: the interpreted DSP microcode could not keep up there and the sound stuttered. Windows and Linux keep the emulated DSP unless `WP_HLE_AUDIO` is set; `WP_DSP_EMULATED` forces the emulated DSP everywhere.
