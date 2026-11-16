@@ -1940,7 +1940,11 @@ void test_options_menu() {
     CHECK((wp::options::tab_keys(6) == std::vector<std::string>{"cheats.fly_camera", "cheats.run_speed", "cheats.jump", "cheats.damage_dealt", "cheats.damage_taken", "cheats.berries", "cheats.prices", "cheats.chase_speed"}));
     CHECK((wp::options::choices("cheats.damage_taken") == std::vector<std::string>{"100", "75", "50", "25", "0"}) && wp::settings::number("cheats.jump", nullptr) == 100);
     CHECK((wp::options::tab_keys(4) == std::vector<std::string>{"system.interface_language", "system.language"}));
-    CHECK((wp::options::tab_keys(5) == std::vector<std::string>{"overlay.show", "overlay.level", "overlay.corner", "video.show_fps", "video.custom_textures", "video.hd_textures", "video.dump_textures", "video.bug_recorder", "system.update"}));
+    std::vector<std::string> advanced = {"overlay.show", "overlay.level", "overlay.corner", "video.show_fps", "video.custom_textures", "video.hd_textures", "video.dump_textures", "video.bug_recorder", "system.update"};
+    if (!wp::hd_textures::available()) {
+        advanced.erase(std::find(advanced.begin(), advanced.end(), "video.hd_textures"));
+    }
+    CHECK(wp::options::tab_keys(5) == advanced);
     CHECK(wp::options::kind("system.update") == wp::options::Kind::Info);
     CHECK(wp::options::kind("video.hd_textures") == wp::options::Kind::Button);
     std::vector<std::string> keyboard = wp::options::tab_keys(3, wp::options::Device::Keyboard);
