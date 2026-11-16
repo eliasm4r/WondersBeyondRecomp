@@ -2813,9 +2813,10 @@ void test_touch() {
     wp::touch::finger(3, wp::touch::Phase::Up, 0, 0, width, height);
     uint64_t version = 0;
     wp::options::Image image;
+    wp::options::Image knob;
     bool visible = false;
-    CHECK(wp::touch::take(version, image, visible, width, height) && visible && image.width == width / 2 && image.height == height / 2);
-    CHECK(!wp::touch::take(version, image, visible, width, height));
+    CHECK(wp::touch::take(version, image, knob, visible, width, height) && visible && image.width == width / 2 && image.height == height / 2);
+    CHECK(!wp::touch::take(version, image, knob, visible, width, height));
     CHECK(wp::touch::in_use());
 
     float turn_x = 0.0f;
@@ -2856,7 +2857,7 @@ void test_touch() {
 
     wp::touch::other_input();
     CHECK(!wp::touch::in_use());
-    CHECK(wp::touch::take(version, image, visible, width, height) && !visible);
+    CHECK(wp::touch::take(version, image, knob, visible, width, height) && !visible);
     wp::touch::set_enabled(false);
     CHECK(wp::touch::poll(true).buttons == 0);
 }
