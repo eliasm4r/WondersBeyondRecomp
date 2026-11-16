@@ -28,6 +28,10 @@ uint32_t menu_buttons() {
     return 0;
 }
 
+int held_physical() {
+    return -1;
+}
+
 padmap::Family shown_family() {
     return padmap::Family::Xbox;
 }

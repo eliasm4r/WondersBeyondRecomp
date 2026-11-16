@@ -56,6 +56,40 @@ jobs:
       - name: Install the build tools
         run: sudo apt-get update && sudo apt-get install -y ninja-build python3-numpy
       - name: Configure for Android
-        run: cmake -S . -B build/android -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake" -DANDROID_ABI=${{ matrix.abi }} -DANDROID_PLATFORM=android-26 -DWP_REQUIRE_SDL3=ON
+        run: cmake -S . -B build/android-${{ matrix.abi }} -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake" -DANDROID_ABI=${{ matrix.abi }} -DANDROID_PLATFORM=android-26 -DWP_REQUIRE_SDL3=ON
       - name: Build
-        run: cmake --build build/android --target runtime_tests translator_tests -- -k 0
+        run: cmake --build build/android-${{ matrix.abi }} --target runtime_tests translator_tests android_smoke -- -k 0
+      - name: Package the smoke test app
+        run: python3 tools/build_apk.py --target android_smoke --abi ${{ matrix.abi }} --ndk "$ANDROID_NDK_LATEST_HOME" --keystore build/test.keystore --output build/dist/smoke-${{ matrix.abi }}.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-${{ matrix.abi }}
+          path: |
+            build/dist/smoke-${{ matrix.abi }}.apk
+            build/android-${{ matrix.abi }}/runtime_tests
+            build/android-${{ matrix.abi }}/translator_tests
+          retention-days: 7
+
+  android-emulator:
+    needs: android
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-x86_64
+          path: artifact
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run the tests and the app on an emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: bash android/emulator_test.sh artifact

@@ -113,8 +113,6 @@ void copy_to_texture(uint32_t, uint32_t, int, int, int, int, bool, uint32_t, boo
 
 void invalidate_textures() {}
 
-void load_tlut(uint32_t, uint32_t, uint32_t) {}
-
 void clear(int, int, int, int) {}
 
 }
