@@ -355,10 +355,22 @@ void window_thread(bool visible) {
         finish_start(nullptr, nullptr);
         return;
     }
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
+#ifdef __ANDROID__
+    const bool embedded = true;
+#else
+    const char* wanted = std::getenv("WP_GLES");
+    const bool embedded = wanted && *wanted && *wanted != '0';
+#endif
+    if (embedded) {
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+    } else {
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
+    }
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 0);
@@ -376,7 +388,7 @@ void window_thread(bool visible) {
     SDL_Window* window = SDL_CreateWindow(window_title(0.0).c_str(), client_width, client_height, flags);
     SDL_GLContext context = window ? SDL_GL_CreateContext(window) : nullptr;
     if (!context) {
-        std::fprintf(stderr, "cannot create an OpenGL 4.1 context: %s\n", SDL_GetError());
+        std::fprintf(stderr, "cannot create an OpenGL %s context: %s\n", embedded ? "ES 3.2" : "4.1", SDL_GetError());
         if (window) {
             SDL_DestroyWindow(window);
         }

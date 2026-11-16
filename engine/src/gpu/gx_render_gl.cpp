@@ -44,7 +44,7 @@ namespace {
 
 #define WP_GL_FUNCTIONS(X)                                                                                                                                  \
     X(ActiveTexture) X(AttachShader) X(BindBuffer) X(BindBufferBase) X(BindFramebuffer) X(BindSampler) X(BindTexture) X(BindVertexArray)              \
-    X(BlendEquationSeparate) X(BlendFuncSeparate) X(BufferData) X(BufferSubData) X(CheckFramebufferStatus) X(Clear) X(ClearColor) X(ClearDepth)      \
+    X(BlendEquationSeparate) X(BlendFuncSeparate) X(BufferData) X(BufferSubData) X(CheckFramebufferStatus) X(Clear) X(ClearColor) X(ClearDepthf)     \
     X(ColorMask) X(CompileShader) X(CreateProgram) X(CreateShader) X(DeleteFramebuffers) X(DeleteShader) X(DeleteTextures) X(DepthFunc)              \
     X(DepthMask) X(Disable) X(DrawArrays) X(Enable) X(EnableVertexAttribArray) X(FramebufferTexture2D) X(GenBuffers) X(GenFramebuffers)             \
     X(GenSamplers) X(GenTextures) X(GenVertexArrays) X(GenerateMipmap) X(GetIntegerv) X(GetProgramInfoLog) X(GetProgramiv) X(GetShaderInfoLog)      \
@@ -66,6 +66,8 @@ struct Gl {
 };
 
 Gl gl;
+bool g_es = false;
+bool g_dual_source = true;
 
 bool load_functions() {
     bool ok = true;
@@ -221,7 +223,14 @@ const char* kTevVertex = R"GLSL(#version 410 core
 layout(location = 0) in vec4 a_position;
 layout(location = 1) in vec4 a_c0;
 layout(location = 2) in vec4 a_c1;
-layout(location = 3) in vec3 a_uv[8];
+layout(location = 3) in vec3 a_uv0;
+layout(location = 4) in vec3 a_uv1;
+layout(location = 5) in vec3 a_uv2;
+layout(location = 6) in vec3 a_uv3;
+layout(location = 7) in vec3 a_uv4;
+layout(location = 8) in vec3 a_uv5;
+layout(location = 9) in vec3 a_uv6;
+layout(location = 10) in vec3 a_uv7;
 uniform int depth_zero_to_one;
 out vec4 v_c0;
 out vec4 v_c1;
@@ -231,9 +240,14 @@ void main() {
     gl_Position = vec4(a_position.x, -a_position.y, z, a_position.w);
     v_c0 = a_c0;
     v_c1 = a_c1;
-    for (int i = 0; i < 8; i++) {
-        v_uv[i] = a_uv[i];
-    }
+    v_uv[0] = a_uv0;
+    v_uv[1] = a_uv1;
+    v_uv[2] = a_uv2;
+    v_uv[3] = a_uv3;
+    v_uv[4] = a_uv4;
+    v_uv[5] = a_uv5;
+    v_uv[6] = a_uv6;
+    v_uv[7] = a_uv7;
 }
 )GLSL";
 
@@ -503,8 +517,13 @@ in vec4 v_c0;
 in vec4 v_c1;
 in vec3 v_uv[8];
 
+#ifdef WP_SINGLE_OUTPUT
+layout(location = 0) out vec4 out_color;
+vec4 out_blend;
+#else
 layout(location = 0, index = 0) out vec4 out_color;
 layout(location = 0, index = 1) out vec4 out_blend;
+#endif
 
 vec2 projected(vec3 uv) {
     return uv.z == 0.0 ? clamp(uv.xy / 2.0, -1.0, 1.0) : uv.xy / uv.z;
@@ -1021,8 +1040,26 @@ int scaled(int value) {
     return value * g_scale;
 }
 
-GLuint compile_stage(GLenum type, const std::string& source) {
+std::string for_context(GLenum type, const std::string& source) {
+    const std::string desktop = "#version 410 core\n";
+    if (!g_es || source.compare(0, desktop.size(), desktop) != 0) {
+        return source;
+    }
+    std::string body = source.substr(desktop.size());
+    const std::string image = "#extension GL_ARB_shader_image_load_store : require\n";
+    if (body.compare(0, image.size(), image) == 0) {
+        body.erase(0, image.size());
+    }
+    std::string header = "#version 320 es\n";
+    if (type == GL_FRAGMENT_SHADER) {
+        header += g_dual_source ? "#extension GL_EXT_blend_func_extended : require\n" : "#define WP_SINGLE_OUTPUT\n";
+    }
+    return header + "precision highp float;\nprecision highp int;\nprecision highp sampler2D;\nprecision highp samplerBuffer;\n" + body;
+}
+
+GLuint compile_stage(GLenum type, const std::string& original) {
     GLuint shader = gl.CreateShader(type);
+    std::string source = for_context(type, original);
     const char* text = source.c_str();
     gl.ShaderSource(shader, 1, &text, nullptr);
     gl.CompileShader(shader);
@@ -1152,12 +1189,19 @@ GLuint make_sampler(GLint min_filter, GLint mag_filter, GLint wrap) {
 }
 
 bool create_pipeline() {
+    const char* version_text = reinterpret_cast<const char*>(gl.GetString(GL_VERSION));
+    g_es = version_text && std::strncmp(version_text, "OpenGL ES", 9) == 0;
+    g_dual_source = !g_es || has_extension("GL_EXT_blend_func_extended");
     GLint major = 0;
     GLint minor = 0;
     gl.GetIntegerv(GL_MAJOR_VERSION, &major);
     gl.GetIntegerv(GL_MINOR_VERSION, &minor);
     int version = major * 10 + minor;
-    if (version >= 45 || has_extension("GL_ARB_clip_control")) {
+    if (g_es) {
+        if (has_extension("GL_EXT_clip_control")) {
+            gl.ClipControl = reinterpret_cast<decltype(gl.ClipControl)>(SDL_GL_GetProcAddress("glClipControlEXT"));
+        }
+    } else if (version >= 45 || has_extension("GL_ARB_clip_control")) {
         gl.ClipControl = reinterpret_cast<decltype(gl.ClipControl)>(SDL_GL_GetProcAddress("glClipControl"));
     }
     if (gl.ClipControl) {
@@ -1168,7 +1212,7 @@ bool create_pipeline() {
     if (!link(g_device.tev, kTevVertex, fragment)) {
         return false;
     }
-    if (has_extension("GL_ARB_shader_image_load_store")) {
+    if (g_es || has_extension("GL_ARB_shader_image_load_store")) {
         std::string early = std::string("#version 410 core\n#extension GL_ARB_shader_image_load_store : require\nlayout(early_fragment_tests) in;\n") + kTevFragment;
         if (!link(g_device.early_tev, kTevVertex, early)) {
             return false;
@@ -1218,7 +1262,9 @@ bool create_pipeline() {
     g_device.point_sampler = make_sampler(GL_NEAREST, GL_NEAREST, GL_CLAMP_TO_EDGE);
     gl.PixelStorei(GL_UNPACK_ALIGNMENT, 4);
     gl.PixelStorei(GL_PACK_ALIGNMENT, 4);
-    gl.Enable(GL_DEPTH_CLAMP);
+    if (!g_es || has_extension("GL_EXT_depth_clamp")) {
+        gl.Enable(GL_DEPTH_CLAMP);
+    }
     return true;
 }
 
@@ -1379,7 +1425,7 @@ void start_variant(Variant& variant, int kind, const std::string& key) {
     if (!g_variant_vertex[kind]) {
         g_variant_vertex[kind] = compile_stage(GL_VERTEX_SHADER, kind ? kRunVertex : kTevVertex);
     }
-    std::string fragment = variant_fragment(key);
+    std::string fragment = for_context(GL_FRAGMENT_SHADER, variant_fragment(key));
     const char* text = fragment.c_str();
     GLuint fs = gl.CreateShader(GL_FRAGMENT_SHADER);
     gl.ShaderSource(fs, 1, &text, nullptr);
@@ -1747,7 +1793,9 @@ GLuint sampler_for(uint32_t map) {
     gl.SamplerParameteri(sampler, GL_TEXTURE_WRAP_T, gl_wrap(params.wrap_t));
     gl.SamplerParameterf(sampler, GL_TEXTURE_MIN_LOD, params.min_lod);
     gl.SamplerParameterf(sampler, GL_TEXTURE_MAX_LOD, params.unlimited_lod ? 1000.0f : params.max_lod);
-    gl.SamplerParameterf(sampler, GL_TEXTURE_LOD_BIAS, params.lod_bias);
+    if (!g_es) {
+        gl.SamplerParameterf(sampler, GL_TEXTURE_LOD_BIAS, params.lod_bias);
+    }
     g_device.samplers[params.key] = sampler;
     return sampler;
 }
@@ -1775,11 +1823,11 @@ GLenum gl_factor(BlendFactor factor) {
     case BlendFactor::InverseDestinationAlpha:
         return GL_ONE_MINUS_DST_ALPHA;
     case BlendFactor::TevColor:
-        return GL_SRC1_COLOR;
+        return g_dual_source ? GL_SRC1_COLOR : GL_SRC_COLOR;
     case BlendFactor::TevAlpha:
-        return GL_SRC1_ALPHA;
+        return g_dual_source ? GL_SRC1_ALPHA : GL_SRC_ALPHA;
     case BlendFactor::InverseTevAlpha:
-        return GL_ONE_MINUS_SRC1_ALPHA;
+        return g_dual_source ? GL_ONE_MINUS_SRC1_ALPHA : GL_ONE_MINUS_SRC_ALPHA;
     }
     return GL_ONE;
 }
@@ -2660,7 +2708,7 @@ void apply_scale() {
     plain_state();
     gl.DepthMask(GL_TRUE);
     gl.ClearColor(0, 0, 0, 0);
-    gl.ClearDepth(1.0);
+    gl.ClearDepthf(1.0f);
     gl.Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
 
@@ -2673,8 +2721,12 @@ void upload_image(GLuint& texture, uint32_t& width, uint32_t& height, const opti
         set_texture_levels(texture, 1);
     }
     gl.BindTexture(GL_TEXTURE_2D, texture);
-    gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, static_cast<GLsizei>(image.width), static_cast<GLsizei>(image.height), 0, GL_BGRA, GL_UNSIGNED_BYTE,
-                  image.pixels.data());
+    if (g_es) {
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, GL_BLUE);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, GL_RED);
+    }
+    gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, static_cast<GLsizei>(image.width), static_cast<GLsizei>(image.height), 0, g_es ? GL_RGBA : GL_BGRA,
+                  GL_UNSIGNED_BYTE, image.pixels.data());
     width = image.width;
     height = image.height;
 }
