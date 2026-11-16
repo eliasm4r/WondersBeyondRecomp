@@ -33,6 +33,7 @@
 #include "wp/options.h"
 #include "wp/hint.h"
 #include "wp/perf_overlay.h"
+#include "wp/screenshot.h"
 #include "wp/touch.h"
 #include "wp/settings.h"
 #include "wp/video.h"
@@ -57,7 +58,7 @@ namespace {
     X(GetShaderiv) X(GetString) X(GetStringi) X(GetUniformBlockIndex) X(GetUniformLocation) X(LinkProgram) X(PixelStorei) X(ReadPixels)             \
     X(SamplerParameterf) X(SamplerParameteri) X(Scissor) X(ShaderSource) X(TexImage2D) X(TexParameteri) X(TexSubImage2D) X(Uniform1i)              \
     X(Uniform1f) X(Uniform4f) X(UniformBlockBinding) X(UseProgram) X(VertexAttribPointer) X(Viewport) X(MapBufferRange) X(UnmapBuffer)    \
-    X(FenceSync) X(ClientWaitSync) X(DeleteSync) X(DeleteProgram)
+    X(FenceSync) X(ClientWaitSync) X(DeleteSync) X(DeleteProgram) X(GetFloatv) X(DeleteSamplers)
 
 #define WP_GL_RUN_FUNCTIONS(X)                                                                                                                              \
     X(CullFace) X(DeleteBuffers) X(DisableVertexAttribArray) X(DrawElementsBaseVertex) X(GetError) X(TexBuffer) X(VertexAttrib4f) X(VertexAttribI4ui)  \
@@ -74,6 +75,10 @@ struct Gl {
 Gl gl;
 bool g_es = false;
 bool g_dual_source = true;
+float g_most_anisotropy = 1.0f;
+int g_anisotropy = 1;
+constexpr GLenum kMaxAnisotropy = 0x84FE;
+constexpr GLenum kMostAnisotropy = 0x84FF;
 using BufferStorage = void (*)(GLenum, GLsizeiptr, const void*, GLbitfield);
 BufferStorage g_buffer_storage = nullptr;
 
@@ -972,6 +977,13 @@ struct Device {
     bool touch_visible = false;
     GLuint knob_texture = 0;
     uint32_t knob_width = 0;
+    GLuint pressed_texture = 0;
+    uint32_t pressed_width = 0;
+    uint32_t pressed_height = 0;
+    GLuint base_texture = 0;
+    uint32_t base_width = 0;
+    uint32_t base_height = 0;
+    uint64_t extras_version = 0;
     uint32_t knob_height = 0;
     GLuint hud_texture = 0;
     uint32_t hud_width = 0;
@@ -1303,6 +1315,10 @@ bool create_pipeline() {
     gl.PixelStorei(GL_PACK_ALIGNMENT, 4);
     if (!g_es || has_extension("GL_EXT_depth_clamp")) {
         gl.Enable(GL_DEPTH_CLAMP);
+    }
+    if (has_extension("GL_EXT_texture_filter_anisotropic") || has_extension("GL_ARB_texture_filter_anisotropic")) {
+        gl.GetFloatv(kMostAnisotropy, &g_most_anisotropy);
+        g_most_anisotropy = std::max(1.0f, g_most_anisotropy);
     }
     return true;
 }
@@ -1938,6 +1954,11 @@ GLuint upload_levels(const std::vector<std::vector<uint32_t>>& images, uint32_t 
     return texture;
 }
 
+bool keep_photos() {
+    static const settings::LiveFlag enabled("game.save_photos", "WP_SAVE_PHOTOS");
+    return enabled();
+}
+
 GLuint custom_texture(const std::string& key, bool mipmaps) {
     auto [found, inserted] = g_pack.loaded.try_emplace(key, 0);
     if (!inserted) {
@@ -2059,6 +2080,14 @@ GLuint texture_for(uint32_t map) {
             }
         }
     }
+    if (format == 6 && width == screenshot::kPhotoWidth && height == screenshot::kPhotoHeight && levels == 1 && copied == g_device.copies.end() && !custom && keep_photos()) {
+        std::vector<std::vector<uint32_t>> photo = decode_levels(request);
+        std::string path = screenshot::photo_matching(screenshot::photo_signature(photo[0].data(), width, height, true));
+        if (!path.empty()) {
+            custom = custom_texture(path, false);
+            log::write("photo", "shown from %s", path.c_str());
+        }
+    }
     if (custom && !g_pack.dump) {
         entry.texture = custom;
         entry.owned = false;
@@ -2102,6 +2131,9 @@ GLuint sampler_for(uint32_t map) {
     gl.SamplerParameterf(sampler, GL_TEXTURE_MAX_LOD, params.unlimited_lod ? 1000.0f : params.max_lod);
     if (!g_es) {
         gl.SamplerParameterf(sampler, GL_TEXTURE_LOD_BIAS, params.lod_bias);
+    }
+    if (g_anisotropy > 1 && g_most_anisotropy > 1.0f && params.min_linear && params.mag_linear) {
+        gl.SamplerParameterf(sampler, kMaxAnisotropy, std::min(static_cast<float>(g_anisotropy), g_most_anisotropy));
     }
     g_device.samplers[params.key] = sampler;
     return sampler;
@@ -2984,6 +3016,32 @@ bool write_back_overlaps(uint32_t address, size_t size) {
     return false;
 }
 
+bool read_target(GLuint framebuffer, uint32_t width, uint32_t height, std::vector<uint32_t>& pixels);
+
+namespace {
+
+void keep_photo(GLuint framebuffer, uint32_t full_width, uint32_t full_height, int x, int y, int width, int height, int canvas_width, int canvas_height) {
+    std::vector<uint32_t> pixels;
+    if (!framebuffer || canvas_width <= 0 || canvas_height <= 0 || !read_target(framebuffer, full_width, full_height, pixels)) {
+        return;
+    }
+    uint32_t left = std::min(full_width, static_cast<uint32_t>(std::max(0, x)) * full_width / static_cast<uint32_t>(canvas_width));
+    uint32_t top = std::min(full_height, static_cast<uint32_t>(std::max(0, y)) * full_height / static_cast<uint32_t>(canvas_height));
+    uint32_t photo_width = std::min(full_width - left, static_cast<uint32_t>(width) * full_width / static_cast<uint32_t>(canvas_width));
+    uint32_t photo_height = std::min(full_height - top, static_cast<uint32_t>(height) * full_height / static_cast<uint32_t>(canvas_height));
+    if (photo_width == 0 || photo_height == 0) {
+        return;
+    }
+    std::vector<uint32_t> photo(static_cast<size_t>(photo_width) * photo_height);
+    for (uint32_t row = 0; row < photo_height; row++) {
+        const uint32_t* source = pixels.data() + static_cast<size_t>(top + row) * full_width + left;
+        std::copy(source, source + photo_width, photo.begin() + static_cast<size_t>(row) * photo_width);
+    }
+    screenshot::photo_taken(std::move(photo), photo_width, photo_height);
+}
+
+}
+
 void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width, int height, bool half, uint32_t format, bool intensity, bool depth, bool alpha,
                      const CopyFilter& filter) {
     if (!initialize()) {
@@ -3040,6 +3098,10 @@ void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width,
         }
     }
     run_copy(entry.converted, target_width, target_height, canvas_x, canvas_y, canvas_w, canvas_h, format, intensity, alpha || depth, depth, filter);
+    if (!recurring && !half && format == 6 && logical_width == screenshot::kPhotoWidth && logical_height == screenshot::kPhotoHeight && keep_photos()) {
+        keep_photo(entry.converted.framebuffer, entry.converted.width, entry.converted.height, x + g_canvas.margin_x - canvas_x, y + g_canvas.margin_y - canvas_y, width,
+                   height, canvas_w, canvas_h);
+    }
     entry.view = entry.converted.texture;
     entry.whole_canvas = canvas_w > width;
     entry.bytes = entry.logical_width * entry.logical_height * copy_bits(format) / 8;
@@ -3121,6 +3183,20 @@ void copy_to_framebuffer(int x, int y, int width, int height, bool depth, const 
             video::save_png(name, pixels, physical_width, physical_height);
         }
     }
+}
+
+void apply_anisotropy() {
+    static const settings::LiveNumber setting("video.anisotropy", "WP_ANISOTROPY");
+    int level = std::clamp(setting(), 1, 16);
+    if (level == g_anisotropy) {
+        return;
+    }
+    flush_pending();
+    for (auto& entry : g_device.samplers) {
+        gl.DeleteSamplers(1, &entry.second);
+    }
+    g_device.samplers.clear();
+    g_anisotropy = level;
 }
 
 void apply_scale() {
@@ -3234,7 +3310,19 @@ void draw_overlay(int client_width, int client_height, int bar) {
         upload_image(g_device.knob_texture, g_device.knob_width, g_device.knob_height, knob);
     }
     if (g_device.touch_visible && !g_device.overlay_visible) {
+        options::Image pressed;
+        options::Image base;
+        if (touch::take_extras(g_device.extras_version, pressed, base, client_height)) {
+            upload_image(g_device.pressed_texture, g_device.pressed_width, g_device.pressed_height, pressed);
+            upload_image(g_device.base_texture, g_device.base_width, g_device.base_height, base);
+        }
         draw_image(g_device.touch_texture, options::Rect{0, 0, client_width, client_height}, client_height);
+        draw_image(g_device.base_texture, touch::base_rect(client_height), client_height);
+        static std::vector<options::Rect> pressed_rects;
+        touch::pressed_rects(pressed_rects);
+        for (const options::Rect& rect : pressed_rects) {
+            draw_image(g_device.pressed_texture, rect, client_height);
+        }
         draw_image(g_device.knob_texture, touch::knob_rect(client_height), client_height);
     }
     if (g_device.overlay_visible) {
@@ -3294,6 +3382,7 @@ bool present_frame(void* window_handle, double aspect) {
     SDL_GL_SwapWindow(window);
     video::park_while_background();
     apply_scale();
+    apply_anisotropy();
     return true;
 }
 

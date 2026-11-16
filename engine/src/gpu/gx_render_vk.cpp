@@ -38,6 +38,7 @@
 #include "wp/memory.h"
 #include "wp/options.h"
 #include "wp/perf_overlay.h"
+#include "wp/screenshot.h"
 #include "wp/settings.h"
 #include "wp/titlebar.h"
 #include "wp/touch.h"
@@ -122,6 +123,7 @@ struct Context {
     bool dual_source = false;
     bool depth_clamp = false;
     bool load_none = false;
+    bool anisotropy = false;
     VkDeviceSize uniform_alignment = 256;
     VkDeviceSize storage_alignment = 256;
 };
@@ -314,6 +316,9 @@ struct Device {
     uint64_t touch_version = 0;
     bool touch_visible = false;
     Overlay knob_image;
+    Overlay pressed_image;
+    Overlay base_image;
+    uint64_t extras_version = 0;
     Overlay hud_image;
     uint64_t hud_version = 0;
     bool hud_visible = false;
@@ -367,6 +372,7 @@ uint32_t g_efb_passes = 0;
 uint32_t g_cleared_passes = 0;
 uint32_t g_submits = 0;
 int g_shown_height = kEfbHeight;
+int g_anisotropy = 1;
 
 std::vector<std::unique_ptr<Submission>> g_submissions;
 Submission* g_current = nullptr;
@@ -2121,6 +2127,11 @@ Image* upload_levels(const std::vector<std::vector<uint32_t>>& images, uint32_t 
     return image;
 }
 
+bool keep_photos() {
+    static const settings::LiveFlag enabled("game.save_photos", "WP_SAVE_PHOTOS");
+    return enabled();
+}
+
 Image* custom_texture(const std::string& key, bool mipmaps) {
     auto [found, inserted] = g_pack.loaded.try_emplace(key, nullptr);
     if (!inserted) {
@@ -2242,6 +2253,14 @@ Image* texture_for(uint32_t map) {
             }
         }
     }
+    if (format == 6 && width == screenshot::kPhotoWidth && height == screenshot::kPhotoHeight && levels == 1 && copied == g_device.copies.end() && !custom && keep_photos()) {
+        std::vector<std::vector<uint32_t>> photo = decode_levels(request);
+        std::string path = screenshot::photo_matching(screenshot::photo_signature(photo[0].data(), width, height, true));
+        if (!path.empty()) {
+            custom = custom_texture(path, false);
+            log::write("photo", "shown from %s", path.c_str());
+        }
+    }
     if (custom && !g_pack.dump) {
         entry.texture = custom;
         entry.owned = false;
@@ -2284,6 +2303,10 @@ VkSampler sampler_for(uint32_t map) {
     info.mipLodBias = std::clamp(params.lod_bias, -limit, limit);
     info.minLod = params.min_lod;
     info.maxLod = params.unlimited_lod ? 1000.0f : std::max(params.max_lod, params.min_lod);
+    if (g_vk.anisotropy && g_anisotropy > 1 && params.min_linear && params.mag_linear) {
+        info.anisotropyEnable = VK_TRUE;
+        info.maxAnisotropy = std::min(static_cast<float>(g_anisotropy), g_vk.properties.limits.maxSamplerAnisotropy);
+    }
     VkSampler sampler = VK_NULL_HANDLE;
     vkCreateSampler(device(), &info, nullptr, &sampler);
     g_device.samplers[params.key] = sampler;
@@ -2845,6 +2868,21 @@ void dump_copy(const CopiedTexture& entry) {
     dump_target(entry.converted.image, entry.converted.width, entry.converted.height, "");
 }
 
+void apply_anisotropy() {
+    static const settings::LiveNumber setting("video.anisotropy", "WP_ANISOTROPY");
+    int level = std::clamp(setting(), 1, 16);
+    if (level == g_anisotropy) {
+        return;
+    }
+    flush_pending();
+    for (auto& entry : g_device.samplers) {
+        VkSampler sampler = entry.second;
+        retire([sampler] { vkDestroySampler(device(), sampler, nullptr); });
+    }
+    g_device.samplers.clear();
+    g_anisotropy = level;
+}
+
 void apply_scale() {
     int scale = requested_scale();
     Canvas wanted = wanted_canvas(g_picture_aspect, g_window_aspect);
@@ -2918,6 +2956,14 @@ void take_overlays(int client_width, int client_height) {
         upload_overlay(g_device.touch_image, image);
         upload_overlay(g_device.knob_image, knob);
     }
+    if (g_device.touch_visible) {
+        options::Image pressed;
+        options::Image base;
+        if (touch::take_extras(g_device.extras_version, pressed, base, client_height)) {
+            upload_overlay(g_device.pressed_image, pressed);
+            upload_overlay(g_device.base_image, base);
+        }
+    }
     if (titlebar::take(g_device.bar_version, image)) {
         upload_overlay(g_device.bar_image, image);
     }
@@ -2937,6 +2983,12 @@ void draw_overlay(int client_width, int client_height, int bar) {
     }
     if (g_device.touch_visible && !g_device.overlay_visible) {
         draw_image(g_device.touch_image.image, options::Rect{0, 0, client_width, client_height}, true);
+        draw_image(g_device.base_image.image, touch::base_rect(client_height), true);
+        static std::vector<options::Rect> pressed_rects;
+        touch::pressed_rects(pressed_rects);
+        for (const options::Rect& rect : pressed_rects) {
+            draw_image(g_device.pressed_image.image, rect, true);
+        }
         draw_image(g_device.knob_image.image, touch::knob_rect(client_height), true);
     }
     if (g_device.overlay_visible) {
@@ -3286,6 +3338,8 @@ bool probe() {
     VkPhysicalDeviceFeatures wanted{};
     wanted.dualSrcBlend = features.dualSrcBlend;
     wanted.depthClamp = features.depthClamp;
+    wanted.samplerAnisotropy = features.samplerAnisotropy;
+    g_vk.anisotropy = features.samplerAnisotropy == VK_TRUE;
     g_vk.dual_source = features.dualSrcBlend == VK_TRUE;
     g_vk.depth_clamp = features.depthClamp == VK_TRUE;
     float priority = 1.0f;
@@ -3478,6 +3532,30 @@ bool write_back_overlaps(uint32_t address, size_t size) {
     return false;
 }
 
+namespace {
+
+void keep_photo(Image* image, uint32_t full_width, uint32_t full_height, int x, int y, int width, int height, int canvas_width, int canvas_height) {
+    std::vector<uint32_t> pixels;
+    if (!image || canvas_width <= 0 || canvas_height <= 0 || !read_target(image, full_width, full_height, pixels)) {
+        return;
+    }
+    uint32_t left = std::min(full_width, static_cast<uint32_t>(std::max(0, x)) * full_width / static_cast<uint32_t>(canvas_width));
+    uint32_t top = std::min(full_height, static_cast<uint32_t>(std::max(0, y)) * full_height / static_cast<uint32_t>(canvas_height));
+    uint32_t photo_width = std::min(full_width - left, static_cast<uint32_t>(width) * full_width / static_cast<uint32_t>(canvas_width));
+    uint32_t photo_height = std::min(full_height - top, static_cast<uint32_t>(height) * full_height / static_cast<uint32_t>(canvas_height));
+    if (photo_width == 0 || photo_height == 0) {
+        return;
+    }
+    std::vector<uint32_t> photo(static_cast<size_t>(photo_width) * photo_height);
+    for (uint32_t row = 0; row < photo_height; row++) {
+        const uint32_t* source = pixels.data() + static_cast<size_t>(top + row) * full_width + left;
+        std::copy(source, source + photo_width, photo.begin() + static_cast<size_t>(row) * photo_width);
+    }
+    screenshot::photo_taken(std::move(photo), photo_width, photo_height);
+}
+
+}
+
 void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width, int height, bool half, uint32_t format, bool intensity, bool depth, bool alpha,
                      const CopyFilter& filter) {
     if (!initialize()) {
@@ -3534,6 +3612,10 @@ void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width,
         }
     }
     run_copy(entry.converted, target_width, target_height, canvas_x, canvas_y, canvas_w, canvas_h, format, intensity, alpha || depth, depth, filter);
+    if (!recurring && !half && format == 6 && logical_width == screenshot::kPhotoWidth && logical_height == screenshot::kPhotoHeight && keep_photos()) {
+        keep_photo(entry.converted.image, entry.converted.width, entry.converted.height, x + g_canvas.margin_x - canvas_x, y + g_canvas.margin_y - canvas_y, width, height,
+                   canvas_w, canvas_h);
+    }
     entry.has_view = true;
     entry.whole_canvas = canvas_w > width;
     entry.bytes = entry.logical_width * entry.logical_height * copy_bits(format) / 8;
@@ -3679,6 +3761,7 @@ bool present_frame(void* window_handle, double aspect) {
     }
     video::park_while_background();
     apply_scale();
+    apply_anisotropy();
     return true;
 }
 
