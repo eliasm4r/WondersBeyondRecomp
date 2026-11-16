@@ -42,10 +42,14 @@ def digest(path, kind):
     return value.hexdigest()
 
 
+def archive_name(package):
+    return package["url"].rsplit("/", 1)[1].replace("%2B", "+")
+
+
 def fetch(package):
     downloads = TOOLS / "downloads"
     downloads.mkdir(parents=True, exist_ok=True)
-    target = downloads / package["url"].rsplit("/", 1)[1].replace("%2B", "+")
+    target = downloads / archive_name(package)
     kind = "sha256" if "sha256" in package else "sha1"
     if target.is_file() and digest(target, kind) == package[kind]:
         return target
@@ -97,7 +101,9 @@ def main():
         sys.exit("the Android package is built on Windows or Linux")
     print(NOTICE, flush=True)
     for package in packages:
-        unpack(package, fetch(package))
+        stamp = TOOLS / package["folder"] / ".ready"
+        if not (stamp.is_file() and stamp.read_text() == archive_name(package)):
+            unpack(package, fetch(package))
     shutil.rmtree(TOOLS / "downloads", ignore_errors=True)
     if options.only_tools:
         return 0
