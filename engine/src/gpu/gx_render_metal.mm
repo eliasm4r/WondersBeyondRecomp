@@ -199,6 +199,7 @@ struct PendingBatch {
     uint32_t blend = 0;
     uint32_t depth = 0;
     bool early_depth = false;
+    bool keeps_all = false;
     uint32_t top_left = 0;
     uint32_t bottom_right = 0;
     uint32_t scissor_offset = 0;
@@ -680,6 +681,9 @@ std::string variant_source(const std::string& key) {
     std::string source = metal_shaders::kCommon;
     source += "#define WP_VARIANT\n";
     source += words[1] ? "#define WP_SKIP_LATE\n" : "#define WP_SKIP_EARLY\n";
+    if (words.size() > kVariantHeader + count * 5 && words[kVariantHeader + count * 5] != 0) {
+        source += "#define WP_NO_DISCARD\n";
+    }
     source += stages + indirects;
     source += "constant uint4 kSwaps = " + vector(&words[2]) + ";\n";
     source += "constant uint4 kIndirect = " + vector(&words[6]) + ";\n";
@@ -815,12 +819,16 @@ id<MTLRenderPipelineState> generic_pipeline(int kind, bool early, uint32_t blend
     }
 }
 
-id<MTLRenderPipelineState> tev_pipeline(const Constants& constants, bool early, int kind, uint32_t blend) {
+id<MTLRenderPipelineState> tev_pipeline(const Constants& constants, bool early, bool keeps_all, int kind, uint32_t blend) {
     static const bool generic_only = std::getenv("WP_GENERIC_SHADER") != nullptr;
     blend = canonical_blend(blend);
     uint64_t key = pipe_key(kind, early, blend);
     if (!generic_only) {
         std::string name = variant_key(constants, early);
+        if (keeps_all) {
+            const uint32_t marker = 1;
+            name.append(reinterpret_cast<const char*>(&marker), sizeof marker);
+        }
         std::lock_guard<std::recursive_mutex> hold(g_compile_lock);
         Variant& variant = g_variants[name];
         if (variant.function) {
@@ -1333,7 +1341,7 @@ void draw_runs() {
     bool ok = upload(g_device.run_rows, g_run_row_values.data(), g_run_row_used * sizeof(float[4]), row_start) &&
               upload(g_device.run_vertices, g_run_vertex_bytes.data(), g_run_vertex_used, vertex_start) &&
               upload(g_device.run_indices, g_run_index_words.data(), g_run_index_used * sizeof(uint16_t), index_start);
-    id<MTLRenderPipelineState> pipeline = ok ? tev_pipeline(g_pending.constants, g_pending.early_depth, 1, g_pending.blend) : nil;
+    id<MTLRenderPipelineState> pipeline = ok ? tev_pipeline(g_pending.constants, g_pending.early_depth, g_pending.keeps_all, 1, g_pending.blend) : nil;
     if (pipeline && set_batch_state(g_pending)) {
         bind_pipeline(pipeline);
         [g_encoder setVertexBuffer:g_device.run_rows.buffer offset:0 atIndex:1];
@@ -1390,7 +1398,7 @@ void flush_pending() {
     g_batches++;
     g_batch_vertices += static_cast<uint32_t>(pending.vertices.size());
     @autoreleasepool {
-        id<MTLRenderPipelineState> pipeline = tev_pipeline(pending.constants, pending.early_depth, 0, pending.blend);
+        id<MTLRenderPipelineState> pipeline = tev_pipeline(pending.constants, pending.early_depth, pending.keeps_all, 0, pending.blend);
         if (pipeline && set_batch_state(pending)) {
             bind_pipeline(pipeline);
             bind_cull(0);
@@ -1445,7 +1453,9 @@ void select_batch() {
                      (static_cast<uint32_t>(!alpha_test.can_pass) << 18);
     uint32_t depth = bp[0x40] & 0x1F;
     bool early_depth = (depth & 1) != 0 && (bp[0x43] & (1u << 6)) != 0 && alpha_test.can_pass && alpha_test.can_fail;
-    bool same = !batch_empty() && pending.blend == blend && pending.depth == depth && pending.early_depth == early_depth && pending.top_left == bp[0x20] &&
+    bool keeps_all = alpha_test.can_pass && !alpha_test.can_fail;
+    bool same = !batch_empty() && pending.blend == blend && pending.depth == depth && pending.early_depth == early_depth && pending.keeps_all == keeps_all &&
+                pending.top_left == bp[0x20] &&
                 pending.bottom_right == bp[0x21] && pending.scissor_offset == bp[kBpScissorOffset] && std::memcmp(&pending.constants, &constants, sizeof constants) == 0 &&
                 std::memcmp(pending.views, views, sizeof views) == 0 && std::memcmp(pending.samplers, samplers, sizeof samplers) == 0;
     if (!same) {
@@ -1456,6 +1466,7 @@ void select_batch() {
         pending.blend = blend;
         pending.depth = depth;
         pending.early_depth = early_depth;
+        pending.keeps_all = keeps_all;
         pending.top_left = bp[0x20];
         pending.bottom_right = bp[0x21];
         pending.scissor_offset = bp[kBpScissorOffset];

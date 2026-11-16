@@ -704,9 +704,11 @@ TevOutput tev_body(Varyings in, constant Constants& u, thread const Maps& maps) 
     bool second = compare_alpha((compare >> 19u) & 7u, value, (compare >> 8u) & 255u);
     uint logic = (compare >> 22u) & 3u;
     bool accepted = logic == 0u ? (first && second) : (logic == 1u ? (first || second) : (logic == 2u ? (first != second) : (first == second)));
+#ifndef WP_NO_DISCARD
     if (!accepted) {
         discard_fragment();
     }
+#endif
     TevOutput out;
     out.blend = float4(result) / 255.0;
     uint source = (u.header.w >> 2u) & 3u;
