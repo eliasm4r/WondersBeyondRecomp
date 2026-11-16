@@ -91,12 +91,14 @@ const uint32_t kTevEarlySingleCode[] =
     ;
 
 constexpr uint32_t kVertexCapacity = 1 << 16;
-constexpr uint32_t kScreenRingBytes = 32u << 20;
-constexpr uint32_t kRunVertexBytes = 16u << 20;
-constexpr uint32_t kRunIndexBytes = 4u << 20;
-constexpr uint32_t kRunRowCapacity = 1u << 16;
-constexpr uint32_t kUniformRingBytes = 8u << 20;
-constexpr uint32_t kStagingRingBytes = 32u << 20;
+constexpr uint32_t kRingSegments = 4;
+constexpr uint32_t kScreenRingBytes = 64u << 20;
+constexpr uint32_t kRunVertexBytes = 32u << 20;
+constexpr uint32_t kRunIndexBytes = 8u << 20;
+constexpr uint32_t kRunRowCapacity = 1u << 17;
+constexpr uint32_t kRunRowBatch = kRunRowCapacity / kRingSegments;
+constexpr uint32_t kUniformRingBytes = 16u << 20;
+constexpr uint32_t kStagingRingBytes = 64u << 20;
 constexpr uint32_t kKeptVertexBytes = 64u << 20;
 constexpr uint32_t kKeptIndexBytes = 16u << 20;
 constexpr uint32_t kNoPalette = ~0u;
@@ -110,7 +112,7 @@ constexpr size_t kMaxSubmissions = 8;
 constexpr uint32_t kSetsPerPool = 1024;
 constexpr uint32_t kSpecConstants = 91;
 constexpr uint32_t kScreenWords = sizeof(ScreenVertex) / sizeof(float);
-constexpr uint32_t kMovedRingBytes = 32u << 20;
+constexpr uint32_t kMovedRingBytes = 64u << 20;
 constexpr size_t kMaxBetween = 3;
 constexpr size_t kMaxCameras = 8;
 constexpr uint32_t kMotionRows = kMaxCameras * 4;
@@ -232,7 +234,7 @@ struct Ring {
     uint32_t capacity = 0;
     uint32_t cursor = 0;
     uint32_t segment = 0;
-    uint64_t used_by[2] = {};
+    uint64_t used_by[kRingSegments] = {};
     uint32_t switches = 0;
 };
 
@@ -1097,18 +1099,18 @@ bool make_ring(Ring& ring, uint32_t bytes, VkBufferUsageFlags usage) {
 }
 
 bool reserve(Ring& ring, uint32_t size, uint32_t alignment, uint32_t& start) {
-    uint32_t half = ring.capacity / 2;
-    if (size > half) {
+    uint32_t part = ring.capacity / kRingSegments;
+    if (size > part) {
         return false;
     }
     uint32_t at = (ring.cursor + alignment - 1) / alignment * alignment;
-    if (at >= ring.capacity) {
+    if (at >= part * kRingSegments) {
         at = 0;
     }
-    uint32_t segment = at >= half ? 1 : 0;
-    if (at + size > (segment + 1) * half) {
-        segment ^= 1;
-        at = segment * half;
+    uint32_t segment = at / part;
+    if (at + size > (segment + 1) * part) {
+        segment = (segment + 1) % kRingSegments;
+        at = segment * part;
     }
     if (segment != ring.segment) {
         ring.used_by[ring.segment] = current_serial();
@@ -2160,7 +2162,7 @@ Image* upload_levels(const std::vector<std::vector<uint32_t>>& images, uint32_t 
     Buffer* dedicated = nullptr;
     VkBuffer source = g_device.staging.buffer.buffer;
     uint8_t* memory = nullptr;
-    if (total <= kStagingRingBytes / 2 && reserve(g_device.staging, static_cast<uint32_t>(total), 16, start)) {
+    if (total <= kStagingRingBytes / kRingSegments && reserve(g_device.staging, static_cast<uint32_t>(total), 16, start)) {
         memory = g_device.staging.buffer.mapped + start;
     } else {
         dedicated = new Buffer;
@@ -2932,8 +2934,8 @@ bool add_run(const VertexRun& run, uint32_t bytes, uint32_t index_count) {
     finish_frame();
     service_deferred();
     uint32_t rows = run.row_count + (run.palette ? kPaletteRows + kNormalRows : 0);
-    if (!g_pending.vertices.empty() || g_run_vertex_used + bytes > kRunVertexBytes / 2 || (g_run_index_used + index_count) * sizeof(uint16_t) > kRunIndexBytes / 2 ||
-        g_run_row_used + rows > kRunRowCapacity / 2) {
+    if (!g_pending.vertices.empty() || g_run_vertex_used + bytes > kRunVertexBytes / kRingSegments || (g_run_index_used + index_count) * sizeof(uint16_t) > kRunIndexBytes / kRingSegments ||
+        g_run_row_used + rows > kRunRowBatch) {
         flush_pending();
     }
     select_batch();
@@ -4190,7 +4192,7 @@ Ring* const g_recorded_rings[3] = {&g_device.screen, &g_device.run_vertices, &g_
 
 bool rings_overrun() {
     for (size_t i = 0; i < 3; i++) {
-        if (g_recorded_rings[i]->switches - g_ring_marks[i] >= 2) {
+        if (g_recorded_rings[i]->switches - g_ring_marks[i] >= kRingSegments) {
             return true;
         }
     }
@@ -4199,13 +4201,16 @@ bool rings_overrun() {
 
 void hold_rings() {
     for (Ring* ring : g_recorded_rings) {
-        uint64_t& other = ring->used_by[ring->segment ^ 1];
-        other = std::max(other, current_serial());
+        for (uint32_t segment = 0; segment < kRingSegments; segment++) {
+            if (segment != ring->segment) {
+                ring->used_by[segment] = std::max(ring->used_by[segment], current_serial());
+            }
+        }
     }
 }
 
 uint32_t run_interpolated(int x, int y, int width, int height, bool depth, const CopyFilter& filter, const pacing::FramePlan& plan) {
-    if (!can_pair() || !g_efb_before_valid || (kMotionRows + 3 * g_frame_vertices) * sizeof(float[4]) > kMovedRingBytes / 2 || rings_overrun() ||
+    if (!can_pair() || !g_efb_before_valid || (kMotionRows + 3 * g_frame_vertices) * sizeof(float[4]) > kMovedRingBytes / kRingSegments || rings_overrun() ||
         !interpolated_targets()) {
         return 0;
     }

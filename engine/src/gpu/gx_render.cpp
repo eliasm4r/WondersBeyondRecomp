@@ -1461,6 +1461,7 @@ void open_shader_cache() {
 constexpr uint32_t kRunVertexBytes = 16u << 20;
 constexpr uint32_t kRunIndexBytes = 4u << 20;
 constexpr uint32_t kRunRowCapacity = 1u << 16;
+constexpr uint32_t kRunRowBatch = kRunRowCapacity / 2;
 
 bool create_run_pipeline() {
     static bool tried = false;
