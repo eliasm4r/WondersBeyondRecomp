@@ -75,6 +75,8 @@ constexpr uint32_t kKnob = 0x78FFFFFF;
 constexpr float kKnobShare = 0.45f;
 constexpr float kNarrowest = 1.3f;
 constexpr float kLargestDp = 430.0f;
+constexpr float kRowGap = 0.05f;
+constexpr float kAimStickReach = 1.6f;
 
 constexpr Place kPlaces[] = {
     {Kind::Menu, "Menu", 0, Corner::TopLeft, 0.09f, 0.08f, 0.055f},
@@ -136,6 +138,20 @@ float size_factor() {
     return std::clamp(g_size(), 50, 200) / 100.0f;
 }
 
+float needed_height() {
+    float top = 0.0f;
+    float bottom = 0.0f;
+    for (const Place& place : kPlaces) {
+        float reach = place.y + place.radius;
+        if (place.corner == Corner::BottomRight) {
+            bottom = std::max(bottom, reach);
+        } else {
+            top = std::max(top, reach);
+        }
+    }
+    return top + bottom + kRowGap;
+}
+
 float unit(int height) {
     float u = static_cast<float>(height);
     if (g_width > 0) {
@@ -144,7 +160,14 @@ float unit(int height) {
     if (g_density > 0.0f) {
         u = std::min(u, kLargestDp * g_density);
     }
-    return u * size_factor();
+    u *= size_factor();
+    float usable_height = static_cast<float>(std::max(1, height - g_inset_top - g_inset_bottom));
+    u = std::min(u, usable_height / needed_height());
+    if (g_width > 0) {
+        float usable_width = static_cast<float>(std::max(1, g_width - g_inset_left - g_inset_right));
+        u = std::min(u, usable_width / kNarrowest);
+    }
+    return u;
 }
 
 bool aiming() {
@@ -368,7 +391,8 @@ void finger(int64_t id, Phase phase, float x, float y, int width, int height) {
         if (added.spot >= 0 && all[static_cast<size_t>(added.spot)].kind == Kind::Menu) {
             g_menu_pressed = true;
             added.spot = kNone;
-        } else if (added.spot == kNone && x < kStickZone * width && !g_stick_active) {
+        } else if (added.spot == kNone && !g_stick_active &&
+                   (aiming() ? std::hypot(x - rest_x(height), y - rest_y(height)) < kAimStickReach * stick_radius(height) : x < kStickZone * width)) {
             added.stick = true;
             g_stick_active = true;
             g_stick_origin_x = x;

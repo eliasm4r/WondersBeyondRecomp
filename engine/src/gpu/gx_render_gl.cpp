@@ -9,6 +9,7 @@
 #include <SDL3/SDL_opengl.h>
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -912,6 +913,7 @@ struct CopiedTexture {
     uint32_t pending_writes = 0;
     uint32_t copied_frame = 0;
     uint32_t copied_format = 0;
+    bool whole_canvas = false;
 };
 
 struct PendingWriteBack {
@@ -1010,6 +1012,7 @@ struct PendingBatch {
     uint32_t top_left = 0;
     uint32_t bottom_right = 0;
     uint32_t scissor_offset = 0;
+    int canvas_kind = kInPicture;
 };
 
 Device g_device;
@@ -1035,6 +1038,40 @@ double g_write_back_seconds = 0.0;
 
 int scaled(int value) {
     return value * g_scale;
+}
+
+Canvas g_canvas;
+int g_canvas_kind = kInPicture;
+std::atomic<uint32_t> g_shared_margins{0};
+bool g_world_drawn = false;
+bool g_world_shown = false;
+int g_world_change_frames = 0;
+constexpr int kSteadyFrames = 8;
+double g_window_aspect = 0.0;
+double g_picture_aspect = 4.0 / 3.0;
+
+int canvas_width() {
+    return kEfbWidth + 2 * g_canvas.margin_x;
+}
+
+int canvas_height() {
+    return kEfbHeight + 2 * g_canvas.margin_y;
+}
+
+bool canvas_grown() {
+    return g_canvas.margin_x != 0 || g_canvas.margin_y != 0;
+}
+
+void place_on_canvas(int& x, int& y, int& width, int& height, bool grow = true) {
+    if (grow && canvas_grown() && covers_picture(x, y, width, height)) {
+        width += x + 2 * g_canvas.margin_x;
+        height += y + 2 * g_canvas.margin_y;
+        x = 0;
+        y = 0;
+        return;
+    }
+    x += g_canvas.margin_x;
+    y += g_canvas.margin_y;
 }
 
 std::string for_context(GLenum type, const std::string& source) {
@@ -1150,13 +1187,13 @@ void release_target(Target& target) {
 bool create_efb() {
     gl.GenTextures(1, &g_device.efb_color);
     set_texture_levels(g_device.efb_color, 1);
-    gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, scaled(kEfbWidth), scaled(kEfbHeight), 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, scaled(canvas_width()), scaled(canvas_height()), 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     gl.GenTextures(1, &g_device.efb_depth);
     gl.BindTexture(GL_TEXTURE_2D, g_device.efb_depth);
     gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
     gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    gl.TexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F, scaled(kEfbWidth), scaled(kEfbHeight), 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+    gl.TexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F, scaled(canvas_width()), scaled(canvas_height()), 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
     gl.GenFramebuffers(1, &g_device.efb_framebuffer);
     gl.BindFramebuffer(GL_FRAMEBUFFER, g_device.efb_framebuffer);
     gl.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, g_device.efb_color, 0);
@@ -2143,7 +2180,7 @@ void apply_depth(uint32_t word) {
 
 void bind_efb() {
     gl.BindFramebuffer(GL_FRAMEBUFFER, g_device.efb_framebuffer);
-    gl.Viewport(0, 0, scaled(kEfbWidth), scaled(kEfbHeight));
+    gl.Viewport(0, 0, scaled(canvas_width()), scaled(canvas_height()));
 }
 
 constexpr uint32_t kNoPalette = ~0u;
@@ -2375,10 +2412,32 @@ void set_batch_state(const PendingBatch& pending) {
     int top = static_cast<int>((pending.top_left & 0x7FF) - scissor_offset_y(pending.scissor_offset));
     int right = static_cast<int>(((pending.bottom_right >> 12) & 0x7FF) - scissor_offset_x(pending.scissor_offset) + 1);
     int bottom = static_cast<int>((pending.bottom_right & 0x7FF) - scissor_offset_y(pending.scissor_offset) + 1);
+    if (canvas_grown() && covers_picture(left, top, right - left, bottom - top)) {
+        if (pending.canvas_kind != kInPicture) {
+            right += 2 * g_canvas.margin_x;
+            bottom += 2 * g_canvas.margin_y;
+            left = 0;
+            top = 0;
+        } else {
+            left = g_canvas.margin_x;
+            top = g_canvas.margin_y;
+            right = kEfbWidth + g_canvas.margin_x;
+            bottom = kPictureHeight + g_canvas.margin_y;
+        }
+        if (pending.canvas_kind == kWide) {
+            top = g_canvas.margin_y;
+            bottom = kPictureHeight + g_canvas.margin_y;
+        }
+    } else {
+        left += g_canvas.margin_x;
+        top += g_canvas.margin_y;
+        right += g_canvas.margin_x;
+        bottom += g_canvas.margin_y;
+    }
     left = std::max(left, 0);
     top = std::max(top, 0);
-    right = std::min(right, kEfbWidth);
-    bottom = std::min(bottom, kEfbHeight);
+    right = std::min(right, canvas_width());
+    bottom = std::min(bottom, canvas_height());
     gl.Enable(GL_SCISSOR_TEST);
     gl.Scissor(scaled(left), scaled(top), std::max(0, scaled(right - left)), std::max(0, scaled(bottom - top)));
     apply_blend(pending.blend);
@@ -2496,13 +2555,14 @@ void select_batch() {
     static uint64_t batched_serial = ~0ull;
     static uint64_t batched_epoch = 0;
     static int batched_scale = 0;
+    static int batched_canvas = kInPicture;
     PendingBatch& pending = g_pending;
-    if (!batch_empty() && batched_serial == register_serial() && batched_epoch == g_texture_epoch && batched_scale == g_scale) {
+    if (!batch_empty() && batched_serial == register_serial() && batched_epoch == g_texture_epoch && batched_scale == g_scale && batched_canvas == g_canvas_kind) {
         return;
     }
     const uint32_t* bp = bp_registers();
     Constants constants;
-    fill_constants(constants, g_scale);
+    fill_constants(constants, g_scale, g_canvas.margin_x);
     GLuint views[kTextureMaps] = {};
     GLuint samplers[kTextureMaps] = {};
     uint32_t used = used_maps(constants);
@@ -2519,7 +2579,8 @@ void select_batch() {
     uint32_t depth = bp[0x40] & 0x1F;
     bool early_depth = (depth & 1) != 0 && (bp[0x43] & (1u << 6)) != 0 && alpha_test.can_pass && alpha_test.can_fail;
     bool same = !batch_empty() && pending.blend == blend && pending.depth == depth && pending.early_depth == early_depth && pending.top_left == bp[0x20] &&
-                pending.bottom_right == bp[0x21] && pending.scissor_offset == bp[kBpScissorOffset] && std::memcmp(&pending.constants, &constants, sizeof constants) == 0 &&
+                pending.bottom_right == bp[0x21] && pending.scissor_offset == bp[kBpScissorOffset] && pending.canvas_kind == g_canvas_kind &&
+                std::memcmp(&pending.constants, &constants, sizeof constants) == 0 &&
                 std::memcmp(pending.views, views, sizeof views) == 0 && std::memcmp(pending.samplers, samplers, sizeof samplers) == 0;
     if (!same) {
         flush_pending();
@@ -2532,10 +2593,12 @@ void select_batch() {
         pending.top_left = bp[0x20];
         pending.bottom_right = bp[0x21];
         pending.scissor_offset = bp[kBpScissorOffset];
+        pending.canvas_kind = g_canvas_kind;
     }
     batched_serial = register_serial();
     batched_epoch = g_texture_epoch;
     batched_scale = g_scale;
+    batched_canvas = g_canvas_kind;
 }
 
 bool add_run(const VertexRun& run, uint32_t bytes, uint32_t index_count) {
@@ -2658,17 +2721,27 @@ void reset_kept() {
 void finish_frame() {}
 
 Canvas canvas() {
-    return {};
+    Canvas current = g_canvas;
+    current.world = g_world_shown;
+    return current;
 }
 
 Canvas shared_canvas() {
-    return {};
+    uint32_t margins = g_shared_margins.load(std::memory_order_acquire);
+    Canvas shared;
+    shared.margin_x = static_cast<int>(margins >> 16);
+    shared.margin_y = static_cast<int>(margins & 0xFFFF);
+    return shared;
 }
 
-void set_canvas_kind(int) {}
+void set_canvas_kind(int kind) {
+    g_canvas_kind = kind;
+    g_world_drawn |= kind == kWorld;
+}
 
-bool canvas_copy(uint32_t) {
-    return false;
+bool canvas_copy(uint32_t address) {
+    auto copied = g_device.copies.find(address);
+    return copied != g_device.copies.end() && copied->second.whole_canvas;
 }
 
 int64_t service_presents() {
@@ -2742,7 +2815,7 @@ bool run_copy(const Target& target, uint32_t target_width, uint32_t target_heigh
         float extent[4];
     } constants{};
     uint32_t sum = filter.coefficients[0] + filter.coefficients[1] + filter.coefficients[2];
-    int efb_height = scaled(kEfbHeight);
+    int efb_height = scaled(canvas_height());
     int top = filter.clamp_top ? scaled(y) : 0;
     int bottom = (filter.clamp_bottom ? scaled(y + height) : efb_height) - 1;
     constants.params[0] = format;
@@ -2760,7 +2833,7 @@ bool run_copy(const Target& target, uint32_t target_width, uint32_t target_heigh
     constants.rows[0] = 1.0f / filter.gamma;
     constants.rows[1] = static_cast<float>(top) + 0.5f;
     constants.rows[2] = static_cast<float>(bottom) + 0.5f;
-    constants.extent[0] = static_cast<float>(scaled(kEfbWidth));
+    constants.extent[0] = static_cast<float>(scaled(canvas_width()));
     constants.extent[1] = static_cast<float>(efb_height);
     gl.BindBuffer(GL_UNIFORM_BUFFER, g_device.copy_constants);
     gl.BufferData(GL_UNIFORM_BUFFER, sizeof constants, &constants, GL_STREAM_DRAW);
@@ -2932,6 +3005,11 @@ void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width,
         return;
     }
     flush_pending();
+    int canvas_x = x;
+    int canvas_y = y;
+    int canvas_w = width;
+    int canvas_h = height;
+    place_on_canvas(canvas_x, canvas_y, canvas_w, canvas_h);
     CopiedTexture& entry = g_device.copies[address];
     // Buffers copied again every frame stay on the GPU; see the Direct3D renderer.
     constexpr uint32_t kRecurringFrames = 2;
@@ -2945,8 +3023,10 @@ void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width,
     entry.copied_format = format;
     entry.logical_width = logical_width;
     entry.logical_height = logical_height;
-    uint32_t target_width = std::max(1u, entry.logical_width * g_scale);
-    uint32_t target_height = std::max(1u, entry.logical_height * g_scale);
+    uint32_t copy_width = half ? std::max(1u, static_cast<uint32_t>(canvas_w) / 2) : static_cast<uint32_t>(canvas_w);
+    uint32_t copy_height = half ? std::max(1u, static_cast<uint32_t>(canvas_h) / 2) : static_cast<uint32_t>(canvas_h);
+    uint32_t target_width = std::max(1u, copy_width * g_scale);
+    uint32_t target_height = std::max(1u, copy_height * g_scale);
     if (!entry.converted.framebuffer || entry.converted.width != target_width || entry.converted.height != target_height) {
         release_copy(entry);
         if (!create_render_texture(entry.converted, target_width, target_height)) {
@@ -2955,10 +3035,11 @@ void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width,
             return;
         }
     }
-    run_copy(entry.converted, target_width, target_height, x, y, width, height, format, intensity, alpha || depth, depth, filter);
+    run_copy(entry.converted, target_width, target_height, canvas_x, canvas_y, canvas_w, canvas_h, format, intensity, alpha || depth, depth, filter);
     entry.view = entry.converted.texture;
+    entry.whole_canvas = canvas_w > width;
     entry.bytes = entry.logical_width * entry.logical_height * copy_bits(format) / 8;
-    if (!recurring && queue_write_back(address, stride, x, y, width, height, entry.logical_width, entry.logical_height, format, intensity, alpha || depth, depth, filter)) {
+    if (!recurring && queue_write_back(address, stride, x + g_canvas.margin_x, y + g_canvas.margin_y, width, height, entry.logical_width, entry.logical_height, format, intensity, alpha || depth, depth, filter)) {
         entry.pending_writes++;
     } else if (entry.pending_writes == 0) {
         entry.guest_hash = guest_range_valid(address, entry.bytes) ? sample_hash(host(address), entry.bytes) : 0;
@@ -3006,6 +3087,13 @@ void copy_to_framebuffer(int x, int y, int width, int height, bool depth, const 
     if (width <= 0 || height <= 0) {
         return;
     }
+    g_world_change_frames = g_world_drawn == g_world_shown ? 0 : g_world_change_frames + 1;
+    if (g_world_change_frames >= kSteadyFrames) {
+        g_world_shown = g_world_drawn;
+        g_world_change_frames = 0;
+    }
+    g_world_drawn = false;
+    place_on_canvas(x, y, width, height, g_world_shown);
     uint32_t physical_width = static_cast<uint32_t>(scaled(width));
     uint32_t physical_height = static_cast<uint32_t>(scaled(height));
     if (!g_device.frame.framebuffer || g_device.frame.width != physical_width || g_device.frame.height != physical_height) {
@@ -3033,16 +3121,20 @@ void copy_to_framebuffer(int x, int y, int width, int height, bool depth, const 
 
 void apply_scale() {
     int scale = requested_scale();
-    if (scale == g_scale) {
+    Canvas wanted = wanted_canvas(g_picture_aspect, g_window_aspect);
+    if (scale == g_scale && wanted.margin_x == g_canvas.margin_x && wanted.margin_y == g_canvas.margin_y) {
         return;
     }
     flush_pending();
     int previous = g_scale;
+    Canvas previous_canvas = g_canvas;
     release_efb();
     g_scale = scale;
+    g_canvas = wanted;
     if (!create_efb()) {
         release_efb();
         g_scale = previous;
+        g_canvas = previous_canvas;
         if (!create_efb()) {
             std::fputs("cannot recreate the EFB after a scale change\n", stderr);
             g_device.ready = false;
@@ -3056,6 +3148,8 @@ void apply_scale() {
     gl.ClearColor(0, 0, 0, 0);
     gl.ClearDepthf(1.0f);
     gl.Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    g_shared_margins.store(static_cast<uint32_t>(g_canvas.margin_x) << 16 | static_cast<uint32_t>(g_canvas.margin_y), std::memory_order_release);
+    log::write("video", "picture %dx%d at scale %d", canvas_width(), kPictureHeight + 2 * g_canvas.margin_y, g_scale);
 }
 
 void upload_image(GLuint& texture, uint32_t& width, uint32_t& height, const options::Image& image) {
@@ -3163,10 +3257,20 @@ bool present_frame(void* window_handle, double aspect) {
     gl.Clear(GL_COLOR_BUFFER_BIT);
     int bar = titlebar::height(window);
     int area = std::max(1, client_height - bar);
-    double width = client_width;
+    g_picture_aspect = aspect;
+    g_window_aspect = static_cast<double>(client_width) / area;
+    double box_width = client_width;
+    double box_height = area;
+    if (canvas_grown() && g_device.frame.width > 0 && g_device.frame.height > 0) {
+        double box_aspect = aspect * (kEfbWidth + 2.0 * g_canvas.margin_x) / (kPictureHeight + 2.0 * g_canvas.margin_y) * kPictureHeight / kEfbWidth;
+        box_height = std::min<double>(area, client_width / box_aspect);
+        box_width = box_height * box_aspect;
+        aspect *= static_cast<double>(g_device.frame.width) / g_device.frame.height * kPictureHeight / kEfbWidth;
+    }
+    double width = box_width;
     double height = width / aspect;
-    if (height > area) {
-        height = area;
+    if (height > box_height) {
+        height = box_height;
         width = height * aspect;
     }
     gl.Viewport(static_cast<GLint>((client_width - width) / 2), static_cast<GLint>((area - height) / 2), static_cast<GLsizei>(width),
@@ -3213,7 +3317,7 @@ void dump_copy(const CopiedTexture& entry) {
         return;
     }
     g_copy_dump_index++;
-    dump_target(g_device.efb_framebuffer, static_cast<uint32_t>(scaled(kEfbWidth)), static_cast<uint32_t>(scaled(kEfbHeight)), "_efb");
+    dump_target(g_device.efb_framebuffer, static_cast<uint32_t>(scaled(canvas_width())), static_cast<uint32_t>(scaled(canvas_height())), "_efb");
     dump_target(entry.converted.framebuffer, entry.converted.width, entry.converted.height, "");
 }
 
@@ -3285,11 +3389,12 @@ void clear(int x, int y, int width, int height) {
     if (width <= 0 || height <= 0) {
         return;
     }
+    place_on_canvas(x, y, width, height);
     bind_efb();
     plain_state();
     gl.ColorMask(color_enable, color_enable, color_enable, alpha_enable);
     gl.DepthMask(depth_enable ? GL_TRUE : GL_FALSE);
-    bool whole = x == 0 && y == 0 && width == kEfbWidth && height == kEfbHeight;
+    bool whole = x == 0 && y == 0 && width == canvas_width() && height == canvas_height();
     if (whole) {
         gl.Disable(GL_SCISSOR_TEST);
     } else {
