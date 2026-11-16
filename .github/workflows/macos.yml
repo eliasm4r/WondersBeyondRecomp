@@ -21,7 +21,7 @@ jobs:
       - name: Configure
         run: cmake -S . -B build/out -G Ninja -DCMAKE_BUILD_TYPE=Release -DWP_REQUIRE_SDL3=ON
       - name: Build
-        run: cmake --build build/out --target runtime_tests translator_tests
+        run: cmake --build build/out --target runtime_tests translator_tests metal_shaders_test
       - name: Test
         working-directory: build/out
         run: ctest --output-on-failure

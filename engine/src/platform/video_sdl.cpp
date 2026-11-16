@@ -4,6 +4,9 @@
 #include "gl_window.h"
 
 #include <SDL3/SDL.h>
+#ifdef WP_METAL
+#include <SDL3/SDL_metal.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -155,6 +158,11 @@ struct Window {
 };
 
 Window g_state;
+#ifdef WP_METAL
+constexpr bool kMetal = true;
+#else
+constexpr bool kMetal = false;
+#endif
 std::atomic<SDL_Window*> g_window{nullptr};
 std::atomic<bool> g_screenshot_requested{false};
 std::atomic<bool> g_title_changed{false};
@@ -497,19 +505,21 @@ void window_thread(bool visible) {
     const char* wanted = std::getenv("WP_GLES");
     const bool embedded = wanted && *wanted && *wanted != '0';
 #endif
-    if (embedded) {
+    if (embedded && !kMetal) {
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
-    } else {
+    } else if (!kMetal) {
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
     }
-    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
-    SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 0);
+    if (!kMetal) {
+        SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+        SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
+        SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 0);
+    }
     int client_width = kWindowWidth;
     int client_height = static_cast<int>(client_width / g_aspect + 0.5);
     SDL_Rect usable{};
@@ -520,11 +530,15 @@ void window_thread(bool visible) {
             client_height = static_cast<int>(client_width / g_aspect + 0.5);
         }
     }
-    SDL_WindowFlags flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_BORDERLESS | (visible ? 0 : SDL_WINDOW_HIDDEN);
+    SDL_WindowFlags flags = (kMetal ? SDL_WINDOW_METAL : SDL_WINDOW_OPENGL) | SDL_WINDOW_RESIZABLE | SDL_WINDOW_BORDERLESS | (visible ? 0 : SDL_WINDOW_HIDDEN);
     SDL_Window* window = SDL_CreateWindow(window_title(0.0).c_str(), client_width, client_height, flags);
+#ifdef WP_METAL
+    SDL_GLContext context = window ? reinterpret_cast<SDL_GLContext>(SDL_Metal_CreateView(window)) : nullptr;
+#else
     SDL_GLContext context = window ? SDL_GL_CreateContext(window) : nullptr;
+#endif
     if (!context) {
-        std::fprintf(stderr, "cannot create an OpenGL %s context: %s\n", embedded ? "ES 3.2" : "4.1", SDL_GetError());
+        std::fprintf(stderr, "cannot create a %s context: %s\n", kMetal ? "Metal" : (embedded ? "OpenGL ES 3.2" : "OpenGL 4.1"), SDL_GetError());
         if (window) {
             SDL_DestroyWindow(window);
         }
@@ -534,7 +548,9 @@ void window_thread(bool visible) {
     titlebar::install(window);
     titlebar::set_title(window_title(0.0));
     SDL_SetWindowSize(window, client_width, client_height + titlebar::height(window));
-    SDL_GL_MakeCurrent(window, nullptr);
+    if (!kMetal) {
+        SDL_GL_MakeCurrent(window, nullptr);
+    }
     finish_start(window, context);
     if (!visible) {
         return;
@@ -694,13 +710,23 @@ void park_while_background() {
     }
     SDL_Window* window = g_state.window;
     SDL_GLContext context = g_state.context;
-    SDL_GL_MakeCurrent(window, nullptr);
+    if (!kMetal) {
+        SDL_GL_MakeCurrent(window, nullptr);
+    }
     g_background.parked = true;
     g_background.changed.notify_all();
     g_background.changed.wait(hold, [] { return !g_background.wanted; });
     g_background.parked = false;
-    SDL_GL_MakeCurrent(window, context);
-    SDL_GL_SetSwapInterval(0);
+    if (!kMetal) {
+        SDL_GL_MakeCurrent(window, context);
+        SDL_GL_SetSwapInterval(0);
+    }
+}
+
+void* metal_view() {
+    std::unique_lock<std::mutex> hold(g_state.lock);
+    g_state.changed.wait(hold, [] { return g_state.finished; });
+    return kMetal ? static_cast<void*>(g_state.context) : nullptr;
 }
 
 bool make_gl_current() {
