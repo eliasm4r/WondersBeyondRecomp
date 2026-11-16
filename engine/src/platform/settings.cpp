@@ -198,6 +198,27 @@ std::string value_of(const char* key, const char* variable) {
     return it != g_values.end() ? it->second : fallback_of(key);
 }
 
+void keep_phone_values() {
+#ifdef __ANDROID__
+    auto keep = [](const char* key, std::initializer_list<const char*> allowed, const char* otherwise) {
+        std::string& value = g_values[key];
+        for (const char* choice : allowed) {
+            if (value == choice) {
+                return;
+            }
+        }
+        value = otherwise;
+    };
+    keep("video.scale", {"0", "1", "2", "3"}, "0");
+    keep("video.fps", {"30", "60"}, "30");
+    keep("video.anisotropy", {"1", "2", "4"}, "1");
+    keep("video.aspect", {"16:9", "21:9", "auto"}, "auto");
+    g_values["video.dump_textures"] = "0";
+    g_values["video.bug_recorder"] = "0";
+    g_values["audio.wiimote_speaker"] = "0";
+#endif
+}
+
 }
 
 void load(const std::string& path) {
@@ -207,6 +228,7 @@ void load(const std::string& path) {
         g_values[option.key] = option.fallback;
     }
     read_file();
+    keep_phone_values();
     write_file();
     g_revision++;
 }
