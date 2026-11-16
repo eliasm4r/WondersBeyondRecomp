@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 
 #include "wp/log.h"
@@ -19,6 +20,15 @@ constexpr int32_t kMaxBerries = 99999;
 constexpr uint32_t kTopSpeed = 0x30;
 constexpr std::array<uint32_t, 5> kSpeedFields = {0x28, 0x2c, 0x30, 0x38, 0x3c};
 constexpr int kChasedFrames = 4;
+constexpr uint32_t kPlayerTable = 0x8044bb9c;
+constexpr uint32_t kPlayerBody = 0x9c;
+constexpr uint32_t kBodyPosition = 0x8;
+constexpr uint32_t kPlayerAccessor = 0xc;
+constexpr uint32_t kAccessorLife = 0x60;
+constexpr uint32_t kMoveFrame = 0x20;
+constexpr float kLongestStep = 3.0f;
+
+uint32_t g_player = 0;
 
 struct Chased {
     uint32_t accessor = 0;
@@ -98,6 +108,63 @@ void chase_step(Cpu& c, HleFunction original) {
     }
     slot->accessor = accessor;
     slot->age = 0;
+    original(c);
+}
+
+void player_move(Cpu& c, HleFunction original) {
+    static const settings::LiveNumber speed("cheats.run_speed", "WP_CHEAT_RUN_SPEED");
+    static const settings::LiveNumber jump("cheats.jump", "WP_CHEAT_JUMP");
+    static uint32_t last_player = 0;
+    static std::array<float, 3> last{};
+    uint32_t player = c.r[3];
+    uint32_t body = rd32(player) == kPlayerTable ? rd32(player + kPlayerBody) : 0;
+    if (!body) {
+        original(c);
+        return;
+    }
+    g_player = player;
+    uint32_t now = body + kBodyPosition;
+    int run = speed();
+    int rise = jump();
+    uint32_t wanted = c.r[4];
+    std::array<float, 3> step{};
+    for (uint32_t i = 0; i < 3; i++) {
+        step[i] = rdf32(wanted + 4 * i) - last[i];
+    }
+    bool scale = last_player == player && (run != 100 || rise != 100) && run > 0 && rise > 0 &&
+                 step[0] * step[0] + step[2] * step[2] < kLongestStep * kLongestStep && std::fabs(step[1]) < kLongestStep;
+    if (!scale) {
+        original(c);
+    } else {
+        uint32_t stack = c.r[1];
+        uint32_t frame = stack - kMoveFrame;
+        wr32(frame, stack);
+        uint32_t moved = frame + 0x10;
+        for (uint32_t i = 0; i < 3; i++) {
+            float k = i == 1 ? (step[i] > 0.0f ? rise / 100.0f : 1.0f) : run / 100.0f;
+            wrf32(moved + 4 * i, last[i] + step[i] * k);
+        }
+        c.r[1] = frame;
+        c.r[4] = moved;
+        original(c);
+        c.r[1] = stack;
+    }
+    for (uint32_t i = 0; i < 3; i++) {
+        last[i] = rdf32(now + 4 * i);
+    }
+    last_player = player;
+}
+
+void life_damage(Cpu& c, HleFunction original) {
+    static const settings::LiveNumber dealt("cheats.damage_dealt", "WP_CHEAT_DAMAGE_DEALT");
+    static const settings::LiveNumber taken("cheats.damage_taken", "WP_CHEAT_DAMAGE_TAKEN");
+    bool hurt = g_player && rd32(g_player) == kPlayerTable && rd32(rd32(g_player + kPlayerAccessor) + kAccessorLife) == c.r[3];
+    int percent = hurt ? taken() : dealt();
+    if (percent != 100 && percent >= 0) {
+        double damage = c.f[1];
+        c.f[1] = static_cast<float>(damage * percent / 100.0);
+        log::write("cheats", "damage %s %g becomes %g", hurt ? "taken" : "dealt", damage, c.f[1]);
+    }
     original(c);
 }
 

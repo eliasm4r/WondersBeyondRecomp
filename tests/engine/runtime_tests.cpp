@@ -1937,6 +1937,8 @@ void test_options_menu() {
     CHECK(std::strcmp(wp::ui::label("video.brightness", wp::ui::Language::French), "Luminosité") == 0);
     CHECK((wp::options::tab_keys(1) == std::vector<std::string>{"game.text_speed", "game.skip_movies", "game.button_icons", "game.save_photos", "saves.backups", "system.discord", "stats.play_time"}));
     CHECK((wp::options::tab_keys(2) == std::vector<std::string>{"audio.volume", "audio.mute", "audio.wiimote_speaker"}));
+    CHECK((wp::options::tab_keys(6) == std::vector<std::string>{"cheats.fly_camera", "cheats.run_speed", "cheats.jump", "cheats.damage_dealt", "cheats.damage_taken", "cheats.berries", "cheats.prices", "cheats.chase_speed"}));
+    CHECK((wp::options::choices("cheats.damage_taken") == std::vector<std::string>{"100", "75", "50", "25", "0"}) && wp::settings::number("cheats.jump", nullptr) == 100);
     CHECK((wp::options::tab_keys(4) == std::vector<std::string>{"system.interface_language", "system.language"}));
     CHECK((wp::options::tab_keys(5) == std::vector<std::string>{"overlay.show", "overlay.level", "overlay.corner", "video.show_fps", "video.custom_textures", "video.hd_textures", "video.dump_textures", "video.bug_recorder", "system.update"}));
     CHECK(wp::options::kind("system.update") == wp::options::Kind::Info);

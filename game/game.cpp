@@ -972,7 +972,7 @@ HookFunction hook(const char* name) {
                    {"DanceJudge", dance_judge}, {"CullingFrustum", culling_frustum}, {"CameraView", camera_view},
                    {"DialogueWriterStep", dialogue_writer_step}, {"MovieSceneUpdate", movie_scene_update},
                    {"FontResource", font_resource}, {"TextureBind", texture_bind}, {"MessageUpdate", message_update}, {"LayoutDraw", layout_draw},
-                   {"KineticEnergyUpdate", kinetic_energy_update}, {"ChaseStep", chase_step}};
+                   {"KineticEnergyUpdate", kinetic_energy_update}, {"ChaseStep", chase_step}, {"PlayerMove", player_move}, {"LifeDamage", life_damage}};
     for (const auto& entry : kHooks) {
         if (std::strcmp(entry.name, name) == 0) {
             return entry.function;
