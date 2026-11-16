@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 #include "wp/options.h"
 
@@ -31,5 +32,8 @@ State poll(bool sideways);
 bool take_menu_press();
 bool take(uint64_t& version, options::Image& image, options::Image& knob, bool& visible, int width, int height);
 options::Rect knob_rect(int height);
+bool take_extras(uint64_t& version, options::Image& pressed, options::Image& base, int height);
+options::Rect base_rect(int height);
+void pressed_rects(std::vector<options::Rect>& rects);
 
 }

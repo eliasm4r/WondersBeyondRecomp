@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -13,6 +14,7 @@
 #include "wp/free_camera.h"
 #include "wp/input.h"
 #include "wp/settings.h"
+#include "wp/ui_text.h"
 
 namespace wp::touch {
 
@@ -60,18 +62,21 @@ constexpr float kStickRadius = 0.13f;
 constexpr float kStickDead = 0.3f;
 constexpr float kGrab = 1.3f;
 constexpr float kLetGo = 1.8f;
-constexpr float kImageScale = 0.5f;
+constexpr float kImageScale = 1.0f;
 constexpr float kLookCounts = 1900.0f;
 constexpr float kTapTravel = 0.04f;
 constexpr auto kTapTime = std::chrono::milliseconds(300);
 constexpr auto kFireTime = std::chrono::milliseconds(150);
 constexpr auto kShakeTime = std::chrono::milliseconds(250);
 constexpr float kShakeForce = 1.1f;
-constexpr uint32_t kFace = 0x46FFFFFF;
-constexpr uint32_t kFacePressed = 0x96FFFFFF;
-constexpr uint32_t kLabel = 0xE6FFFFFF;
-constexpr uint32_t kBase = 0x30FFFFFF;
-constexpr uint32_t kKnob = 0x78FFFFFF;
+constexpr uint32_t kFace = 0x58000000;
+constexpr uint32_t kRing = 0xB4FFFFFF;
+constexpr uint32_t kPressed = 0x8CFFFFFF;
+constexpr uint32_t kLabel = 0xF0FFFFFF;
+constexpr uint32_t kBase = 0x40000000;
+constexpr uint32_t kKnob = 0xA8FFFFFF;
+constexpr float kRingShare = 0.08f;
+constexpr auto kShortestPress = std::chrono::milliseconds(90);
 constexpr float kKnobShare = 0.45f;
 constexpr float kNarrowest = 1.3f;
 constexpr float kLargestDp = 430.0f;
@@ -86,7 +91,7 @@ constexpr Place kPlaces[] = {
     {Kind::Button, "1", input::kButtonOne, Corner::BottomRight, 0.39f, 0.12f, 0.09f},
     {Kind::Button, "A", input::kButtonA, Corner::BottomRight, 0.19f, 0.44f, 0.09f},
     {Kind::Button, "B", input::kButtonB, Corner::BottomRight, 0.42f, 0.36f, 0.075f},
-    {Kind::Button, "~", input::kMotionShake, Corner::BottomRight, 0.10f, 0.66f, 0.065f},
+    {Kind::Button, "touch.shake", input::kMotionShake, Corner::BottomRight, 0.10f, 0.66f, 0.065f},
 };
 
 const settings::LiveFlag g_wanted("input.touch", nullptr);
@@ -118,6 +123,8 @@ int g_drawn_size = 0;
 int g_drawn_opacity = 0;
 std::vector<Finger> g_fingers;
 uint32_t g_held = 0;
+uint32_t g_latched = 0;
+Clock::time_point g_latched_until[32];
 bool g_stick_active = false;
 float g_stick_origin_x = 0.0f;
 float g_stick_origin_y = 0.0f;
@@ -212,6 +219,28 @@ int nearest_spot(const std::vector<Spot>& all, float x, float y) {
     return best;
 }
 
+void latch(uint32_t button, Clock::time_point since) {
+    Clock::time_point until = since + kShortestPress;
+    if (Clock::now() >= until) {
+        return;
+    }
+    for (int bit = 0; bit < 32; bit++) {
+        if (button & (1u << bit)) {
+            g_latched |= 1u << bit;
+            g_latched_until[bit] = std::max(g_latched_until[bit], until);
+        }
+    }
+}
+
+uint32_t latched(Clock::time_point now) {
+    for (int bit = 0; bit < 32; bit++) {
+        if ((g_latched & (1u << bit)) && now >= g_latched_until[bit]) {
+            g_latched &= ~(1u << bit);
+        }
+    }
+    return g_latched;
+}
+
 void update_held(const std::vector<Spot>& all) {
     uint32_t held = 0;
     for (const Finger& finger : g_fingers) {
@@ -219,10 +248,7 @@ void update_held(const std::vector<Spot>& all) {
             held |= all[static_cast<size_t>(finger.spot)].button;
         }
     }
-    if (held != g_held) {
-        g_held = held;
-        g_version++;
-    }
+    g_held = held;
 }
 
 void move_stick(float x, float y) {
@@ -267,11 +293,33 @@ uint32_t faded(uint32_t color) {
     return (alpha << 24) | (color & 0xFFFFFF);
 }
 
-void draw_circle(canvas::Canvas& image, float x, float y, float radius, uint32_t color) {
-    int left = static_cast<int>(std::lround(x - radius));
-    int top = static_cast<int>(std::lround(y - radius));
-    int size = static_cast<int>(std::lround(radius * 2.0f));
-    image.fill_round(left, top, left + size, top + size, size / 2, faded(color));
+void draw_disc(canvas::Canvas& image, float x, float y, float radius, float ring, uint32_t color) {
+    color = faded(color);
+    int left = std::max(0, static_cast<int>(std::floor(x - radius - 1.0f)));
+    int top = std::max(0, static_cast<int>(std::floor(y - radius - 1.0f)));
+    int right = std::min(image.width - 1, static_cast<int>(std::ceil(x + radius + 1.0f)));
+    int bottom = std::min(image.height - 1, static_cast<int>(std::ceil(y + radius + 1.0f)));
+    for (int py = top; py <= bottom; py++) {
+        for (int px = left; px <= right; px++) {
+            float distance = std::hypot(px + 0.5f - x, py + 0.5f - y);
+            float coverage = std::clamp(radius - distance + 0.5f, 0.0f, 1.0f);
+            if (ring > 0.0f) {
+                coverage = std::min(coverage, std::clamp(distance - (radius - ring) + 0.5f, 0.0f, 1.0f));
+            }
+            if (coverage > 0.0f) {
+                image.blend(px, py, color, static_cast<unsigned>(coverage * 255.0f + 0.5f));
+            }
+        }
+    }
+}
+
+void draw_button(canvas::Canvas& image, float x, float y, float radius) {
+    draw_disc(image, x, y, radius, 0.0f, kFace);
+    draw_disc(image, x, y, radius, std::max(1.5f, radius * kRingShare), kRing);
+}
+
+std::string shown_label(const Spot& spot) {
+    return std::strchr(spot.label, '.') ? ui::label(spot.label) : spot.label;
 }
 
 options::Image render(int width, int height) {
@@ -286,25 +334,55 @@ options::Image render(int width, int height) {
     bool fonts = canvas::font_ok(canvas::FontId::Heavy);
     for (size_t i = 0; i < all.size(); i++) {
         const Spot& spot = all[i];
-        bool pressed = spot.kind == Kind::Button && (g_held & spot.button) != 0;
         float x = spot.x * kImageScale;
         float y = spot.y * kImageScale;
         float radius = spot.radius * kImageScale;
-        draw_circle(image, x, y, radius, pressed ? kFacePressed : kFace);
+        draw_button(image, x, y, radius);
         if (fonts) {
-            int size = static_cast<int>(radius * (std::string(spot.label).size() > 1 ? 0.55f : 1.1f));
-            canvas::Face face = canvas::make_face(canvas::FontId::Heavy, std::max(8, size));
-            image.text(face, faded(kLabel), spot.label, static_cast<int>(x - radius), static_cast<int>(y - radius), static_cast<int>(x + radius),
+            std::string label = shown_label(spot);
+            float share = label.size() > 1 ? 0.5f : 1.1f;
+            canvas::Face face = canvas::make_face(canvas::FontId::Heavy, std::max(8, static_cast<int>(radius * share)));
+            float wide = canvas::text_width(face, label);
+            if (wide > radius * 1.7f) {
+                face = canvas::make_face(canvas::FontId::Heavy, std::max(8, static_cast<int>(radius * share * radius * 1.7f / wide)));
+            }
+            image.text(face, faded(kLabel), label, static_cast<int>(x - radius), static_cast<int>(y - radius), static_cast<int>(x + radius),
                        static_cast<int>(y + radius), canvas::Align::Center, false);
         }
     }
-    float base_x = (g_stick_active ? g_stick_origin_x : rest_x(height)) * kImageScale;
-    float base_y = (g_stick_active ? g_stick_origin_y : rest_y(height)) * kImageScale;
-    float radius = stick_radius(height) * kImageScale;
-    draw_circle(image, base_x, base_y, radius, kBase);
     result.pixels = std::move(image.pixels);
     result.width = static_cast<uint32_t>(image_width);
     result.height = static_cast<uint32_t>(image_height);
+    return result;
+}
+
+options::Image render_base(int height) {
+    options::Image result;
+    float radius = stick_radius(height);
+    int size = std::max(4, static_cast<int>(std::lround(radius * 2.0f)) + 4);
+    canvas::Canvas image;
+    image.width = size;
+    image.height = size;
+    image.pixels.assign(static_cast<size_t>(size) * size, 0);
+    draw_disc(image, size * 0.5f, size * 0.5f, radius, 0.0f, kBase);
+    draw_disc(image, size * 0.5f, size * 0.5f, radius, std::max(1.5f, radius * 0.05f), kRing);
+    result.pixels = std::move(image.pixels);
+    result.width = static_cast<uint32_t>(size);
+    result.height = static_cast<uint32_t>(size);
+    return result;
+}
+
+options::Image render_pressed() {
+    options::Image result;
+    constexpr int kSize = 128;
+    canvas::Canvas image;
+    image.width = kSize;
+    image.height = kSize;
+    image.pixels.assign(static_cast<size_t>(kSize) * kSize, 0);
+    draw_disc(image, kSize * 0.5f, kSize * 0.5f, kSize * 0.5f - 1.0f, 0.0f, kPressed);
+    result.pixels = std::move(image.pixels);
+    result.width = kSize;
+    result.height = kSize;
     return result;
 }
 
@@ -316,7 +394,7 @@ options::Image render_knob(int height) {
     image.width = size;
     image.height = size;
     image.pixels.assign(static_cast<size_t>(size) * size, 0);
-    draw_circle(image, size * 0.5f, size * 0.5f, radius, kKnob);
+    draw_disc(image, size * 0.5f, size * 0.5f, radius, 0.0f, kKnob);
     result.pixels = std::move(image.pixels);
     result.width = static_cast<uint32_t>(size);
     result.height = static_cast<uint32_t>(size);
@@ -399,7 +477,6 @@ void finger(int64_t id, Phase phase, float x, float y, int width, int height) {
             g_stick_origin_y = y;
             g_stick_x = 0.0f;
             g_stick_y = 0.0f;
-            g_version++;
         } else if (added.spot == kNone) {
             added.look = true;
             if (aiming()) {
@@ -441,11 +518,13 @@ void finger(int64_t id, Phase phase, float x, float y, int width, int height) {
         g_stick_active = false;
         g_stick_x = 0.0f;
         g_stick_y = 0.0f;
-        g_version++;
     }
     if (found->look) {
         move_look(*found, x, y);
         end_look(*found);
+    }
+    if (found->spot >= 0 && all[static_cast<size_t>(found->spot)].kind == Kind::Button) {
+        latch(all[static_cast<size_t>(found->spot)].button, found->start);
     }
     g_fingers.erase(found);
     update_held(all);
@@ -476,7 +555,7 @@ State poll(bool sideways) {
         return state;
     }
     Clock::time_point now = Clock::now();
-    state.buttons = g_held;
+    state.buttons = g_held | latched(now);
     if (now < g_shake_until) {
         state.buttons |= input::kMotionShake;
     }
@@ -542,6 +621,46 @@ bool take(uint64_t& version, options::Image& image, options::Image& knob, bool& 
         knob = render_knob(height);
     }
     return true;
+}
+
+bool take_extras(uint64_t& version, options::Image& pressed, options::Image& base, int height) {
+    std::lock_guard<std::mutex> hold(g_lock);
+    uint64_t wanted = (static_cast<uint64_t>(g_version) << 8) ^ static_cast<uint64_t>(std::clamp(g_opacity(), 10, 100)) ^ (static_cast<uint64_t>(height) << 40);
+    if (version == wanted || height <= 0) {
+        return false;
+    }
+    version = wanted;
+    pressed = render_pressed();
+    base = render_base(height);
+    return true;
+}
+
+options::Rect base_rect(int height) {
+    std::lock_guard<std::mutex> hold(g_lock);
+    float x = g_stick_active ? g_stick_origin_x : rest_x(height);
+    float y = g_stick_active ? g_stick_origin_y : rest_y(height);
+    int size = std::max(4, static_cast<int>(std::lround(stick_radius(height) * 2.0f)) + 4);
+    return options::Rect{static_cast<int>(std::lround(x - size * 0.5f)), static_cast<int>(std::lround(y - size * 0.5f)), size, size};
+}
+
+void pressed_rects(std::vector<options::Rect>& rects) {
+    std::lock_guard<std::mutex> hold(g_lock);
+    rects.clear();
+    if (!active() || g_hidden || g_width <= 0 || g_height <= 0) {
+        return;
+    }
+    uint32_t shown = g_held | latched(Clock::now());
+    if (shown == 0) {
+        return;
+    }
+    for (const Spot& spot : spots(g_width, g_height)) {
+        if (spot.kind == Kind::Button && (shown & spot.button)) {
+            int left = static_cast<int>(std::lround(spot.x - spot.radius));
+            int top = static_cast<int>(std::lround(spot.y - spot.radius));
+            int size = static_cast<int>(std::lround(spot.radius * 2.0f));
+            rects.push_back(options::Rect{left, top, size, size});
+        }
+    }
 }
 
 options::Rect knob_rect(int height) {

@@ -175,6 +175,9 @@ struct Device {
     uint64_t touch_version = 0;
     bool touch_visible = false;
     Image knob_image;
+    Image pressed_image;
+    Image base_image;
+    uint64_t extras_version = 0;
     Image hud_image;
     uint64_t hud_version = 0;
     bool hud_visible = false;
@@ -1774,7 +1777,19 @@ void draw_overlay(int client_width, int client_height, int bar) {
         upload_image(g_device.knob_image, knob);
     }
     if (g_device.touch_visible && !g_device.overlay_visible) {
+        options::Image pressed;
+        options::Image base;
+        if (touch::take_extras(g_device.extras_version, pressed, base, client_height)) {
+            upload_image(g_device.pressed_image, pressed);
+            upload_image(g_device.base_image, base);
+        }
         draw_image(g_device.touch_image.texture, options::Rect{0, 0, client_width, client_height}, true);
+        draw_image(g_device.base_image.texture, touch::base_rect(client_height), true);
+        static std::vector<options::Rect> pressed_rects;
+        touch::pressed_rects(pressed_rects);
+        for (const options::Rect& rect : pressed_rects) {
+            draw_image(g_device.pressed_image.texture, rect, true);
+        }
         draw_image(g_device.knob_image.texture, touch::knob_rect(client_height), true);
     }
     if (g_device.overlay_visible) {
