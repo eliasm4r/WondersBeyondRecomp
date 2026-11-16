@@ -8,6 +8,7 @@
 #include <deque>
 #include <map>
 #include <set>
+#include <tuple>
 
 #include "wp/bluetooth.h"
 #include "wp/disc.h"
@@ -59,12 +60,9 @@ constexpr uint32_t kDriveInfoSize = 0x20;
 constexpr const char* kFileSystem = "/dev/fs";
 
 void log_once(const char* kind, const std::string& device, uint32_t command) {
-    static std::set<std::string> seen;
-    char text[160];
-    std::snprintf(text, sizeof text, "%s %s command %#x", kind, device.c_str(), command);
-    if (seen.insert(text).second) {
-        std::fprintf(stderr, "IOS %s", text);
-        std::fputc(10, stderr);
+    static std::set<std::tuple<const char*, std::string, uint32_t>> seen;
+    if (seen.emplace(kind, device, command).second) {
+        std::fprintf(stderr, "IOS %s %s command %#x\n", kind, device.c_str(), command);
     }
 }
 

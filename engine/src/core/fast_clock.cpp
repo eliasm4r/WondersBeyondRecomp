@@ -79,6 +79,26 @@ FastClock::time_point FastClock::now() noexcept {
     }
     return time_point(duration(ns));
 }
+#elif defined(__aarch64__)
+namespace {
+
+uint64_t counter_frequency() {
+    uint64_t frequency = 0;
+    asm volatile("mrs %0, cntfrq_el0" : "=r"(frequency));
+    return frequency;
+}
+
+}
+
+FastClock::time_point FastClock::now() noexcept {
+    static const uint64_t frequency = counter_frequency();
+    if (frequency == 0) {
+        return time_point(std::chrono::duration_cast<duration>(std::chrono::steady_clock::now().time_since_epoch()));
+    }
+    uint64_t ticks = 0;
+    asm volatile("isb; mrs %0, cntvct_el0" : "=r"(ticks));
+    return time_point(duration(static_cast<int64_t>(ticks / frequency * 1000000000ull + ticks % frequency * 1000000000ull / frequency)));
+}
 #else
 FastClock::time_point FastClock::now() noexcept {
     return time_point(std::chrono::duration_cast<duration>(std::chrono::steady_clock::now().time_since_epoch()));

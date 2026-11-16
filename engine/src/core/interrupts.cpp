@@ -90,7 +90,11 @@ void deliver_decrementer(Cpu& c) {
     c.r[3] = context;
     save_context(c, &point);
     enter_exception_context(context);
+#ifdef _WIN32
     if (setjmp(point) == 0) {
+#else
+    if (_setjmp(point) == 0) {
+#endif
         c = interrupted;
         c.spr[26] = interrupted.lr;
         c.spr[27] = interrupted.msr;
@@ -122,7 +126,8 @@ void deliver_external_interrupt(Cpu& c, uint32_t index) {
     c = saved;
     g_in_interrupt = false;
     c.r[3] = 0;
-    call(c, symbol_address("OSSelectThread"));
+    static const uint32_t select_thread = symbol_address("OSSelectThread");
+    call(c, select_thread);
     c = saved;
 }
 
@@ -141,7 +146,8 @@ void deliver_video_interrupt(Cpu& c) {
     video::present();
     g_in_interrupt = false;
     c.r[3] = 0;
-    call(c, symbol_address("OSSelectThread"));
+    static const uint32_t select_thread = symbol_address("OSSelectThread");
+    call(c, select_thread);
     c = saved;
 }
 

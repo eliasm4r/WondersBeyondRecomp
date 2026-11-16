@@ -28,6 +28,7 @@ void other_input();
 void phone_motion(float x, float y, float z);
 State poll(bool sideways);
 bool take_menu_press();
-bool take(uint64_t& version, options::Image& image, bool& visible, int width, int height);
+bool take(uint64_t& version, options::Image& image, options::Image& knob, bool& visible, int width, int height);
+options::Rect knob_rect(int height);
 
 }

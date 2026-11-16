@@ -213,7 +213,11 @@ void restore_jump(Cpu& c, uint32_t buffer) {
 [[noreturn]] void resume_pending() {
     std::jmp_buf* point = g_resume_point;
     g_resume_point = nullptr;
+#ifdef _WIN32
     std::longjmp(*point, 1);
+#else
+    _longjmp(*point, 1);
+#endif
 }
 
 bool thread_active(uint32_t thread) {

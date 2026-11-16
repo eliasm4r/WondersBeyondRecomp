@@ -237,6 +237,16 @@ void print_profile() {}
 #endif
 
 void call(Cpu& c, uint32_t address) {
+    struct Cached {
+        uint32_t address = 0;
+        void (*function)(Cpu&) = nullptr;
+    };
+    static Cached cache[4096];
+    Cached& slot = cache[(address >> 2) & 4095];
+    if (slot.address == address && slot.function) {
+        slot.function(c);
+        return;
+    }
     const FunctionEntry* end = g_function_table + g_function_count;
     const FunctionEntry* it = std::lower_bound(
         g_function_table, end, address,
@@ -247,6 +257,8 @@ void call(Cpu& c, uint32_t address) {
         }
         return;
     }
+    slot.address = address;
+    slot.function = it->function;
     it->function(c);
 }
 

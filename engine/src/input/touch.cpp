@@ -72,6 +72,7 @@ constexpr uint32_t kFacePressed = 0x96FFFFFF;
 constexpr uint32_t kLabel = 0xE6FFFFFF;
 constexpr uint32_t kBase = 0x30FFFFFF;
 constexpr uint32_t kKnob = 0x78FFFFFF;
+constexpr float kKnobShare = 0.45f;
 
 constexpr Place kPlaces[] = {
     {Kind::Menu, "Menu", 0, Corner::TopLeft, 0.09f, 0.08f, 0.055f},
@@ -196,9 +197,6 @@ void move_stick(float x, float y) {
         dx /= length;
         dy /= length;
     }
-    if (std::fabs(dx - g_stick_x) > 0.02f || std::fabs(dy - g_stick_y) > 0.02f) {
-        g_version++;
-    }
     g_stick_x = dx;
     g_stick_y = dy;
 }
@@ -267,10 +265,24 @@ options::Image render(int width, int height) {
     float base_y = (g_stick_active ? g_stick_origin_y : rest_y(height)) * kImageScale;
     float radius = stick_radius(height) * kImageScale;
     draw_circle(image, base_x, base_y, radius, kBase);
-    draw_circle(image, base_x + g_stick_x * radius, base_y + g_stick_y * radius, radius * 0.45f, kKnob);
     result.pixels = std::move(image.pixels);
     result.width = static_cast<uint32_t>(image_width);
     result.height = static_cast<uint32_t>(image_height);
+    return result;
+}
+
+options::Image render_knob(int height) {
+    options::Image result;
+    float radius = stick_radius(height) * kImageScale * kKnobShare;
+    int size = std::max(2, static_cast<int>(std::lround(radius * 2.0f)) + 2);
+    canvas::Canvas image;
+    image.width = size;
+    image.height = size;
+    image.pixels.assign(static_cast<size_t>(size) * size, 0);
+    draw_circle(image, size * 0.5f, size * 0.5f, radius, kKnob);
+    result.pixels = std::move(image.pixels);
+    result.width = static_cast<uint32_t>(size);
+    result.height = static_cast<uint32_t>(size);
     return result;
 }
 
@@ -459,7 +471,7 @@ bool take_menu_press() {
     return pressed;
 }
 
-bool take(uint64_t& version, options::Image& image, bool& visible, int width, int height) {
+bool take(uint64_t& version, options::Image& image, options::Image& knob, bool& visible, int width, int height) {
     std::lock_guard<std::mutex> hold(g_lock);
     if (width != g_width || height != g_height) {
         g_width = width;
@@ -481,8 +493,21 @@ bool take(uint64_t& version, options::Image& image, bool& visible, int width, in
     visible = show;
     if (show) {
         image = render(width, height);
+        knob = render_knob(height);
     }
     return true;
+}
+
+options::Rect knob_rect(int height) {
+    std::lock_guard<std::mutex> hold(g_lock);
+    float base_x = g_stick_active ? g_stick_origin_x : rest_x(height);
+    float base_y = g_stick_active ? g_stick_origin_y : rest_y(height);
+    float radius = stick_radius(height);
+    float half = radius * kKnobShare + 1.0f / kImageScale;
+    float x = base_x + g_stick_x * radius;
+    float y = base_y + g_stick_y * radius;
+    return options::Rect{static_cast<int>(std::lround(x - half)), static_cast<int>(std::lround(y - half)), static_cast<int>(std::lround(half * 2.0f)),
+                         static_cast<int>(std::lround(half * 2.0f))};
 }
 
 }
