@@ -270,7 +270,7 @@ bool wanted() {
         if (std::getenv("WP_DSP_EMULATED")) {
             return false;
         }
-#ifdef __ANDROID__
+#if defined(__ANDROID__) || defined(__APPLE__)
         return true;
 #else
         return std::getenv("WP_HLE_AUDIO") != nullptr;
