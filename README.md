@@ -39,11 +39,13 @@ No emulator, up to 240 fps, high resolutions, wide screens, keyboard, mouse and 
 - **Up to 240 fps**: 30, 45 or 60 fps gameplay (60 by default), and 90, 120, 144, 165 or 240 fps with images drawn between the game's own frames, never above your screen's refresh rate. Movies keep their native 30 fps.
 - **Wide screens**: 16:9, 4:3, 16:10, 21:9, 32:9 or the window's own shape. The world fills the screen and shows more on the sides, while menus and text stay in the middle.
 - **Light on your PC**: the graphics card does most of the work, so laptops hold 60 fps too, and shaders compiled once are kept for the next start.
-- **Sharper picture**: internal resolution up to 6x, smoothing, anisotropic filtering, color settings, custom texture packs, and **every menu, map and font in HD with one button** (4x copies made by Real-ESRGAN, an AI upscaler running locally on your graphics card, not generative AI: it enlarges the game's own pictures and draws nothing new). Each copy is checked against the original, and it's optional: turn off Custom textures to play with the original look.
+- **Sharper picture**: internal resolution up to 6x (picked for your screen by default), smoothing, anisotropic filtering, color settings, custom texture packs, and **every menu, map and font in HD with one button** (4x copies made by Real-ESRGAN, an AI upscaler running locally on your graphics card, not generative AI: it enlarges the game's own pictures and draws nothing new). Each copy is checked against the original, and it's optional: turn off Custom textures to play with the original look.
 - **Keyboard and mouse**, with every key rebindable and a **free camera** that turns around Pikachu.
 - **Xbox, PlayStation and Switch controllers**, named as they are in the menus, and **real Wii Remotes**. The game's own texts and prompts show **your keys and buttons** instead of the Wii Remote's.
 - **Controls made for the four attractions**: Cake Contraption, Dance Inferno, Power Bash and Flight of Fancy play with the keyboard, the mouse or a controller.
 - **Faster text and skippable cutscenes**: dialogue 2 or 3 times faster or a page at once, and hold a button to skip a video or fast-forward a story scene.
+- **Cheats**: running speed, jump height, damage dealt and taken, berries collected, prices and chased Pokémon speed, plus a **fly camera on F6** to look around the map.
+- **HD photos**: the photos you keep are also saved as full-resolution PNG files, and the Pad shows them sharp.
 - **Options menu on F1**, drawn as the game's own dialog bubble, and a **performance overlay on F2**.
 - **Automatic save backups**, a play time counter, **Discord Rich Presence** and an **update check** against the latest release.
 - Menu in **English, French, Spanish and Galician**.
