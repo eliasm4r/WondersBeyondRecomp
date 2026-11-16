@@ -73,6 +73,8 @@ constexpr uint32_t kLabel = 0xE6FFFFFF;
 constexpr uint32_t kBase = 0x30FFFFFF;
 constexpr uint32_t kKnob = 0x78FFFFFF;
 constexpr float kKnobShare = 0.45f;
+constexpr float kNarrowest = 1.3f;
+constexpr float kLargestDp = 430.0f;
 
 constexpr Place kPlaces[] = {
     {Kind::Menu, "Menu", 0, Corner::TopLeft, 0.09f, 0.08f, 0.055f},
@@ -109,6 +111,7 @@ int g_inset_left = 0;
 int g_inset_top = 0;
 int g_inset_right = 0;
 int g_inset_bottom = 0;
+float g_density = 0.0f;
 int g_drawn_size = 0;
 int g_drawn_opacity = 0;
 std::vector<Finger> g_fingers;
@@ -133,12 +136,23 @@ float size_factor() {
     return std::clamp(g_size(), 50, 200) / 100.0f;
 }
 
+float unit(int height) {
+    float u = static_cast<float>(height);
+    if (g_width > 0) {
+        u = std::min(u, static_cast<float>(g_width) / kNarrowest);
+    }
+    if (g_density > 0.0f) {
+        u = std::min(u, kLargestDp * g_density);
+    }
+    return u * size_factor();
+}
+
 bool aiming() {
     return attraction::mode() == attraction::Mode::Aim;
 }
 
 std::vector<Spot> spots(int width, int height) {
-    float u = static_cast<float>(height) * size_factor();
+    float u = unit(height);
     float w = static_cast<float>(width);
     float h = static_cast<float>(height);
     std::vector<Spot> result;
@@ -151,15 +165,15 @@ std::vector<Spot> spots(int width, int height) {
 }
 
 float stick_radius(int height) {
-    return kStickRadius * static_cast<float>(height) * size_factor();
+    return kStickRadius * unit(height);
 }
 
 float rest_x(int height) {
-    return g_inset_left + 0.24f * static_cast<float>(height) * size_factor();
+    return g_inset_left + 0.24f * unit(height);
 }
 
 float rest_y(int height) {
-    return static_cast<float>(height) - g_inset_bottom - 0.26f * static_cast<float>(height) * size_factor();
+    return static_cast<float>(height) - g_inset_bottom - 0.26f * unit(height);
 }
 
 int nearest_spot(const std::vector<Spot>& all, float x, float y) {
@@ -304,6 +318,14 @@ void set_enabled(bool on) {
 bool in_use() {
     std::lock_guard<std::mutex> hold(g_lock);
     return active() && !g_hidden;
+}
+
+void set_density(float pixels_per_dp) {
+    std::lock_guard<std::mutex> hold(g_lock);
+    if (pixels_per_dp != g_density) {
+        g_density = pixels_per_dp;
+        g_version++;
+    }
 }
 
 void set_insets(int left, int top, int right, int bottom) {

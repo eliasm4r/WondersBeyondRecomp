@@ -19,5 +19,6 @@ public class GameActivity extends SDLActivity {
             }
         }
         super.onCreate(savedInstanceState);
+        Updater.checkInBackground(this);
     }
 }

@@ -129,17 +129,6 @@ void main() {
 }
 )GLSL";
 
-const char* kClearFragment = R"GLSL(#version 410 core
-uniform vec4 clear_color;
-uniform float clear_depth;
-in vec2 uv;
-out vec4 color;
-void main() {
-    color = clear_color;
-    gl_FragDepth = clear_depth;
-}
-)GLSL";
-
 const char* kCopyFragment = R"GLSL(#version 410 core
 uniform sampler2D color_source;
 uniform sampler2D depth_source;
@@ -950,10 +939,7 @@ struct Device {
     Program present;
     Program overlay;
     Program copy;
-    Program clear;
-    GLint clear_color = -1;
     GLint present_adjust = -1;
-    GLint clear_depth = -1;
     GLuint tev_layout = 0;
     GLuint empty_layout = 0;
     GLuint vertex_buffer = 0;
@@ -1240,7 +1226,7 @@ bool create_pipeline() {
         gl.UniformBlockBinding(program->id, gl.GetUniformBlockIndex(program->id, "Constants"), 0);
     }
     if (!link(g_device.present, kFullscreenVertex, kPresentFragment) || !link(g_device.overlay, kFullscreenVertex, kOverlayFragment) ||
-        !link(g_device.copy, kFullscreenVertex, kCopyFragment) || !link(g_device.clear, kFullscreenVertex, kClearFragment)) {
+        !link(g_device.copy, kFullscreenVertex, kCopyFragment)) {
         return false;
     }
     bind_samplers(g_device.present.id, {"frame"});
@@ -1248,8 +1234,6 @@ bool create_pipeline() {
     bind_samplers(g_device.overlay.id, {"overlay"});
     bind_samplers(g_device.copy.id, {"color_source", "depth_source"});
     gl.UniformBlockBinding(g_device.copy.id, gl.GetUniformBlockIndex(g_device.copy.id, "CopyConstants"), 1);
-    g_device.clear_color = gl.GetUniformLocation(g_device.clear.id, "clear_color");
-    g_device.clear_depth = gl.GetUniformLocation(g_device.clear.id, "clear_depth");
     gl.GenVertexArrays(1, &g_device.empty_layout);
     gl.GenVertexArrays(1, &g_device.tev_layout);
     gl.GenBuffers(1, &g_device.vertex_buffer);
@@ -1827,7 +1811,7 @@ void prepare_texture_pack() {
 int requested_scale() {
     static const settings::LiveNumber scale("video.scale", "WP_SCALE");
     int wanted = scale();
-    return std::clamp(wanted == 0 ? 4 : wanted, 1, 6);
+    return std::clamp(wanted == 0 ? auto_scale() : wanted, 1, 6);
 }
 
 void APIENTRY report_gl_message(GLenum, GLenum type, GLuint id, GLenum severity, GLsizei, const GLchar* message, const void*) {
@@ -3304,17 +3288,17 @@ void clear(int x, int y, int width, int height) {
     bind_efb();
     plain_state();
     gl.ColorMask(color_enable, color_enable, color_enable, alpha_enable);
-    if (depth_enable) {
-        gl.Enable(GL_DEPTH_TEST);
-        gl.DepthFunc(GL_ALWAYS);
-        gl.DepthMask(GL_TRUE);
+    gl.DepthMask(depth_enable ? GL_TRUE : GL_FALSE);
+    bool whole = x == 0 && y == 0 && width == kEfbWidth && height == kEfbHeight;
+    if (whole) {
+        gl.Disable(GL_SCISSOR_TEST);
+    } else {
+        gl.Enable(GL_SCISSOR_TEST);
+        gl.Scissor(scaled(x), scaled(y), scaled(x + width) - scaled(x), scaled(y + height) - scaled(y));
     }
-    gl.Enable(GL_SCISSOR_TEST);
-    gl.Scissor(scaled(x), scaled(y), scaled(x + width) - scaled(x), scaled(y + height) - scaled(y));
-    use_fullscreen(g_device.clear, -1.0f);
-    gl.Uniform4f(g_device.clear_color, red / 255.0f, green / 255.0f, blue / 255.0f, alpha / 255.0f);
-    gl.Uniform1f(g_device.clear_depth, static_cast<float>(depth) / 16777215.0f);
-    gl.DrawArrays(GL_TRIANGLES, 0, 3);
+    gl.ClearColor(red / 255.0f, green / 255.0f, blue / 255.0f, alpha / 255.0f);
+    gl.ClearDepthf(static_cast<float>(depth) / 16777215.0f);
+    gl.Clear(((color_enable || alpha_enable) ? GL_COLOR_BUFFER_BIT : 0u) | (depth_enable ? GL_DEPTH_BUFFER_BIT : 0u));
 }
 
 }
