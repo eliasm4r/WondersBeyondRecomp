@@ -26,3 +26,36 @@ jobs:
       - name: Test
         working-directory: build/out
         run: ctest --output-on-failure
+
+  asm-fibers:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the build tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build python3-numpy
+      - name: Configure without a window, with the assembly fiber switch
+        run: cmake -S . -B build/out -G Ninja -DCMAKE_BUILD_TYPE=Release -DWP_FETCH_SDL3=OFF -DWP_ASM_FIBERS=ON
+      - name: Build
+        run: cmake --build build/out --target runtime_tests translator_tests
+      - name: Test
+        working-directory: build/out
+        run: ctest --output-on-failure
+
+  android:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, x86_64]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the build tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build python3-numpy
+      - name: Configure for Android
+        run: cmake -S . -B build/android -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake" -DANDROID_ABI=${{ matrix.abi }} -DANDROID_PLATFORM=android-26 -DWP_REQUIRE_SDL3=ON
+      - name: Build
+        run: cmake --build build/android --target runtime_tests translator_tests -- -k 0

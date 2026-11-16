@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "wp/fast_clock.h"
+#include "wp/fiber.h"
 #include "wp/free_camera.h"
 #include "wp/canvas.h"
 #include "wp/color.h"
@@ -2736,10 +2737,49 @@ void test_linked_fifo_registers() {
     wp::mmio::write16(0xCC000002, 0);
 }
 
+struct FiberRun {
+    wp::fiber::Handle main = nullptr;
+    wp::fiber::Handle other = nullptr;
+    int steps = 0;
+    double sum = 0.0;
+};
+
+void fiber_body(void* data) {
+    FiberRun& run = *static_cast<FiberRun*>(data);
+    volatile double local = 0.25;
+    for (int i = 0; i < 1000; i++) {
+        run.steps++;
+        run.sum += local * 2.0 + std::sqrt(static_cast<double>(i));
+        wp::fiber::switch_to(run.main);
+    }
+    wp::fiber::switch_to(run.main);
+}
+
+void test_fibers() {
+    FiberRun run;
+    run.main = wp::fiber::adopt_current_thread();
+    run.other = wp::fiber::create(256 * 1024, fiber_body, &run);
+    double expected = 0.0;
+    volatile double kept = 3.0;
+    long long counter = 7;
+    for (int i = 0; i < 1000; i++) {
+        wp::fiber::switch_to(run.other);
+        expected += 0.5 + std::sqrt(static_cast<double>(i));
+        counter += i;
+        CHECK(wp::fiber::current() == run.main);
+    }
+    CHECK(run.steps == 1000);
+    CHECK(std::fabs(run.sum - expected) < 1e-9);
+    CHECK(kept == 3.0 && counter == 7 + 999 * 1000 / 2);
+    wp::fiber::switch_to(run.other);
+    wp::fiber::destroy(run.other);
+}
+
 int main() {
     wp::g_memory = static_cast<uint8_t*>(std::calloc(wp::kMemorySize, 1));
     test_memory();
     test_fast_clock();
+    std::thread(test_fibers).join();
     test_rotate_and_shift();
     test_arithmetic();
     test_condition_register();
