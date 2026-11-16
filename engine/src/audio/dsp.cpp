@@ -23,6 +23,7 @@
 #include "Core/DSP/DSPTables.h"
 #include "Core/DSP/Interpreter/DSPInterpreter.h"
 #include "wp/audio.h"
+#include "wp/hle_audio.h"
 #include "wp/big_stack.h"
 #include "wp/cpu.h"
 #include "wp/dsp_roms.h"
@@ -580,6 +581,9 @@ void start() {
         return;
     }
     g_started = true;
+    if (hle_audio::wanted()) {
+        return;
+    }
     DSP::DSPInitOptions options;
     options.core_type = DSP::DSPInitOptions::CoreType::Interpreter;
     if (!load_rom(instruction_rom(), options.irom_contents.data(), options.irom_contents.size()) ||
@@ -849,7 +853,9 @@ void write16(uint32_t address, uint16_t value) {
             g_audio_dma.source_written = false;
             g_audio_dma.started = false;
             g_audio_dma.next_block = Clock::now();
-            raise(kIntAudioDma);
+            if (g_core) {
+                raise(kIntAudioDma);
+            }
         }
         break;
     }

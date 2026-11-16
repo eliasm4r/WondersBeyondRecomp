@@ -25,3 +25,17 @@ address,name
 0x80019b20,CameraView
 0x800c3fc0,PlayerMove
 0x800b01c0,LifeDamage
+0x8028e660,AudioSystemInit
+0x802b5290,AudioRateConverterInit
+0x802b70e0,MixerDspInit
+0x802c46f0,DspCheckMailToDsp
+0x802b5b60,AuxAInput
+0x802b5ba0,AuxAOutput
+0x802b5c40,AuxBInput
+0x802b5c80,AuxBOutput
+0x802b5d20,AuxCInput
+0x802b5d60,AuxCOutput
+0x802b4e80,AiRegisterDmaCallback
+0x802b4ed0,AiInitDma
+0x802b4f50,AiStartDma
+0x802b4f70,AiStopDma

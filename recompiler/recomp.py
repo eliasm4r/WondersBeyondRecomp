@@ -7,7 +7,7 @@ from pathlib import Path
 
 import dol as dol_module
 import game
-from ppc import cfg
+from ppc import cfg, regcache
 from ppc.decoder import Instr
 from ppc.emit import Emitter, declarations, function_name, label, resume_label, u32
 
@@ -155,7 +155,7 @@ def falls_through(instr):
     return instr.mn != "rfi"
 
 
-def render_function(start, instrs, entries, dol, stats, replacements, hooks, save_context, set_jump):
+def render_function(start, instrs, entries, dol, stats, replacements, hooks, save_context, set_jump, cache_registers=False):
     if start in replacements:
         return render_replacement(start, replacements[start], stats)
     end = start + 4 * len(instrs)
@@ -185,6 +185,9 @@ def render_function(start, instrs, entries, dol, stats, replacements, hooks, sav
         lines = render_hook(start, hooks[start]) + lines
     if emitter.save_sites:
         lines.append(f"    std::jmp_buf wp_jump[{emitter.save_sites}];")
+    if cache_registers:
+        head, body = regcache.cache_registers(body)
+        lines.extend(head)
     lines.extend(emitter.resume_prologue())
     lines.extend(body)
     lines.append("}")
@@ -240,6 +243,7 @@ def main():
     parser.add_argument("--replacements", default=str(current.analysis / "hle_functions.csv"))
     parser.add_argument("--hooks", default=str(current.analysis / "hook_functions.csv"))
     parser.add_argument("--output", default=str(current.dol_code))
+    parser.add_argument("--cache-registers", action="store_true", help="keep each function's integer registers in local variables")
     args = parser.parse_args()
 
     dol = dol_module.load(args.dol)
@@ -257,7 +261,7 @@ def main():
     chunks = []
     current = []
     for start in entries:
-        current.extend(render_function(start, bodies[start], entry_set, dol, stats, replacements, hooks, save_context, set_jump))
+        current.extend(render_function(start, bodies[start], entry_set, dol, stats, replacements, hooks, save_context, set_jump, args.cache_registers))
         current.append("")
         if len(current) >= LINES_PER_FILE:
             chunks.append(current)

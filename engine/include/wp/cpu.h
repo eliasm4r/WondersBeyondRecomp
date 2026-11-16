@@ -43,6 +43,7 @@ uint32_t get_decrementer(Cpu& c);
 
 extern uint32_t g_poll_counter;
 void poll_interrupts(Cpu& c);
+void run_interrupt_callback(Cpu& c, uint32_t function);
 
 #define WP_POLL(c)                                          \
     do {                                                    \

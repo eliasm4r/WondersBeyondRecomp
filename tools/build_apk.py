@@ -42,6 +42,9 @@ def project_value(name):
     return match.group(1) if match else "0"
 
 
+CODE_OPT = "-O2"
+
+
 def version_code():
     digits = re.sub(r"\D", "", project_value("WP_BUILD"))
     return int(digits or "1")
@@ -51,7 +54,9 @@ def build_library(options, build):
     toolchain = Path(options.ndk) / "build" / "cmake" / "android.toolchain.cmake"
     if not (build / "CMakeCache.txt").is_file():
         run([options.cmake, "-S", ROOT, "-B", build, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", f"-DCMAKE_TOOLCHAIN_FILE={toolchain}",
-             f"-DANDROID_ABI={options.abi}", f"-DANDROID_PLATFORM=android-{MIN_SDK}", "-DWP_REQUIRE_SDL3=ON"])
+             f"-DANDROID_ABI={options.abi}", f"-DANDROID_PLATFORM=android-{MIN_SDK}", "-DWP_REQUIRE_SDL3=ON", f"-DWP_CODE_OPT={CODE_OPT}"])
+    else:
+        run([options.cmake, "-B", build, f"-DWP_CODE_OPT={CODE_OPT}"])
     command = [options.cmake, "--build", build, "--target", options.target]
     if options.jobs:
         command += ["--parallel", str(options.jobs)]
