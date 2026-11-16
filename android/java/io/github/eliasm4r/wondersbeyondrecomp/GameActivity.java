@@ -1,10 +1,14 @@
 package io.github.eliasm4r.wondersbeyondrecomp;
 
 import android.os.Bundle;
+import android.view.Display;
+import android.view.WindowManager;
 
 import org.libsdl.app.SDLActivity;
 
 public class GameActivity extends SDLActivity {
+    private volatile int askedRate = -1;
+
     @Override
     protected String[] getLibraries() {
         return new String[] {"main"};
@@ -20,5 +24,76 @@ public class GameActivity extends SDLActivity {
         }
         super.onCreate(savedInstanceState);
         Updater.checkInBackground(this);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        final int rate = askedRate;
+        if (rate > 0) {
+            chooseMode(rate);
+        }
+    }
+
+    public int displayRate(final int wanted) {
+        if (wanted != askedRate) {
+            askedRate = wanted;
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    chooseMode(wanted);
+                }
+            });
+        }
+        Display display = getWindowManager().getDefaultDisplay();
+        return display == null ? 0 : Math.round(display.getRefreshRate());
+    }
+
+    public int highestRate() {
+        Display display = getWindowManager().getDefaultDisplay();
+        if (display == null) {
+            return 0;
+        }
+        Display.Mode now = display.getMode();
+        float best = now.getRefreshRate();
+        for (Display.Mode mode : display.getSupportedModes()) {
+            if (mode.getPhysicalWidth() == now.getPhysicalWidth() && mode.getPhysicalHeight() == now.getPhysicalHeight()) {
+                best = Math.max(best, mode.getRefreshRate());
+            }
+        }
+        return Math.round(best);
+    }
+
+    private void chooseMode(int wanted) {
+        Display display = getWindowManager().getDefaultDisplay();
+        if (display == null || getWindow() == null) {
+            return;
+        }
+        Display.Mode now = display.getMode();
+        Display.Mode best = null;
+        for (Display.Mode mode : display.getSupportedModes()) {
+            if (mode.getPhysicalWidth() != now.getPhysicalWidth() || mode.getPhysicalHeight() != now.getPhysicalHeight()) {
+                continue;
+            }
+            if (best == null) {
+                best = mode;
+                continue;
+            }
+            float rate = mode.getRefreshRate();
+            float held = best.getRefreshRate();
+            boolean fits = rate >= wanted - 1;
+            boolean heldFits = held >= wanted - 1;
+            if ((fits && (!heldFits || rate < held)) || (!fits && !heldFits && rate > held)) {
+                best = mode;
+            }
+        }
+        if (best == null) {
+            return;
+        }
+        WindowManager.LayoutParams params = getWindow().getAttributes();
+        if (params.preferredDisplayModeId != best.getModeId()) {
+            params.preferredDisplayModeId = best.getModeId();
+            getWindow().setAttributes(params);
+        }
     }
 }

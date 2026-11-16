@@ -7,6 +7,7 @@
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
 #include <cstring>
 #include <exception>
 #include <filesystem>
@@ -302,6 +303,13 @@ bool enter_android_folder() {
     std::error_code error;
     if (folder) {
         std::filesystem::current_path(folder, error);
+    }
+    std::ifstream overrides("game/env.txt");
+    for (std::string line; std::getline(overrides, line);) {
+        size_t equals = line.find('=');
+        if (equals != std::string::npos) {
+            setenv(line.substr(0, equals).c_str(), line.substr(equals + 1).c_str(), 1);
+        }
     }
     std::string data = wp::game::description().data_directory;
     if (std::filesystem::is_regular_file(data + "/sys/main.dol", error)) {

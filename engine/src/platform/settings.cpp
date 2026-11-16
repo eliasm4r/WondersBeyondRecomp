@@ -271,7 +271,7 @@ void keep_phone_values() {
         value = otherwise;
     };
     keep("video.scale", {"0", "1", "2", "3"}, "0");
-    keep("video.fps", {"30", "60"}, "30");
+    keep("video.fps", {"30", "60", "90", "120", "144", "165", "240"}, "30");
     keep("video.anisotropy", {"1", "2", "4"}, "1");
     keep("video.aspect", {"16:9", "21:9", "auto"}, "auto");
     keep("video.renderer", {"vulkan", "opengl"}, "vulkan");

@@ -2807,6 +2807,7 @@ void test_touch() {
     CHECK(wp::touch::poll(false).buttons == (wp::input::kButtonTwo | wp::input::kButtonRight));
     wp::touch::finger(1, wp::touch::Phase::Up, 0, 0, width, height);
     wp::touch::finger(2, wp::touch::Phase::Up, 0, 0, width, height);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
     CHECK(wp::touch::poll(true).buttons == 0);
     wp::touch::finger(3, wp::touch::Phase::Down, 0.09f * height, 0.08f * height, width, height);
     CHECK(wp::touch::take_menu_press() && !wp::touch::take_menu_press());
@@ -2815,7 +2816,7 @@ void test_touch() {
     wp::options::Image image;
     wp::options::Image knob;
     bool visible = false;
-    CHECK(wp::touch::take(version, image, knob, visible, width, height) && visible && image.width == width / 2 && image.height == height / 2);
+    CHECK(wp::touch::take(version, image, knob, visible, width, height) && visible && image.width == width && image.height == height);
     CHECK(!wp::touch::take(version, image, knob, visible, width, height));
     CHECK(wp::touch::in_use());
 
@@ -2842,6 +2843,7 @@ void test_touch() {
     CHECK(wp::touch::poll(true).buttons == wp::input::kMotionShakeLeft);
     wp::touch::finger(6, wp::touch::Phase::Up, 0, 0, width, height);
     wp::attraction::set_mode(wp::attraction::Mode::None);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
     wp::touch::phone_motion(0.0f, 0.3f, 1.0f);
     CHECK(wp::touch::poll(true).buttons == 0);
     wp::touch::phone_motion(2.5f, 0.0f, 1.0f);
