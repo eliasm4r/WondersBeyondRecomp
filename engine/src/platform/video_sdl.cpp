@@ -7,6 +7,9 @@
 #ifdef WP_METAL
 #include <SDL3/SDL_metal.h>
 #endif
+#ifdef __ANDROID__
+#include <jni.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -554,7 +557,7 @@ void window_thread(bool visible) {
         }
     }
     SDL_WindowFlags flags = (kMetal ? SDL_WINDOW_METAL : (vulkan ? SDL_WINDOW_VULKAN : SDL_WINDOW_OPENGL)) | SDL_WINDOW_RESIZABLE | SDL_WINDOW_BORDERLESS | (visible ? 0 : SDL_WINDOW_HIDDEN);
-    SDL_Window* window = SDL_CreateWindow(window_title(0.0).c_str(), client_width, client_height, flags);
+    SDL_Window* window = SDL_CreateWindow(game::description().app_name, client_width, client_height, flags);
 #ifdef WP_METAL
     SDL_GLContext context = window ? reinterpret_cast<SDL_GLContext>(SDL_Metal_CreateView(window)) : nullptr;
 #else
@@ -569,7 +572,7 @@ void window_thread(bool visible) {
         return;
     }
     titlebar::install(window);
-    titlebar::set_title(window_title(0.0));
+    titlebar::set_title(game::description().app_name);
     SDL_SetWindowSize(window, client_width, client_height + titlebar::height(window));
     if (!kMetal && !vulkan) {
         SDL_GL_MakeCurrent(window, nullptr);
@@ -749,6 +752,40 @@ void park_while_background() {
 bool background_wanted() {
     std::lock_guard<std::mutex> hold(g_background.lock);
     return g_background.wanted;
+}
+
+int display_rate(int wanted, int& highest) {
+    highest = 0;
+#ifdef __ANDROID__
+    JNIEnv* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
+    jobject activity = static_cast<jobject>(SDL_GetAndroidActivity());
+    if (!env || !activity) {
+        return 0;
+    }
+    jclass type = env->GetObjectClass(activity);
+    jmethodID rate = type ? env->GetMethodID(type, "displayRate", "(I)I") : nullptr;
+    jmethodID best = rate ? env->GetMethodID(type, "highestRate", "()I") : nullptr;
+    int current = 0;
+    if (rate && best) {
+        current = env->CallIntMethod(activity, rate, static_cast<jint>(wanted));
+        if (!env->ExceptionCheck()) {
+            highest = env->CallIntMethod(activity, best);
+        }
+    }
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        current = 0;
+        highest = 0;
+    }
+    if (type) {
+        env->DeleteLocalRef(type);
+    }
+    env->DeleteLocalRef(activity);
+    return current;
+#else
+    (void)wanted;
+    return 0;
+#endif
 }
 
 int vulkan_window() {

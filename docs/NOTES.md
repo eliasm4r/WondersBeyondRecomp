@@ -1716,6 +1716,25 @@ What the code added for frame interpolation, the timers and the input changes do
 - `custom["keys.a"] = "Space";`: A player who put Space on A keeps the old 2 key: the new default of 2 would share Space with A.
 - `menu.select(1);`: An on/off box ignores left and right, so a stick drifting sideways never flips it.
 
+## Vulkan on phones (2026-11-16)
+
+Measured on a POCO X6 (Adreno 710) with GPU timestamps around every render pass (the `Vulkan GPU busy` log line):
+
+- The game window must not ask for the renderer's name before it exists: `window_title` calls `api_name`, which waits for
+  the window, so the window thread used the plain game name until the window is made (black screen with the FPS display on).
+- Android answers `VK_SUBOPTIMAL_KHR` on every present while the compositor rotates our identity swapchain in landscape.
+  Only `VK_ERROR_OUT_OF_DATE_KHR` rebuilds the swapchain (it was rebuilt 25 times a second, 13 fps).
+- The TEV pixel shader was the cost (EFB passes 35 ms a frame, 3.7x at 4x the pixels). A phone's GPU keeps arrays indexed
+  per pixel in memory, and with specialization constants the stage loop stayed a loop, so the registers, konst colors,
+  swap tables and the eight gradients stayed arrays. The shader now keeps them as separate values, unrolls the stages when
+  specialized, and takes gradients only for the coordinates a stage reads: 20 to 60 fps in the park, 10 ms of EFB a frame.
+  OpenGL ES did not have the problem because its variants are source with literal constants.
+- With the old shader, scale 3 made the driver reset the GPU (`VK_ERROR_DEVICE_LOST`).
+- Phones cap the refresh rate in the system settings (`peak_refresh_rate`): a 120 Hz screen set to 60 Hz stays at 60 Hz
+  whatever mode the game prefers, so in-between images never start.
+- `game/env.txt` (one `NAME=value` a line) sets environment variables at start on Android, for tests over adb
+  (`WP_RENDERER`, `WP_SCALE`, `WP_FPS`, `WP_INPUT_SCRIPT`).
+
 ## Native AX mixer
 
 - `hle_audio::wanted()` is on for Android and macOS: the interpreted DSP microcode could not keep up there and the sound stuttered. Windows and Linux keep the emulated DSP unless `WP_HLE_AUDIO` is set; `WP_DSP_EMULATED` forces the emulated DSP everywhere.

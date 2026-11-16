@@ -86,6 +86,10 @@ constexpr bool kPhone = false;
 constexpr const char* kDeviceNames[] = {"keyboard", "gamepad"};
 #endif
 
+bool between_images() {
+    return pacing::kInBetweenImages && (!kPhone || std::strcmp(gx::render::api_name(), "Vulkan") == 0);
+}
+
 constexpr const char* kResetKeys = "keys.reset";
 constexpr const char* kResetPad = "pad.reset";
 constexpr const char* kResetColors = "video.colors_reset";
@@ -303,9 +307,18 @@ std::vector<std::string> choices(const std::string& key) {
     }
     if (key == "video.fps") {
         if (kPhone) {
-            return {"30", "60"};
+            std::vector<std::string> rates = {"30", "60"};
+            int highest = pacing::highest_hz();
+            if (between_images()) {
+                for (int rate : {90, 120, 144, 165, 240}) {
+                    if (pacing::interpolation_wanted(rate, highest) && rate <= highest + 1) {
+                        rates.push_back(std::to_string(rate));
+                    }
+                }
+            }
+            return rates;
         }
-        if (!pacing::kInBetweenImages) {
+        if (!between_images()) {
             return {"30", "45", "60"};
         }
         return {"30", "45", "60", "90", "120", "144", "165", "240"};
@@ -400,7 +413,7 @@ std::string shown_value(const std::string& key, const std::string& value) {
     }
     if (key == "video.fps") {
         int fps = std::atoi(value.c_str());
-        int hz = pacing::display_hz();
+        int hz = pacing::highest_hz();
         if (fps > 60 && !pacing::interpolation_wanted(fps, hz)) {
             return value + " > 60 (" + std::to_string(hz) + " Hz)";
         }
@@ -554,7 +567,7 @@ std::vector<Row> Menu::rows() const {
         row.key = key;
         row.kind = kind(key);
         row.live = live(key);
-        std::string help_key = key == "video.fps" && !pacing::kInBetweenImages ? "help.video.fps_without_between" : "help." + key;
+        std::string help_key = key == "video.fps" && !between_images() ? "help.video.fps_without_between" : "help." + key;
         if (capturing_ && result.size() == selection_ && (row.kind == Kind::Key || row.kind == Kind::Pad)) {
             help_key = row.kind == Kind::Key ? "help.keys" : "help.pad.capture";
         } else if (row.kind == Kind::Pad) {

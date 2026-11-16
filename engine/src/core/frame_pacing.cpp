@@ -13,6 +13,7 @@ constexpr uint32_t kMaxImages = 3;
 constexpr double kFineGrain = 0.05;
 constexpr int kLowestInterpolatedRate = 85;
 std::atomic<int> g_display_hz{0};
+std::atomic<int> g_highest_hz{0};
 
 }
 
@@ -50,6 +51,14 @@ void set_display_hz(int hz) {
 
 int display_hz() {
     return g_display_hz;
+}
+
+void set_highest_hz(int hz) {
+    g_highest_hz = hz;
+}
+
+int highest_hz() {
+    return std::max<int>(g_highest_hz, g_display_hz);
 }
 
 int output_rate(int fps) {

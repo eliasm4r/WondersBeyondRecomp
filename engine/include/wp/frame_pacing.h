@@ -4,7 +4,7 @@
 
 namespace wp::pacing {
 
-#if defined(_WIN32) && !defined(WP_OPENGL)
+#if (defined(_WIN32) && !defined(WP_OPENGL)) || defined(WP_VULKAN)
 constexpr bool kInBetweenImages = true;
 #else
 constexpr bool kInBetweenImages = false;
@@ -22,6 +22,8 @@ int capped_rate(int fps, int display_hz);
 bool interpolation_wanted(int fps, int display_hz);
 void set_display_hz(int hz);
 int display_hz();
+void set_highest_hz(int hz);
+int highest_hz();
 int output_rate(int fps);
 
 struct AlarmPeriods {

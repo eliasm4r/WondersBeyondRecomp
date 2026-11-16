@@ -31,6 +31,7 @@
 
 #include "wp/color.h"
 #include "wp/custom_textures.h"
+#include "wp/frame_pacing.h"
 #include "wp/game.h"
 #include "wp/gx_state.h"
 #include "wp/hint.h"
@@ -48,6 +49,7 @@ namespace wp::gx::render::vulkan {
 
 void finish_write_backs();
 bool write_back_overlaps(uint32_t address, size_t size);
+void finish_frame();
 
 namespace {
 
@@ -108,6 +110,10 @@ constexpr size_t kMaxSubmissions = 8;
 constexpr uint32_t kSetsPerPool = 1024;
 constexpr uint32_t kSpecConstants = 91;
 constexpr uint32_t kScreenWords = sizeof(ScreenVertex) / sizeof(float);
+constexpr uint32_t kMovedRingBytes = 32u << 20;
+constexpr size_t kMaxBetween = 3;
+constexpr size_t kMaxCameras = 8;
+constexpr uint32_t kMotionRows = kMaxCameras * 4;
 
 struct Context {
     bool probed = false;
@@ -117,6 +123,7 @@ struct Context {
     VkDevice device = VK_NULL_HANDLE;
     VkQueue queue = VK_NULL_HANDLE;
     uint32_t family = 0;
+    bool timestamps = false;
     VkPhysicalDeviceProperties properties{};
     VkPhysicalDeviceMemoryProperties memory{};
     VkFormat depth_format = VK_FORMAT_D32_SFLOAT;
@@ -124,6 +131,7 @@ struct Context {
     bool depth_clamp = false;
     bool load_none = false;
     bool anisotropy = false;
+    bool depth_copies = false;
     VkDeviceSize uniform_alignment = 256;
     VkDeviceSize storage_alignment = 256;
 };
@@ -225,6 +233,7 @@ struct Ring {
     uint32_t cursor = 0;
     uint32_t segment = 0;
     uint64_t used_by[2] = {};
+    uint32_t switches = 0;
 };
 
 struct Overlay {
@@ -238,6 +247,10 @@ struct Submission {
     VkCommandBuffer upload = VK_NULL_HANDLE;
     VkCommandBuffer draw = VK_NULL_HANDLE;
     VkFence fence = VK_NULL_HANDLE;
+    VkQueryPool times = VK_NULL_HANDLE;
+    bool timed = false;
+    uint32_t next_query = 2;
+    std::vector<uint8_t> pass_kinds;
     uint64_t serial = 0;
     bool busy = false;
     bool uploads = false;
@@ -275,7 +288,7 @@ struct Device {
     VkPipelineLayout single_pipeline_layout = VK_NULL_HANDLE;
     VkPipelineLayout clear_layout = VK_NULL_HANDLE;
     VkDescriptorPool static_pool = VK_NULL_HANDLE;
-    VkDescriptorSet draw_sets[3] = {};
+    VkDescriptorSet draw_sets[4] = {};
     VkDescriptorSet copy_set = VK_NULL_HANDLE;
     VkShaderModule fullscreen_vertex = VK_NULL_HANDLE;
     VkShaderModule present_fragment = VK_NULL_HANDLE;
@@ -298,6 +311,7 @@ struct Device {
     Image* efb_depth = nullptr;
     VkFramebuffer efb_framebuffer = VK_NULL_HANDLE;
     Target frame;
+    Target interpolated[kMaxBetween];
     Target write_back;
     std::vector<Buffer*> free_buffers;
     std::vector<PendingWriteBack> write_backs;
@@ -305,6 +319,7 @@ struct Device {
     Ring run_vertices;
     Ring run_indices;
     Ring run_rows;
+    Ring moved;
     Ring uniforms;
     Ring staging;
     Buffer kept_vertices;
@@ -336,8 +351,7 @@ struct Device {
     bool ready = false;
 };
 
-struct PendingBatch {
-    std::vector<ScreenVertex> vertices;
+struct BatchState {
     Constants constants;
     Image* views[kTextureMaps] = {};
     VkSampler samplers[kTextureMaps] = {};
@@ -349,6 +363,10 @@ struct PendingBatch {
     uint32_t bottom_right = 0;
     uint32_t scissor_offset = 0;
     int canvas_kind = kInPicture;
+};
+
+struct PendingBatch : BatchState {
+    std::vector<ScreenVertex> vertices;
 };
 
 Device g_device;
@@ -371,8 +389,29 @@ uint64_t g_frame_serials[2] = {};
 uint32_t g_efb_passes = 0;
 uint32_t g_cleared_passes = 0;
 uint32_t g_submits = 0;
+double g_fence_wait = 0.0;
+double g_frame_wait = 0.0;
+double g_ring_wait = 0.0;
+double g_present_wait = 0.0;
+double g_idle_wait = 0.0;
+uint32_t g_idle_waits = 0;
+
+double g_gpu_time = 0.0;
+constexpr uint32_t kTimeQueries = 512;
+double g_pass_time[4] = {};
+uint32_t g_pass_count[4] = {};
+
+void read_gpu_time(struct Submission& submission);
+
+double seconds_since(std::chrono::steady_clock::time_point start) {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+}
 int g_shown_height = kEfbHeight;
 int g_anisotropy = 1;
+bool g_recording = false;
+bool g_record_broken = false;
+bool g_efb_before_valid = false;
+std::vector<std::function<void()>> g_held_retired;
 
 std::vector<std::unique_ptr<Submission>> g_submissions;
 Submission* g_current = nullptr;
@@ -611,7 +650,18 @@ uint64_t recording_serial() {
 }
 
 void retire(std::function<void()> destroy) {
+    if (g_recording) {
+        g_held_retired.push_back(std::move(destroy));
+        return;
+    }
     g_retired.push_back({recording_serial(), std::move(destroy)});
+}
+
+void release_held() {
+    for (std::function<void()>& destroy : g_held_retired) {
+        g_retired.push_back({recording_serial(), std::move(destroy)});
+    }
+    g_held_retired.clear();
 }
 
 void destroy_image(Image* image) {
@@ -748,6 +798,7 @@ void release_retired() {
 void poll() {
     for (auto& submission : g_submissions) {
         if (submission->busy && vkGetFenceStatus(device(), submission->fence) == VK_SUCCESS) {
+            read_gpu_time(*submission);
             submission->busy = false;
             g_done = std::max(g_done, submission->serial);
         }
@@ -759,9 +810,36 @@ void wait_for(Submission& submission) {
     if (!submission.busy) {
         return;
     }
+    auto start = std::chrono::steady_clock::now();
     vkWaitForFences(device(), 1, &submission.fence, VK_TRUE, UINT64_MAX);
+    g_fence_wait += seconds_since(start);
+    read_gpu_time(submission);
     submission.busy = false;
     g_done = std::max(g_done, submission.serial);
+}
+
+void read_gpu_time(Submission& submission) {
+    if (!submission.timed) {
+        return;
+    }
+    submission.timed = false;
+    uint32_t used = 2 + static_cast<uint32_t>(submission.pass_kinds.size()) * 2;
+    std::vector<uint64_t> stamps(used);
+    if (vkGetQueryPoolResults(device(), submission.times, 0, used, used * sizeof(uint64_t), stamps.data(), sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) != VK_SUCCESS) {
+        return;
+    }
+    double tick = g_vk.properties.limits.timestampPeriod * 1e-9;
+    if (stamps[1] > stamps[0]) {
+        g_gpu_time += static_cast<double>(stamps[1] - stamps[0]) * tick;
+    }
+    for (size_t i = 0; i < submission.pass_kinds.size(); i++) {
+        uint64_t begin = stamps[2 + i * 2];
+        uint64_t end = stamps[3 + i * 2];
+        if (end > begin) {
+            g_pass_time[submission.pass_kinds[i]] += static_cast<double>(end - begin) * tick;
+        }
+        g_pass_count[submission.pass_kinds[i]]++;
+    }
 }
 
 Submission* take_submission() {
@@ -815,6 +893,19 @@ void ensure_command() {
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(submission->upload, &begin);
     vkBeginCommandBuffer(submission->draw, &begin);
+    if (g_vk.timestamps && !submission->times) {
+        VkQueryPoolCreateInfo query{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+        query.queryType = VK_QUERY_TYPE_TIMESTAMP;
+        query.queryCount = kTimeQueries;
+        vkCreateQueryPool(device(), &query, nullptr, &submission->times);
+    }
+    submission->timed = submission->times != VK_NULL_HANDLE;
+    if (submission->timed) {
+        vkCmdResetQueryPool(submission->draw, submission->times, 0, kTimeQueries);
+        submission->next_query = 2;
+        submission->pass_kinds.clear();
+        vkCmdWriteTimestamp(submission->draw, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, submission->times, 0);
+    }
     g_current = submission;
 }
 
@@ -837,6 +928,11 @@ uint64_t current_serial() {
 void end_pass() {
     if (g_pass != Pass::None) {
         vkCmdEndRenderPass(g_current->draw);
+        if (g_current->timed && g_current->next_query + 2 <= kTimeQueries) {
+            vkCmdWriteTimestamp(g_current->draw, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g_current->times, g_current->next_query + 1);
+            g_current->next_query += 2;
+            g_current->pass_kinds.push_back(static_cast<uint8_t>(g_pass));
+        }
         g_pass = Pass::None;
     }
     g_bound_pipeline = VK_NULL_HANDLE;
@@ -851,6 +947,9 @@ void submit(VkSemaphore wait = VK_NULL_HANDLE, VkSemaphore signal = VK_NULL_HAND
     }
     end_pass();
     Submission& submission = *g_current;
+    if (submission.timed) {
+        vkCmdWriteTimestamp(submission.draw, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, submission.times, 1);
+    }
     vkEndCommandBuffer(submission.upload);
     vkEndCommandBuffer(submission.draw);
     VkCommandBuffer buffers[2];
@@ -909,6 +1008,12 @@ void wait_serial(uint64_t serial) {
 }
 
 void wait_idle() {
+    auto start = std::chrono::steady_clock::now();
+    g_idle_waits++;
+    struct Count {
+        std::chrono::steady_clock::time_point start;
+        ~Count() { g_idle_wait += seconds_since(start); }
+    } count{start};
     if (g_current) {
         submit();
     }
@@ -1007,9 +1112,12 @@ bool reserve(Ring& ring, uint32_t size, uint32_t alignment, uint32_t& start) {
     }
     if (segment != ring.segment) {
         ring.used_by[ring.segment] = current_serial();
+        auto start = std::chrono::steady_clock::now();
         wait_serial(ring.used_by[segment]);
+        g_ring_wait += seconds_since(start);
         ring.used_by[segment] = 0;
         ring.segment = segment;
+        ring.switches++;
     }
     start = at;
     ring.cursor = at + size;
@@ -1569,7 +1677,7 @@ VkPipeline generic_pipeline(uint64_t key) {
     return pipeline;
 }
 
-VkPipeline tev_pipeline(const PendingBatch& pending, int kind, uint32_t cull) {
+VkPipeline tev_pipeline(const BatchState& pending, int kind, uint32_t cull) {
     static const bool generic_only = std::getenv("WP_GENERIC_SHADER") != nullptr;
     uint32_t blend = canonical_blend(pending.blend);
     uint64_t key = pipe_key(kind, pending.early_depth, pending.keeps_all, blend, depth_key(pending.depth), cull);
@@ -1649,6 +1757,9 @@ void begin_render_pass(VkRenderPass pass, VkFramebuffer framebuffer, uint32_t wi
     begin.renderArea = {{0, 0}, {width, height}};
     begin.clearValueCount = clears;
     begin.pClearValues = values;
+    if (g_current->timed && g_current->next_query + 2 <= kTimeQueries) {
+        vkCmdWriteTimestamp(g_current->draw, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g_current->times, g_current->next_query);
+    }
     vkCmdBeginRenderPass(g_current->draw, &begin, VK_SUBPASS_CONTENTS_INLINE);
 }
 
@@ -1708,8 +1819,9 @@ bool create_efb() {
     uint32_t width = static_cast<uint32_t>(scaled(canvas_width()));
     uint32_t height = static_cast<uint32_t>(scaled(canvas_height()));
     g_device.efb_color = make_image(width, height, 1, kColorFormat,
-                                    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
-    g_device.efb_depth = make_image(width, height, 1, g_vk.depth_format, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+                                    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+    VkImageUsageFlags copies = g_vk.depth_copies ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT : 0;
+    g_device.efb_depth = make_image(width, height, 1, g_vk.depth_format, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | copies);
     if (!g_device.efb_color || !g_device.efb_depth) {
         return false;
     }
@@ -1768,7 +1880,8 @@ void release_efb() {
 }
 
 bool create_render_texture(Target& target, uint32_t width, uint32_t height) {
-    target.image = make_image(width, height, 1, kColorFormat, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+    target.image = make_image(width, height, 1, kColorFormat,
+                              VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
     if (!target.image) {
         return false;
     }
@@ -1856,19 +1969,19 @@ bool create_layouts() {
 }
 
 bool create_draw_sets() {
-    VkDescriptorSetLayout layouts[3] = {g_device.draw_layout, g_device.draw_layout, g_device.draw_layout};
+    VkDescriptorSetLayout layouts[4] = {g_device.draw_layout, g_device.draw_layout, g_device.draw_layout, g_device.draw_layout};
     VkDescriptorSetAllocateInfo allocate{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
     allocate.descriptorPool = g_device.static_pool;
-    allocate.descriptorSetCount = 3;
+    allocate.descriptorSetCount = 4;
     allocate.pSetLayouts = layouts;
     if (vkAllocateDescriptorSets(device(), &allocate, g_device.draw_sets) != VK_SUCCESS) {
         return false;
     }
-    const Buffer* vertices[3] = {&g_device.screen.buffer, &g_device.run_vertices.buffer, &g_device.kept_vertices};
-    for (uint32_t i = 0; i < 3; i++) {
+    const Buffer* vertices[4] = {&g_device.screen.buffer, &g_device.run_vertices.buffer, &g_device.kept_vertices, &g_device.screen.buffer};
+    for (uint32_t i = 0; i < 4; i++) {
         VkDescriptorBufferInfo buffers[3] = {{g_device.uniforms.buffer.buffer, 0, sizeof(Constants)},
                                              {vertices[i]->buffer, 0, VK_WHOLE_SIZE},
-                                             {g_device.run_rows.buffer.buffer, 0, VK_WHOLE_SIZE}};
+                                             {(i == 3 ? g_device.moved : g_device.run_rows).buffer.buffer, 0, VK_WHOLE_SIZE}};
         VkWriteDescriptorSet writes[3]{};
         for (uint32_t b = 0; b < 3; b++) {
             writes[b].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1961,7 +2074,7 @@ bool create_device_objects() {
     const VkBufferUsageFlags storage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     if (!make_ring(g_device.screen, kScreenRingBytes, storage) || !make_ring(g_device.run_vertices, kRunVertexBytes, storage) ||
         !make_ring(g_device.run_indices, kRunIndexBytes, VK_BUFFER_USAGE_INDEX_BUFFER_BIT) ||
-        !make_ring(g_device.run_rows, kRunRowCapacity * sizeof(float[4]), storage) ||
+        !make_ring(g_device.run_rows, kRunRowCapacity * sizeof(float[4]), storage) || !make_ring(g_device.moved, kMovedRingBytes, storage) ||
         !make_ring(g_device.uniforms, kUniformRingBytes, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT) ||
         !make_ring(g_device.staging, kStagingRingBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT) ||
         !make_buffer(g_device.kept_vertices, kKeptVertexBytes, storage, false) ||
@@ -1996,10 +2109,10 @@ bool initialize() {
         return false;
     }
     std::fprintf(stderr, "Vulkan renderer: %s\n", g_vk.properties.deviceName);
-    log::write("video", "Vulkan renderer: %s, Vulkan %u.%u.%u, driver %u, depth format %d, dual-source blending %s, depth clamp %s, load/store none %s",
+    log::write("video", "Vulkan renderer: %s, Vulkan %u.%u.%u, driver %u, depth format %d, dual-source blending %s, depth clamp %s, load/store none %s, in-between images %s",
                g_vk.properties.deviceName, VK_VERSION_MAJOR(g_vk.properties.apiVersion), VK_VERSION_MINOR(g_vk.properties.apiVersion),
                VK_VERSION_PATCH(g_vk.properties.apiVersion), g_vk.properties.driverVersion, static_cast<int>(g_vk.depth_format), g_vk.dual_source ? "yes" : "no",
-               g_vk.depth_clamp ? "yes" : "no", g_vk.load_none ? "yes" : "no");
+               g_vk.depth_clamp ? "yes" : "no", g_vk.load_none ? "yes" : "no", g_vk.depth_copies ? "yes" : "no");
     log::write("video", "the graphics card places the vertices");
     prepare_texture_pack();
     start_workers();
@@ -2321,6 +2434,12 @@ struct RunDraw {
     uint32_t first_index = 0;
     uint32_t indices = 0;
     uint32_t row = 0;
+    uint32_t rows = 0;
+    uint32_t palette = kNoPalette;
+    uint32_t matrix = 0;
+    uint32_t camera = 0;
+    uint64_t key = 0;
+    uint64_t shape = 0;
     bool kept = false;
 };
 
@@ -2346,6 +2465,116 @@ uint32_t g_kept_vertex_used = 0;
 uint32_t g_kept_index_used = 0;
 uint32_t g_kept_generation = 1;
 
+struct RecordedDraw {
+    uint64_t key = 0;
+    uint64_t exact = 0;
+    uint64_t material = 0;
+    uint32_t camera = 0;
+    uint32_t first_position = 0;
+    uint32_t positions = 0;
+    size_t first_vertex = 0;
+    uint32_t vertices = 0;
+};
+
+struct CopyCommand {
+    Target target;
+    uint32_t target_width = 0;
+    uint32_t target_height = 0;
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+    uint32_t format = 0;
+    bool intensity = false;
+    bool alpha = false;
+    bool depth = false;
+    CopyFilter filter;
+};
+
+struct ClearCommand {
+    bool color = false;
+    bool alpha = false;
+    bool depth = false;
+    VkClearColorValue color_value{};
+    float depth_value = 1.0f;
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+};
+
+struct RecordedRun {
+    RunDraw draw;
+    uint32_t match = ~0u;
+};
+
+struct RecordedCommand {
+    enum Kind { kBatch, kCopy, kClear, kRuns } kind = kBatch;
+    BatchState batch;
+    size_t begin = 0;
+    size_t end = 0;
+    uint32_t base = 0;
+    CopyCommand copy;
+    ClearCommand clear;
+};
+
+struct RecordedTarget {
+    Image* image = nullptr;
+    bool twin = false;
+};
+
+struct ReplayTarget {
+    Image* before = nullptr;
+    Target texture;
+    uint64_t frame = ~0ull;
+};
+
+struct MovedVertex {
+    std::array<float, 4> position;
+    std::array<float, 4> color[2];
+};
+
+struct FrameRecord {
+    std::vector<uint16_t> source_of;
+    std::vector<std::array<float, 4>> positions;
+    std::vector<std::array<std::array<float, 4>, 2>> colors;
+    std::vector<RecordedDraw> draws;
+    std::vector<RecordedCommand> commands;
+    std::vector<RecordedTarget> targets;
+    std::vector<RecordedRun> runs;
+    std::vector<std::array<float, 4>> rows;
+};
+
+struct CommandColors {
+    bool runs = false;
+    size_t begin = 0;
+    size_t end = 0;
+    uint64_t shape = 0;
+    float initial[4][4] = {};
+    float konst[4][4] = {};
+};
+
+FrameRecord g_record;
+FrameRecord g_previous;
+std::vector<CommandColors> g_previous_colors;
+std::vector<uint32_t> g_color_partner;
+size_t g_frame_vertices = 0;
+uint32_t g_interpolated_ready = 0;
+std::atomic<uint32_t> g_interpolated_frames{0};
+uint32_t g_ring_marks[3] = {};
+
+uint64_t command_shape(const BatchState& batch) {
+    const Constants& constants = batch.constants;
+    return hash_bytes(reinterpret_cast<const uint8_t*>(constants.stage), sizeof constants.stage) ^
+           hash_bytes(reinterpret_cast<const uint8_t*>(constants.header), sizeof constants.header) * 31 ^
+           hash_bytes(reinterpret_cast<const uint8_t*>(constants.swaps), sizeof constants.swaps) * 961 ^ batch.blend;
+}
+
+bool send_replayed();
+void service_deferred();
+
+#include "gx_between.inc"
+
 bool batch_empty() {
     return g_pending.vertices.empty() && g_run_draws.empty();
 }
@@ -2357,7 +2586,7 @@ void reserve_run(std::vector<T>& values, size_t wanted) {
     }
 }
 
-uint64_t maps_hash(const PendingBatch& pending) {
+uint64_t maps_hash(const BatchState& pending) {
     uint64_t hash = 1469598103934665603ull;
     for (uint32_t map = 0; map < kTextureMaps; map++) {
         hash = (hash ^ reinterpret_cast<uintptr_t>(pending.views[map])) * 1099511628211ull;
@@ -2366,7 +2595,7 @@ uint64_t maps_hash(const PendingBatch& pending) {
     return hash;
 }
 
-VkDescriptorSet maps_set(const PendingBatch& pending) {
+VkDescriptorSet maps_set(const BatchState& pending) {
     uint64_t hash = maps_hash(pending);
     auto found = g_current->map_sets.find(hash);
     if (found != g_current->map_sets.end()) {
@@ -2393,7 +2622,7 @@ VkDescriptorSet maps_set(const PendingBatch& pending) {
     return set;
 }
 
-void prepare_views(const PendingBatch& pending) {
+void prepare_views(const BatchState& pending) {
     for (uint32_t map = 0; map < kTextureMaps; map++) {
         Image* image = pending.views[map];
         if (image && image->layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
@@ -2405,7 +2634,7 @@ void prepare_views(const PendingBatch& pending) {
     }
 }
 
-bool batch_scissor(const PendingBatch& pending, VkRect2D& rect) {
+bool batch_scissor(const BatchState& pending, VkRect2D& rect) {
     int left = static_cast<int>(((pending.top_left >> 12) & 0x7FF) - scissor_offset_x(pending.scissor_offset));
     int top = static_cast<int>((pending.top_left & 0x7FF) - scissor_offset_y(pending.scissor_offset));
     int right = static_cast<int>(((pending.bottom_right >> 12) & 0x7FF) - scissor_offset_x(pending.scissor_offset) + 1);
@@ -2444,7 +2673,7 @@ bool batch_scissor(const PendingBatch& pending, VkRect2D& rect) {
     return true;
 }
 
-bool set_batch_state(const PendingBatch& pending, uint32_t uniform, int source) {
+bool set_batch_state(const BatchState& pending, uint32_t uniform, int source) {
     VkRect2D rect{};
     if (!batch_scissor(pending, rect)) {
         return false;
@@ -2469,8 +2698,66 @@ bool set_batch_state(const PendingBatch& pending, uint32_t uniform, int source) 
     return true;
 }
 
-bool upload_constants(const PendingBatch& pending, uint32_t& offset) {
+bool upload_constants(const BatchState& pending, uint32_t& offset) {
     return upload(g_device.uniforms, &pending.constants, sizeof(Constants), static_cast<uint32_t>(g_vk.uniform_alignment), offset);
+}
+
+void issue_runs(const RunDraw* draws, size_t count, uint32_t vertex_start, uint32_t index_start, uint32_t first_row, uint32_t uniform, const BatchState& state) {
+    int bound = -1;
+    uint32_t bound_cull = ~0u;
+    for (size_t i = 0; i < count; i++) {
+        const RunDraw& draw = draws[i];
+        int wanted = draw.kept ? 1 : 0;
+        if (bound != wanted) {
+            VkDescriptorSet set = g_device.draw_sets[draw.kept ? 2 : 1];
+            vkCmdBindDescriptorSets(g_current->draw, VK_PIPELINE_BIND_POINT_GRAPHICS, g_device.tev_layout, 0, 1, &set, 1, &uniform);
+            g_bound_draw_set = set;
+            g_bound_uniform = uniform;
+            vkCmdBindIndexBuffer(g_current->draw, draw.kept ? g_device.kept_indices.buffer : g_device.run_indices.buffer.buffer, 0, VK_INDEX_TYPE_UINT16);
+            bound = wanted;
+        }
+        if (bound_cull != draw.cull) {
+            VkPipeline pipeline = tev_pipeline(state, 1, draw.cull);
+            if (!pipeline) {
+                continue;
+            }
+            bind_pipeline(pipeline);
+            bound_cull = draw.cull;
+        }
+        DrawConstants constants;
+        constants.base = (draw.kept ? draw.vertex_offset : vertex_start + draw.vertex_offset) / 4;
+        constants.stride = draw.stride / 4;
+        constants.layout = draw.layout;
+        constants.row = first_row + draw.row;
+        vkCmdPushConstants(g_current->draw, g_device.tev_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof constants, &constants);
+        uint32_t first_index = draw.kept ? draw.first_index : index_start + draw.first_index;
+        vkCmdDrawIndexed(g_current->draw, draw.indices, 1, first_index, 0, 0);
+    }
+}
+
+void record_runs(const BatchState& pending, uint32_t vertex_start, uint32_t index_start) {
+    RecordedCommand command;
+    command.kind = RecordedCommand::kRuns;
+    command.batch = pending;
+    command.begin = g_record.runs.size();
+    uint32_t base = static_cast<uint32_t>(g_record.rows.size());
+    g_record.rows.insert(g_record.rows.end(), g_run_row_values.begin(), g_run_row_values.begin() + g_run_row_used);
+    for (const RunDraw& draw : g_run_draws) {
+        RecordedRun run;
+        run.draw = draw;
+        if (!draw.kept) {
+            run.draw.vertex_offset += vertex_start;
+            run.draw.first_index += index_start;
+        }
+        run.draw.row += base;
+        run.draw.matrix += base;
+        if (draw.palette != kNoPalette) {
+            run.draw.palette += base;
+        }
+        g_record.runs.push_back(run);
+    }
+    command.end = g_record.runs.size();
+    g_record.commands.push_back(command);
 }
 
 void draw_runs() {
@@ -2481,38 +2768,13 @@ void draw_runs() {
     bool ok = upload(g_device.run_rows, g_run_row_values.data(), g_run_row_used * sizeof(float[4]), 16, row_start) &&
               upload(g_device.run_vertices, g_run_vertex_bytes.data(), g_run_vertex_used, 16, vertex_start) &&
               upload(g_device.run_indices, g_run_index_words.data(), g_run_index_used * sizeof(uint16_t), 16, index_start) && upload_constants(g_pending, uniform);
+    uint32_t first_index_word = index_start / static_cast<uint32_t>(sizeof(uint16_t));
     if (ok && set_batch_state(g_pending, uniform, 1)) {
-        uint32_t first_row = row_start / static_cast<uint32_t>(sizeof(float[4]));
-        uint32_t first_index_word = index_start / static_cast<uint32_t>(sizeof(uint16_t));
-        int bound = -1;
-        uint32_t bound_cull = ~0u;
-        for (const RunDraw& draw : g_run_draws) {
-            int wanted = draw.kept ? 1 : 0;
-            if (bound != wanted) {
-                VkDescriptorSet set = g_device.draw_sets[draw.kept ? 2 : 1];
-                vkCmdBindDescriptorSets(g_current->draw, VK_PIPELINE_BIND_POINT_GRAPHICS, g_device.tev_layout, 0, 1, &set, 1, &uniform);
-                g_bound_draw_set = set;
-                g_bound_uniform = uniform;
-                vkCmdBindIndexBuffer(g_current->draw, draw.kept ? g_device.kept_indices.buffer : g_device.run_indices.buffer.buffer, 0, VK_INDEX_TYPE_UINT16);
-                bound = wanted;
-            }
-            if (bound_cull != draw.cull) {
-                VkPipeline pipeline = tev_pipeline(g_pending, 1, draw.cull);
-                if (!pipeline) {
-                    continue;
-                }
-                bind_pipeline(pipeline);
-                bound_cull = draw.cull;
-            }
-            DrawConstants constants;
-            constants.base = (draw.kept ? draw.vertex_offset : vertex_start + draw.vertex_offset) / 4;
-            constants.stride = draw.stride / 4;
-            constants.layout = draw.layout;
-            constants.row = first_row + draw.row;
-            vkCmdPushConstants(g_current->draw, g_device.tev_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof constants, &constants);
-            uint32_t first_index = draw.kept ? draw.first_index : first_index_word + draw.first_index;
-            vkCmdDrawIndexed(g_current->draw, draw.indices, 1, first_index, 0, 0);
-        }
+        issue_runs(g_run_draws.data(), g_run_draws.size(), vertex_start, first_index_word, row_start / static_cast<uint32_t>(sizeof(float[4])), uniform, g_pending);
+    }
+    if (g_recording) {
+        g_record_broken = g_record_broken || !ok;
+        record_runs(g_pending, vertex_start, first_index_word);
     }
     g_run_draws.clear();
     g_run_kept = 0;
@@ -2541,8 +2803,8 @@ void flush_pending() {
     g_batch_vertices += static_cast<uint32_t>(pending.vertices.size());
     VkPipeline pipeline = tev_pipeline(pending, 0, 0);
     uint32_t uniform = 0;
+    size_t total = pending.vertices.size();
     if (pipeline && upload_constants(pending, uniform)) {
-        size_t total = pending.vertices.size();
         size_t offset = 0;
         while (offset < total) {
             uint32_t batch = static_cast<uint32_t>(std::min<size_t>(total - offset, kVertexCapacity));
@@ -2550,15 +2812,32 @@ void flush_pending() {
             if (!upload(g_device.screen, pending.vertices.data() + offset, batch * sizeof(ScreenVertex), 16, start)) {
                 break;
             }
-            if (!set_batch_state(pending, uniform, 0)) {
+            bool shown = set_batch_state(pending, uniform, 0);
+            if (shown) {
+                bind_pipeline(pipeline);
+                DrawConstants constants{start / 4, kScreenWords, 0, 0};
+                vkCmdPushConstants(g_current->draw, g_device.tev_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof constants, &constants);
+                vkCmdDraw(g_current->draw, batch, 1, 0, 0);
+            }
+            if (g_recording) {
+                RecordedCommand command;
+                command.kind = RecordedCommand::kBatch;
+                command.batch = pending;
+                command.begin = g_frame_vertices + offset;
+                command.end = command.begin + batch;
+                command.base = start / 4;
+                g_record.commands.push_back(command);
+            } else if (!shown) {
                 break;
             }
-            bind_pipeline(pipeline);
-            DrawConstants constants{start / 4, kScreenWords, 0, 0};
-            vkCmdPushConstants(g_current->draw, g_device.tev_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof constants, &constants);
-            vkCmdDraw(g_current->draw, batch, 1, 0, 0);
             offset += batch;
         }
+        if (g_recording && offset < total) {
+            g_record_broken = true;
+        }
+    }
+    if (g_recording) {
+        g_frame_vertices += total;
     }
     pending.vertices.clear();
     g_batch_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
@@ -2616,7 +2895,42 @@ void select_batch() {
     batched_canvas = g_canvas_kind;
 }
 
+void append(const ScreenVertex* vertices, uint32_t count, const DrawSource* source) {
+    size_t first = g_frame_vertices + g_pending.vertices.size();
+    g_pending.vertices.insert(g_pending.vertices.end(), vertices, vertices + count);
+    if (!g_recording) {
+        return;
+    }
+    if (source && source->key != 0) {
+        RecordedDraw draw;
+        draw.key = source->key;
+        draw.exact = source->exact;
+        draw.material = command_shape(g_pending);
+        draw.camera = source->camera;
+        draw.first_position = static_cast<uint32_t>(g_record.positions.size());
+        draw.positions = source->count;
+        draw.first_vertex = first;
+        draw.vertices = count;
+        g_record.draws.push_back(draw);
+        const auto* positions = reinterpret_cast<const std::array<float, 4>*>(source->positions);
+        g_record.positions.insert(g_record.positions.end(), positions, positions + source->count);
+        g_record.source_of.insert(g_record.source_of.end(), source->source_of, source->source_of + count);
+        g_record.colors.resize(g_record.positions.size());
+        for (uint32_t v = 0; v < count; v++) {
+            if (source->source_of[v] != kNoSource) {
+                auto& color = g_record.colors[draw.first_position + source->source_of[v]];
+                std::copy(vertices[v].color[0], vertices[v].color[0] + 4, color[0].begin());
+                std::copy(vertices[v].color[1], vertices[v].color[1] + 4, color[1].begin());
+            }
+        }
+    } else {
+        g_record.source_of.insert(g_record.source_of.end(), count, kNoSource);
+    }
+}
+
 bool add_run(const VertexRun& run, uint32_t bytes, uint32_t index_count) {
+    finish_frame();
+    service_deferred();
     uint32_t rows = run.row_count + (run.palette ? kPaletteRows + kNormalRows : 0);
     if (!g_pending.vertices.empty() || g_run_vertex_used + bytes > kRunVertexBytes / 2 || (g_run_index_used + index_count) * sizeof(uint16_t) > kRunIndexBytes / 2 ||
         g_run_row_used + rows > kRunRowCapacity / 2) {
@@ -2646,6 +2960,12 @@ bool add_run(const VertexRun& run, uint32_t bytes, uint32_t index_count) {
     draw.first_index = g_run_index_used;
     draw.indices = run.indices;
     draw.row = g_run_row_used;
+    draw.rows = run.row_count;
+    draw.palette = run.palette ? g_run_palette : kNoPalette;
+    draw.matrix = run.palette ? g_run_palette + run.matrix : g_run_row_used + 4;
+    draw.camera = run.camera;
+    draw.key = run.key;
+    draw.shape = run.shape;
     g_run_draws.push_back(draw);
     g_run_row_used += run.row_count;
     return true;
@@ -2907,6 +3227,8 @@ void apply_scale() {
         }
     }
     g_shared_margins.store(static_cast<uint32_t>(g_canvas.margin_x) << 16 | static_cast<uint32_t>(g_canvas.margin_y), std::memory_order_release);
+    g_efb_before_valid = false;
+    g_record_broken = g_record_broken || g_recording;
     log::write("video", "picture %dx%d at scale %d", canvas_width(), kPictureHeight + 2 * g_canvas.margin_y, g_scale);
 }
 
@@ -3209,6 +3531,17 @@ void report_frame_figures() {
     }
     log::write("video", "Vulkan: %.1f EFB passes per frame, %.1f started by a clear, %.1f submissions, scale %d", g_efb_passes / frames, g_cleared_passes / frames,
                g_submits / frames, g_scale);
+    log::write("video", "Vulkan GPU busy %.0f ms a second: EFB %.0f ms in %u passes, copies %.0f ms in %u, screen %.0f ms in %u", g_gpu_time * 1000.0,
+               g_pass_time[1] * 1000.0, g_pass_count[1], g_pass_time[2] * 1000.0, g_pass_count[2], g_pass_time[3] * 1000.0, g_pass_count[3]);
+    g_gpu_time = 0.0;
+    for (int i = 0; i < 4; i++) {
+        g_pass_time[i] = 0.0;
+        g_pass_count[i] = 0;
+    }
+    log::write("video", "Vulkan waits a second: %.0f ms on fences (%.0f frame, %.0f buffers, %.0f idle in %u), %.0f ms acquire and present", g_fence_wait * 1000.0,
+               g_frame_wait * 1000.0, g_ring_wait * 1000.0, g_idle_wait * 1000.0, g_idle_waits, g_present_wait * 1000.0);
+    g_fence_wait = g_frame_wait = g_ring_wait = g_idle_wait = g_present_wait = 0.0;
+    g_idle_waits = 0;
     logged = now;
     logged_frame = g_frame;
     g_efb_passes = 0;
@@ -3244,7 +3577,7 @@ int auto_scale() {
 }
 
 bool interpolating() {
-    return false;
+    return g_recording;
 }
 
 bool probe() {
@@ -3288,6 +3621,7 @@ bool probe() {
             if (families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
                 g_vk.physical = candidate;
                 g_vk.family = i;
+                g_vk.timestamps = families[i].timestampValidBits != 0;
                 break;
             }
         }
@@ -3318,6 +3652,10 @@ bool probe() {
         log::write("video", "this Vulkan graphics card cannot read its depth buffer");
         return false;
     }
+    VkFormatProperties depth_properties{};
+    vkGetPhysicalDeviceFormatProperties(g_vk.physical, g_vk.depth_format, &depth_properties);
+    const VkFormatFeatureFlags depth_copies = VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+    g_vk.depth_copies = (depth_properties.optimalTilingFeatures & depth_copies) == depth_copies || g_vk.properties.apiVersion < VK_API_VERSION_1_1;
     uint32_t device_extension_count = 0;
     vkEnumerateDeviceExtensionProperties(g_vk.physical, nullptr, &device_extension_count, nullptr);
     std::vector<VkExtensionProperties> device_extensions(device_extension_count);
@@ -3373,7 +3711,8 @@ bool probe() {
 
 bool transforms_vertices() {
     static const settings::LiveFlag enabled("video.gpu_vertices", "WP_GPU_VERTICES");
-    return enabled() && initialize();
+    static const settings::LiveFlag between("video.gpu_between", "WP_GPU_BETWEEN");
+    return enabled() && (!g_recording || between()) && initialize();
 }
 
 bool begin_run(const VertexRun& run, uint8_t** vertices, uint16_t** indices) {
@@ -3428,13 +3767,14 @@ void reset_kept() {
     if (g_run_kept != 0) {
         flush_pending();
     }
+    if (g_recording && !g_record.runs.empty()) {
+        g_record_broken = true;
+    }
     wait_idle();
     g_kept_generation++;
     g_kept_vertex_used = 0;
     g_kept_index_used = 0;
 }
-
-void finish_frame() {}
 
 Canvas canvas() {
     Canvas current = g_canvas;
@@ -3460,18 +3800,6 @@ bool canvas_copy(uint32_t address) {
     return copied != g_device.copies.end() && copied->second.whole_canvas;
 }
 
-int64_t service_presents() {
-    return -1;
-}
-
-uint32_t take_interpolated_frames() {
-    return 0;
-}
-
-uint32_t take_late_frames() {
-    return 0;
-}
-
 GpuFigures gpu_figures() {
     GpuFigures figures;
     if (g_device.ready) {
@@ -3482,15 +3810,26 @@ GpuFigures gpu_figures() {
     return figures;
 }
 
-void draw(const ScreenVertex* vertices, uint32_t count, const DrawSource*) {
-    if (count == 0 || !initialize()) {
+void draw(const ScreenVertex* vertices, uint32_t count, const DrawSource* source) {
+    finish_frame();
+    if (count == 0) {
+        if (g_recording && source && source->key != 0) {
+            append(vertices, 0, source);
+        }
         return;
+    }
+    if (!initialize()) {
+        return;
+    }
+    static uint32_t draws = 0;
+    if ((++draws & 31) == 0) {
+        service_deferred();
     }
     if (!g_run_draws.empty()) {
         flush_pending();
     }
     select_batch();
-    g_pending.vertices.insert(g_pending.vertices.end(), vertices, vertices + count);
+    append(vertices, count, source);
 }
 
 void take_statistics(uint32_t& batches, uint32_t& vertices, double& seconds) {
@@ -3530,6 +3869,687 @@ bool write_back_overlaps(uint32_t address, size_t size) {
         }
     }
     return false;
+}
+
+namespace {
+
+void copy_image(Image& from, Image& to) {
+    end_pass();
+    VkCommandBuffer cb = command();
+    transition(cb, from, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    transition(cb, to, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    VkImageCopy region{};
+    region.srcSubresource = {from.aspect, 0, 0, 1};
+    region.dstSubresource = {to.aspect, 0, 0, 1};
+    region.extent = {std::min(from.width, to.width), std::min(from.height, to.height), 1};
+    vkCmdCopyImage(cb, from.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, to.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+}
+
+struct EfbSnapshot {
+    Image* color = nullptr;
+    Image* depth = nullptr;
+};
+
+EfbSnapshot g_efb_before;
+EfbSnapshot g_efb_after;
+
+bool same_size(const Image& source, Image*& copy) {
+    if (copy && copy->width == source.width && copy->height == source.height && copy->format == source.format) {
+        return true;
+    }
+    retire_image(copy);
+    copy = make_image(source.width, source.height, 1, source.format, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+    return copy != nullptr;
+}
+
+bool save_efb(EfbSnapshot& snapshot) {
+    if (!g_vk.depth_copies || !g_device.efb_color || !g_device.efb_depth) {
+        return false;
+    }
+    settle_efb();
+    if (!same_size(*g_device.efb_color, snapshot.color) || !same_size(*g_device.efb_depth, snapshot.depth)) {
+        return false;
+    }
+    copy_image(*g_device.efb_color, *snapshot.color);
+    copy_image(*g_device.efb_depth, *snapshot.depth);
+    return true;
+}
+
+void load_efb(const EfbSnapshot& snapshot) {
+    settle_efb();
+    if (!snapshot.color || !snapshot.depth || !g_device.efb_color || !g_device.efb_depth) {
+        return;
+    }
+    copy_image(*snapshot.color, *g_device.efb_color);
+    copy_image(*snapshot.depth, *g_device.efb_depth);
+}
+
+std::unordered_map<Image*, ReplayTarget> g_replay_targets;
+
+void release_twin(ReplayTarget& twin) {
+    retire_image(twin.before);
+    twin.before = nullptr;
+    release_target(twin.texture);
+}
+
+void note_copy_target(const Target& target) {
+    for (const RecordedTarget& seen : g_record.targets) {
+        if (seen.image == target.image) {
+            return;
+        }
+    }
+    bool sampled = false;
+    for (const RecordedCommand& command : g_record.commands) {
+        if ((command.kind == RecordedCommand::kBatch || command.kind == RecordedCommand::kRuns) &&
+            std::find(std::begin(command.batch.views), std::end(command.batch.views), target.image) != std::end(command.batch.views)) {
+            sampled = true;
+            break;
+        }
+    }
+    if (!sampled) {
+        g_record.targets.push_back({target.image, false});
+        return;
+    }
+    ReplayTarget& twin = g_replay_targets[target.image];
+    if (!twin.before || !twin.texture.image || twin.texture.width != target.width || twin.texture.height != target.height) {
+        release_twin(twin);
+        twin.before = make_image(target.width, target.height, 1, kColorFormat, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+        if (!twin.before || !create_render_texture(twin.texture, target.width, target.height)) {
+            release_twin(twin);
+            g_replay_targets.erase(target.image);
+            g_record_broken = true;
+            return;
+        }
+    }
+    twin.frame = g_frame;
+    copy_image(*target.image, *twin.before);
+    g_record.targets.push_back({target.image, true});
+}
+
+void prune_twins() {
+    for (auto it = g_replay_targets.begin(); it != g_replay_targets.end();) {
+        if (it->second.frame + 600 < g_frame) {
+            release_twin(it->second);
+            it = g_replay_targets.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+bool interpolated_targets() {
+    const Target& frame = g_device.frame;
+    if (g_device.interpolated[0].image && g_device.interpolated[0].width == frame.width && g_device.interpolated[0].height == frame.height) {
+        return true;
+    }
+    for (Target& target : g_device.interpolated) {
+        release_target(target);
+    }
+    for (Target& target : g_device.interpolated) {
+        if (!create_render_texture(target, frame.width, frame.height)) {
+            for (Target& made : g_device.interpolated) {
+                release_target(made);
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+const BatchState* g_replay_state = nullptr;
+uint32_t g_replay_uniform = 0;
+
+bool send_replayed() {
+    if (g_replay_draws.empty()) {
+        return true;
+    }
+    uint32_t start = 0;
+    bool ok = upload(g_device.run_rows, g_replay_rows.data(), static_cast<uint32_t>(g_replay_rows.size() * sizeof(float[4])), 16, start);
+    if (ok && set_batch_state(*g_replay_state, g_replay_uniform, 1)) {
+        issue_runs(g_replay_draws.data(), g_replay_draws.size(), 0, 0, start / static_cast<uint32_t>(sizeof(float[4])), g_replay_uniform, *g_replay_state);
+    }
+    g_replay_draws.clear();
+    g_replay_rows.clear();
+    return ok;
+}
+
+void run_clear(const ClearCommand& command) {
+    bool color_enable = command.color;
+    bool alpha_enable = command.alpha;
+    bool depth_enable = command.depth;
+    int x = command.x;
+    int y = command.y;
+    int width = command.width;
+    int height = command.height;
+    bool whole = x == 0 && y == 0 && width == canvas_width() && height >= std::min(g_shown_height, canvas_height());
+    bool full_color = color_enable && alpha_enable;
+    if (whole && g_pass != Pass::Efb) {
+        if (depth_enable) {
+            g_clear_depth_pending = true;
+            g_clear_depth = command.depth_value;
+            depth_enable = false;
+        }
+        if (full_color) {
+            g_clear_color_pending = true;
+            g_clear_color = command.color_value;
+            color_enable = false;
+            alpha_enable = false;
+        }
+        if (!color_enable && !alpha_enable && !depth_enable) {
+            return;
+        }
+    }
+    begin_efb(depth_enable);
+    VkClearRect rect{};
+    rect.rect = {{scaled(x), scaled(y)}, {static_cast<uint32_t>(scaled(x + width) - scaled(x)), static_cast<uint32_t>(scaled(y + height) - scaled(y))}};
+    rect.layerCount = 1;
+    if (color_enable == alpha_enable) {
+        VkClearAttachment attachments[2]{};
+        uint32_t count = 0;
+        if (color_enable) {
+            attachments[count].aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            attachments[count].colorAttachment = 0;
+            attachments[count].clearValue.color = command.color_value;
+            count++;
+        }
+        if (depth_enable) {
+            attachments[count].aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+            attachments[count].clearValue.depthStencil = {command.depth_value, 0};
+            count++;
+        }
+        if (count) {
+            vkCmdClearAttachments(g_current->draw, count, attachments, 1, &rect);
+        }
+        return;
+    }
+    VkPipeline pipeline = clear_pipeline(color_enable, alpha_enable, depth_enable);
+    if (!pipeline) {
+        return;
+    }
+    bind_pipeline(pipeline);
+    set_scissor(rect.rect.offset.x, rect.rect.offset.y, static_cast<int>(rect.rect.extent.width), static_cast<int>(rect.rect.extent.height));
+    const VkClearColorValue& color_value = command.color_value;
+    struct {
+        float color[4];
+        float depth[4];
+    } values{{color_value.float32[0], color_value.float32[1], color_value.float32[2], color_value.float32[3]}, {command.depth_value, 0, 0, 0}};
+    vkCmdPushConstants(g_current->draw, g_device.clear_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof values, &values);
+    vkCmdDraw(g_current->draw, 3, 1, 0, 0);
+    g_bound_draw_set = VK_NULL_HANDLE;
+    g_bound_maps = VK_NULL_HANDLE;
+}
+
+void apply_clear(const ClearCommand& command) {
+    run_clear(command);
+    if (g_recording) {
+        RecordedCommand recorded;
+        recorded.kind = RecordedCommand::kClear;
+        recorded.clear = command;
+        g_record.commands.push_back(recorded);
+    }
+}
+
+bool replay_between(const std::vector<std::pair<uint32_t, uint32_t>>& matches, float t, const Target& target, int x, int y, int width, int height, bool depth,
+                    const CopyFilter& filter) {
+    auto started = std::chrono::steady_clock::now();
+    float motion[kMaxCameras][4][4];
+    motion_matrices(t, motion);
+    uint32_t bytes = static_cast<uint32_t>((kMotionRows + 3 * g_frame_vertices) * sizeof(float[4]));
+    uint32_t start = 0;
+    if (!reserve(g_device.moved, bytes, 16, start)) {
+        return false;
+    }
+    float* moved = reinterpret_cast<float*>(g_device.moved.buffer.mapped + start);
+    std::memcpy(moved, motion, sizeof motion);
+    fill_moved(reinterpret_cast<MovedVertex*>(moved + kMotionRows * 4), matches, t, motion);
+    uint32_t moved_row = start / static_cast<uint32_t>(sizeof(float[4]));
+    auto filled = std::chrono::steady_clock::now();
+    g_time_filling += std::chrono::duration<double>(filled - started).count();
+    struct Sending {
+        std::chrono::steady_clock::time_point from;
+        ~Sending() { g_time_sending += std::chrono::duration<double>(std::chrono::steady_clock::now() - from).count(); }
+    } sending{filled};
+    load_efb(g_efb_before);
+    static std::vector<std::pair<const RecordedTarget*, ReplayTarget*>> twins;
+    twins.clear();
+    for (const RecordedTarget& recorded : g_record.targets) {
+        if (!recorded.twin) {
+            continue;
+        }
+        auto found = g_replay_targets.find(recorded.image);
+        if (found == g_replay_targets.end()) {
+            return false;
+        }
+        copy_image(*found->second.before, *found->second.texture.image);
+        twins.emplace_back(&recorded, &found->second);
+    }
+    auto twin_of = [](const Target& copied) -> const Target& {
+        for (const auto& [recorded, twin] : twins) {
+            if (recorded->image == copied.image) {
+                return twin->texture;
+            }
+        }
+        return copied;
+    };
+    const std::vector<uint32_t>& command_partner = command_partners();
+    BatchState swapped;
+    BatchState blended;
+    for (size_t c = 0; c < g_record.commands.size(); c++) {
+        const RecordedCommand& command = g_record.commands[c];
+        switch (command.kind) {
+        case RecordedCommand::kBatch:
+        case RecordedCommand::kRuns: {
+            const BatchState* state = blend_colors(command, command_partner[c], t, blended);
+            for (size_t map = 0; map < kTextureMaps; map++) {
+                for (const auto& [recorded, twin] : twins) {
+                    if (command.batch.views[map] == recorded->image) {
+                        if (state != &swapped) {
+                            swapped = *state;
+                            state = &swapped;
+                        }
+                        swapped.views[map] = twin->texture.image;
+                    }
+                }
+            }
+            uint32_t uniform = 0;
+            if (!upload_constants(*state, uniform)) {
+                return false;
+            }
+            if (command.kind == RecordedCommand::kRuns) {
+                g_replay_state = state;
+                g_replay_uniform = uniform;
+                if (!replay_runs(command, t)) {
+                    return false;
+                }
+                break;
+            }
+            VkPipeline pipeline = tev_pipeline(*state, 0, 0);
+            if (pipeline && set_batch_state(*state, uniform, 3)) {
+                bind_pipeline(pipeline);
+                DrawConstants constants{command.base, static_cast<uint32_t>(command.begin), 1, moved_row};
+                vkCmdPushConstants(g_current->draw, g_device.tev_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof constants, &constants);
+                vkCmdDraw(g_current->draw, static_cast<uint32_t>(command.end - command.begin), 1, 0, 0);
+            }
+            break;
+        }
+        case RecordedCommand::kCopy: {
+            const CopyCommand& copy = command.copy;
+            run_copy(twin_of(copy.target), copy.target_width, copy.target_height, copy.x, copy.y, copy.width, copy.height, copy.format, copy.intensity, copy.alpha,
+                     copy.depth, copy.filter);
+            break;
+        }
+        case RecordedCommand::kClear:
+            run_clear(command.clear);
+            break;
+        }
+    }
+    return run_copy(target, g_device.frame.width, g_device.frame.height, x, y, width, height, kXfbFormat, false, false, depth, filter);
+}
+
+Ring* const g_recorded_rings[3] = {&g_device.screen, &g_device.run_vertices, &g_device.run_indices};
+
+bool rings_overrun() {
+    for (size_t i = 0; i < 3; i++) {
+        if (g_recorded_rings[i]->switches - g_ring_marks[i] >= 2) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void hold_rings() {
+    for (Ring* ring : g_recorded_rings) {
+        uint64_t& other = ring->used_by[ring->segment ^ 1];
+        other = std::max(other, current_serial());
+    }
+}
+
+uint32_t run_interpolated(int x, int y, int width, int height, bool depth, const CopyFilter& filter, const pacing::FramePlan& plan) {
+    if (!can_pair() || !g_efb_before_valid || (kMotionRows + 3 * g_frame_vertices) * sizeof(float[4]) > kMovedRingBytes / 2 || rings_overrun() ||
+        !interpolated_targets()) {
+        return 0;
+    }
+    if (!g_paired) {
+        pair_runs();
+        if (!g_previous.draws.empty() && !g_record.draws.empty()) {
+            pair_frame();
+        } else {
+            g_matches.clear();
+            g_camera_cut = false;
+        }
+        g_paired = true;
+    }
+    if (g_camera_cut || g_run_cut) {
+        return 0;
+    }
+    uint32_t count = std::min<uint32_t>(plan.images, kMaxBetween);
+    uint32_t made = 0;
+    while (made < count && replay_between(g_matches, plan.fractions[made], g_device.interpolated[made], x, y, width, height, depth, filter)) {
+        made++;
+    }
+    hold_rings();
+    return made;
+}
+
+int g_display_hz = 0;
+std::atomic<uint32_t> g_late_frames{0};
+std::atomic<uint32_t> g_hidden_frames{0};
+double g_phase = 0.0;
+bool g_show_real = true;
+double g_planned_slot = 1.0 / 120.0;
+double g_period = 1.0 / 60.0;
+double g_slot = 1.0 / 120.0;
+
+void end_record() {
+    g_previous_colors.clear();
+    if (g_recording && !g_record_broken) {
+        keep_colors();
+        g_previous.positions.swap(g_record.positions);
+        g_previous.colors.swap(g_record.colors);
+        g_previous.draws.swap(g_record.draws);
+        g_previous.runs.swap(g_record.runs);
+        g_previous.rows.swap(g_record.rows);
+    } else {
+        g_previous.positions.clear();
+        g_previous.colors.clear();
+        g_previous.draws.clear();
+        g_previous.runs.clear();
+        g_previous.rows.clear();
+    }
+    g_record.source_of.clear();
+    g_record.positions.clear();
+    g_record.colors.clear();
+    g_record.draws.clear();
+    g_record.commands.clear();
+    g_record.targets.clear();
+    g_record.runs.clear();
+    g_record.rows.clear();
+    g_paired = false;
+    if (g_frame % 600 == 0) {
+        prune_twins();
+    }
+    g_frame_vertices = 0;
+    static const settings::LiveNumber fps("video.fps", "WP_FPS");
+    g_recording = g_vk.depth_copies && pacing::interpolation_wanted(static_cast<int>(fps()), g_display_hz);
+    g_record_broken = false;
+    release_held();
+    for (size_t i = 0; i < 3; i++) {
+        g_ring_marks[i] = g_recorded_rings[i]->switches;
+    }
+}
+
+struct FrameEnd {
+    bool due = false;
+    bool copied = false;
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+    bool depth = false;
+    CopyFilter filter;
+    bool has_clear = false;
+    ClearCommand clear;
+};
+
+FrameEnd g_frame_end;
+
+SDL_Window* g_present_window = nullptr;
+double g_present_aspect = 4.0 / 3.0;
+
+struct ShownImage {
+    Target target;
+    std::chrono::steady_clock::time_point due;
+    bool interpolated = false;
+};
+
+constexpr size_t kShownImages = kMaxBetween + 3;
+ShownImage g_shown[kShownImages];
+std::deque<size_t> g_show_queue;
+std::chrono::steady_clock::time_point g_last_shown;
+
+bool queue_image(const Target& source, std::chrono::steady_clock::time_point due, bool interpolated) {
+    size_t free = kShownImages;
+    for (size_t i = 0; i < kShownImages && free == kShownImages; i++) {
+        if (std::find(g_show_queue.begin(), g_show_queue.end(), i) == g_show_queue.end()) {
+            free = i;
+        }
+    }
+    if (free == kShownImages || !source.image) {
+        return false;
+    }
+    ShownImage& image = g_shown[free];
+    if (!image.target.image || image.target.width != source.width || image.target.height != source.height) {
+        release_target(image.target);
+        if (!create_render_texture(image.target, source.width, source.height)) {
+            release_target(image.target);
+            return false;
+        }
+    }
+    copy_image(*source.image, *image.target.image);
+    image.due = due;
+    image.interpolated = interpolated;
+    g_show_queue.push_back(free);
+    return true;
+}
+
+bool present_image(SDL_Window* window, double aspect, Image* image) {
+    int client_width = 0;
+    int client_height = 0;
+    if (!window || !image || !SDL_GetWindowSizeInPixels(window, &client_width, &client_height) || client_width <= 0 || client_height <= 0) {
+        return false;
+    }
+    flush_pending();
+    take_overlays(client_width, client_height);
+    end_pass();
+    transition(command(), *image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    submit();
+    Swapchain& chain = g_device.chain;
+    if (video::background_wanted()) {
+        drop_surface();
+        return false;
+    }
+    if (!ensure_swapchain(window, client_width, client_height)) {
+        return false;
+    }
+    VkSemaphore acquired = chain.acquired[chain.next_acquire];
+    uint32_t index = 0;
+    auto acquire_start = std::chrono::steady_clock::now();
+    VkResult result = vkAcquireNextImageKHR(device(), chain.swapchain, UINT64_MAX, acquired, VK_NULL_HANDLE, &index);
+    g_present_wait += seconds_since(acquire_start);
+    if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+        chain.stale = true;
+        return false;
+    }
+    if (result == VK_ERROR_SURFACE_LOST_KHR) {
+        drop_surface();
+        return false;
+    }
+    if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+        return false;
+    }
+    chain.next_acquire = (chain.next_acquire + 1) % static_cast<uint32_t>(chain.acquired.size());
+    ensure_command();
+    VkClearValue black{};
+    black.color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+    begin_render_pass(chain.pass, chain.framebuffers[index], chain.width, chain.height, 1, &black);
+    g_pass = Pass::Screen;
+    set_scissor(0, 0, static_cast<int>(chain.width), static_cast<int>(chain.height));
+    int bar = titlebar::height(window);
+    int area = std::max(1, client_height - bar);
+    g_picture_aspect = aspect;
+    g_window_aspect = static_cast<double>(client_width) / area;
+    double box_width = client_width;
+    double box_height = area;
+    if (canvas_grown() && image->width > 0 && image->height > 0) {
+        double box_aspect = aspect * (kEfbWidth + 2.0 * g_canvas.margin_x) / (kPictureHeight + 2.0 * g_canvas.margin_y) * kPictureHeight / kEfbWidth;
+        box_height = std::min<double>(area, client_width / box_aspect);
+        box_width = box_height * box_aspect;
+        aspect *= static_cast<double>(image->width) / image->height * kPictureHeight / kEfbWidth;
+    }
+    double width = box_width;
+    double height = width / aspect;
+    if (height > box_height) {
+        height = box_height;
+        width = height * aspect;
+    }
+    set_viewport(static_cast<float>(std::floor((client_width - width) / 2)), static_cast<float>(std::floor(bar + (area - height) / 2)),
+                 static_cast<float>(std::floor(width)), static_cast<float>(std::floor(height)));
+    static const settings::LiveFlag smooth("video.smooth", "WP_SMOOTH");
+    bool reduce = smooth() && (image->width > width * 1.25 || image->height > height * 1.25);
+    VkPipeline pipeline = screen_pipeline(reduce ? 1 : 0, false);
+    VkDescriptorSet set = single_set(*image, g_device.linear);
+    if (pipeline && set) {
+        color::Adjust colors = color::current();
+        float veil = gx::veil_level();
+        colors.brightness *= 1.0f - veil;
+        colors.saturation *= 1.0f - veil;
+        float adjust[4] = {colors.brightness, colors.contrast, colors.saturation, 1.0f / colors.gamma};
+        bind_pipeline(pipeline);
+        vkCmdBindDescriptorSets(g_current->draw, VK_PIPELINE_BIND_POINT_GRAPHICS, g_device.single_pipeline_layout, 0, 1, &set, 0, nullptr);
+        vkCmdPushConstants(g_current->draw, g_device.single_pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof adjust, adjust);
+        vkCmdDraw(g_current->draw, 3, 1, 0, 0);
+    }
+    draw_overlay(client_width, client_height, bar);
+    submit(acquired, chain.rendered[index]);
+    VkPresentInfoKHR present{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
+    present.waitSemaphoreCount = 1;
+    present.pWaitSemaphores = &chain.rendered[index];
+    present.swapchainCount = 1;
+    present.pSwapchains = &chain.swapchain;
+    present.pImageIndices = &index;
+    auto present_start = std::chrono::steady_clock::now();
+    VkResult shown = vkQueuePresentKHR(g_vk.queue, &present);
+    g_present_wait += seconds_since(present_start);
+    if (shown == VK_ERROR_OUT_OF_DATE_KHR) {
+        chain.stale = true;
+    } else if (shown == VK_ERROR_SURFACE_LOST_KHR) {
+        drop_surface();
+    }
+    return shown == VK_SUCCESS || shown == VK_SUBOPTIMAL_KHR;
+}
+
+void service_deferred() {
+    auto now = std::chrono::steady_clock::now();
+    size_t ready = 0;
+    while (ready < g_show_queue.size() && g_shown[g_show_queue[ready]].due <= now) {
+        ready++;
+    }
+    if (ready == 0) {
+        return;
+    }
+    size_t skipped = ready > 2 ? ready - 2 : 0;
+    ready = skipped + 1;
+    const ShownImage& image = g_shown[g_show_queue[ready - 1]];
+    if (present_image(g_present_window, g_present_aspect, image.target.image) && image.interpolated) {
+        g_interpolated_frames++;
+    }
+    g_last_shown = now - image.due < std::chrono::duration<double>(g_slot) ? image.due : now;
+    g_show_queue.erase(g_show_queue.begin(), g_show_queue.begin() + static_cast<std::ptrdiff_t>(ready));
+}
+
+bool copy_frame(int& x, int& y, int& width, int& height, bool depth, const CopyFilter& filter) {
+    flush_pending();
+    complete_write_backs(false);
+    uint32_t slot = static_cast<uint32_t>(g_frame % 2);
+    uint64_t finished = current_serial();
+    submit();
+    auto frame_start = std::chrono::steady_clock::now();
+    wait_serial(g_frame_serials[slot]);
+    g_frame_wait += seconds_since(frame_start);
+    g_frame_serials[slot] = finished;
+    report_frame_figures();
+    maybe_save_cache();
+    g_frame++;
+    g_texture_epoch++;
+    x = std::max(0, x);
+    y = std::max(0, y);
+    width = std::min(width, kEfbWidth - x);
+    height = std::min(height, kEfbHeight - y);
+    if (width <= 0 || height <= 0) {
+        return false;
+    }
+    g_world_change_frames = g_world_drawn == g_world_shown ? 0 : g_world_change_frames + 1;
+    if (g_world_change_frames >= kSteadyFrames) {
+        g_world_shown = g_world_drawn;
+        g_world_change_frames = 0;
+    }
+    g_world_drawn = false;
+    place_on_canvas(x, y, width, height, g_world_shown);
+    g_shown_height = y + height;
+    uint32_t physical_width = static_cast<uint32_t>(scaled(width));
+    uint32_t physical_height = static_cast<uint32_t>(scaled(height));
+    if (!g_device.frame.image || g_device.frame.width != physical_width || g_device.frame.height != physical_height) {
+        release_target(g_device.frame);
+        if (!create_render_texture(g_device.frame, physical_width, physical_height)) {
+            release_target(g_device.frame);
+            return false;
+        }
+    }
+    return run_copy(g_device.frame, physical_width, physical_height, x, y, width, height, kXfbFormat, false, false, depth, filter);
+}
+
+}
+
+void finish_frame() {
+    if (!g_frame_end.due) {
+        return;
+    }
+    FrameEnd end = g_frame_end;
+    g_frame_end.due = false;
+    static const settings::LiveNumber fps("video.fps", "WP_FPS");
+    constexpr size_t kBehindBytes = 256 << 10;
+    bool late = gx::take_frame_held();
+    bool saved = end.copied && g_recording && save_efb(g_efb_after);
+    auto started = std::chrono::steady_clock::now();
+    pacing::FramePlan plan;
+    if (saved) {
+        plan = pacing::plan_frame(g_phase, g_period, pacing::output_rate(static_cast<int>(fps())), kMaxBetween);
+        if (!late && gx::gpu_backlog() < kBehindBytes) {
+            g_interpolated_ready = run_interpolated(end.x, end.y, end.width, end.height, end.depth, end.filter, plan);
+            load_efb(g_efb_after);
+        }
+        std::swap(g_efb_before, g_efb_after);
+    }
+    bool complete = plan.images > 0 && g_interpolated_ready == plan.images;
+    g_show_real = plan.show_real || !complete;
+    g_planned_slot = complete ? plan.slot : g_period / (g_interpolated_ready + 1);
+    if (!complete) {
+        g_phase = 0.0;
+    }
+    if (end.copied && g_recording && g_interpolated_ready == 0) {
+        g_late_frames++;
+    }
+    if (g_recording) {
+        static auto report = started;
+        static uint32_t frames = 0, with_images = 0, late_frames = 0, draws = 0;
+        static double seconds = 0.0;
+        auto now = std::chrono::steady_clock::now();
+        frames++;
+        with_images += g_interpolated_ready != 0;
+        late_frames += late;
+        draws += static_cast<uint32_t>(g_record.draws.size());
+        seconds += std::chrono::duration<double>(now - started).count();
+        if (now - report >= std::chrono::seconds(1)) {
+            uint32_t n = std::max(1u, with_images);
+            log::write("replay", "%u frames, %u with images, %u late, %.2f ms per frame for the images (pairing %.2f, positions %.2f, commands %.2f), %u draws per frame: %u sure pairs, %u by order, %u rejected, %u unpaired, %u unpaired inline, %u with the camera (%u cameras)",
+                       frames, with_images, late_frames, seconds * 1000.0 / frames, g_time_pairing * 1000.0 / frames, g_time_filling * 1000.0 / frames, g_time_sending * 1000.0 / frames, draws / frames, g_match[0] / n, g_match[1] / n, g_match[2] / n, g_match[3] / n, g_match[4] / n,
+                       g_match[5] / n, static_cast<uint32_t>(std::count_if(std::begin(g_cameras), std::end(g_cameras), [](const CameraMotion& c) { return c.known; })));
+            if (g_run_counts[0] != 0) {
+                log::write("runs", "%u models per frame redrawn for the images: %u paired, %u moved too far, %u texture matrices turned in all, %u look-alikes too far to pair, %u teleports", g_run_counts[0] / n, g_run_counts[1] / n, g_run_counts[2] / n, g_run_counts[3], g_run_counts[4], g_run_counts[5]);
+            }
+            std::fill(std::begin(g_match), std::end(g_match), 0u);
+            std::fill(std::begin(g_run_counts), std::end(g_run_counts), 0u);
+            report = now;
+            frames = with_images = late_frames = draws = 0;
+            seconds = 0.0;
+            g_time_pairing = g_time_filling = g_time_sending = 0.0;
+        }
+    }
+    g_efb_before_valid = saved;
+    end_record();
+    if (end.has_clear) {
+        apply_clear(end.clear);
+    }
 }
 
 namespace {
@@ -3581,6 +4601,7 @@ void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width,
     if (width <= 0 || height <= 0) {
         return;
     }
+    finish_frame();
     flush_pending();
     int canvas_x = x;
     int canvas_y = y;
@@ -3611,7 +4632,16 @@ void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width,
             return;
         }
     }
+    if (g_recording) {
+        note_copy_target(entry.converted);
+    }
     run_copy(entry.converted, target_width, target_height, canvas_x, canvas_y, canvas_w, canvas_h, format, intensity, alpha || depth, depth, filter);
+    if (g_recording) {
+        RecordedCommand command;
+        command.kind = RecordedCommand::kCopy;
+        command.copy = {entry.converted, target_width, target_height, canvas_x, canvas_y, canvas_w, canvas_h, format, intensity, alpha || depth, depth, filter};
+        g_record.commands.push_back(command);
+    }
     if (!recurring && !half && format == 6 && logical_width == screenshot::kPhotoWidth && logical_height == screenshot::kPhotoHeight && keep_photos()) {
         keep_photo(entry.converted.image, entry.converted.width, entry.converted.height, x + g_canvas.margin_x - canvas_x, y + g_canvas.margin_y - canvas_y, width, height,
                    canvas_w, canvas_h);
@@ -3638,131 +4668,102 @@ void copy_to_framebuffer(int x, int y, int width, int height, bool depth, const 
     if (!initialize()) {
         return;
     }
-    flush_pending();
-    complete_write_backs(false);
-    uint32_t slot = static_cast<uint32_t>(g_frame % 2);
-    uint64_t finished = current_serial();
-    submit();
-    wait_serial(g_frame_serials[slot]);
-    g_frame_serials[slot] = finished;
-    report_frame_figures();
-    maybe_save_cache();
-    g_frame++;
-    g_texture_epoch++;
-    x = std::max(0, x);
-    y = std::max(0, y);
-    width = std::min(width, kEfbWidth - x);
-    height = std::min(height, kEfbHeight - y);
-    if (width <= 0 || height <= 0) {
-        return;
+    auto now = std::chrono::steady_clock::now();
+    static auto previous = now;
+    double period = std::chrono::duration<double>(now - previous).count();
+    previous = now;
+    if (period > 0.004 && period < 0.1) {
+        g_period = g_period * 0.9 + std::min(period, 0.05) * 0.1;
     }
-    g_world_change_frames = g_world_drawn == g_world_shown ? 0 : g_world_change_frames + 1;
-    if (g_world_change_frames >= kSteadyFrames) {
-        g_world_shown = g_world_drawn;
-        g_world_change_frames = 0;
-    }
-    g_world_drawn = false;
-    place_on_canvas(x, y, width, height, g_world_shown);
-    g_shown_height = y + height;
-    uint32_t physical_width = static_cast<uint32_t>(scaled(width));
-    uint32_t physical_height = static_cast<uint32_t>(scaled(height));
-    if (!g_device.frame.image || g_device.frame.width != physical_width || g_device.frame.height != physical_height) {
-        release_target(g_device.frame);
-        if (!create_render_texture(g_device.frame, physical_width, physical_height)) {
-            release_target(g_device.frame);
-            return;
-        }
-    }
-    run_copy(g_device.frame, physical_width, physical_height, x, y, width, height, kXfbFormat, false, false, depth, filter);
+    finish_frame();
+    bool copied = copy_frame(x, y, width, height, depth, filter);
+    g_interpolated_ready = 0;
+    g_frame_end = {true, copied, x, y, width, height, depth, filter, false, {}};
 }
 
 bool present_frame(void* window_handle, double aspect) {
     if (!g_device.ready || !g_device.frame.image || !window_handle) {
         return false;
     }
+    finish_frame();
     SDL_Window* window = static_cast<SDL_Window*>(window_handle);
-    int client_width = 0;
-    int client_height = 0;
-    if (!SDL_GetWindowSizeInPixels(window, &client_width, &client_height) || client_width <= 0 || client_height <= 0) {
-        return false;
-    }
-    flush_pending();
-    take_overlays(client_width, client_height);
-    submit();
-    Swapchain& chain = g_device.chain;
-    if (video::background_wanted()) {
-        drop_surface();
-    } else if (ensure_swapchain(window, client_width, client_height)) {
-        VkSemaphore acquired = chain.acquired[chain.next_acquire];
-        uint32_t index = 0;
-        VkResult result = vkAcquireNextImageKHR(device(), chain.swapchain, UINT64_MAX, acquired, VK_NULL_HANDLE, &index);
-        if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) {
-            chain.next_acquire = (chain.next_acquire + 1) % static_cast<uint32_t>(chain.acquired.size());
-            ensure_command();
-            VkClearValue black{};
-            black.color = {{0.0f, 0.0f, 0.0f, 1.0f}};
-            begin_render_pass(chain.pass, chain.framebuffers[index], chain.width, chain.height, 1, &black);
-            g_pass = Pass::Screen;
-            set_scissor(0, 0, static_cast<int>(chain.width), static_cast<int>(chain.height));
-            int bar = titlebar::height(window);
-            int area = std::max(1, client_height - bar);
-            g_picture_aspect = aspect;
-            g_window_aspect = static_cast<double>(client_width) / area;
-            double box_width = client_width;
-            double box_height = area;
-            if (canvas_grown() && g_device.frame.width > 0 && g_device.frame.height > 0) {
-                double box_aspect = aspect * (kEfbWidth + 2.0 * g_canvas.margin_x) / (kPictureHeight + 2.0 * g_canvas.margin_y) * kPictureHeight / kEfbWidth;
-                box_height = std::min<double>(area, client_width / box_aspect);
-                box_width = box_height * box_aspect;
-                aspect *= static_cast<double>(g_device.frame.width) / g_device.frame.height * kPictureHeight / kEfbWidth;
-            }
-            double width = box_width;
-            double height = width / aspect;
-            if (height > box_height) {
-                height = box_height;
-                width = height * aspect;
-            }
-            set_viewport(static_cast<float>(std::floor((client_width - width) / 2)), static_cast<float>(std::floor(bar + (area - height) / 2)),
-                         static_cast<float>(std::floor(width)), static_cast<float>(std::floor(height)));
-            static const settings::LiveFlag smooth("video.smooth", "WP_SMOOTH");
-            bool reduce = smooth() && (g_device.frame.width > width * 1.25 || g_device.frame.height > height * 1.25);
-            VkPipeline pipeline = screen_pipeline(reduce ? 1 : 0, false);
-            VkDescriptorSet set = single_set(*g_device.frame.image, g_device.linear);
-            if (pipeline && set) {
-                color::Adjust colors = color::current();
-                float veil = gx::veil_level();
-                colors.brightness *= 1.0f - veil;
-                colors.saturation *= 1.0f - veil;
-                float adjust[4] = {colors.brightness, colors.contrast, colors.saturation, 1.0f / colors.gamma};
-                bind_pipeline(pipeline);
-                vkCmdBindDescriptorSets(g_current->draw, VK_PIPELINE_BIND_POINT_GRAPHICS, g_device.single_pipeline_layout, 0, 1, &set, 0, nullptr);
-                vkCmdPushConstants(g_current->draw, g_device.single_pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof adjust, adjust);
-                vkCmdDraw(g_current->draw, 3, 1, 0, 0);
-            }
-            draw_overlay(client_width, client_height, bar);
-            submit(acquired, chain.rendered[index]);
-            VkPresentInfoKHR present{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
-            present.waitSemaphoreCount = 1;
-            present.pWaitSemaphores = &chain.rendered[index];
-            present.swapchainCount = 1;
-            present.pSwapchains = &chain.swapchain;
-            present.pImageIndices = &index;
-            VkResult shown = vkQueuePresentKHR(g_vk.queue, &present);
-            if (shown == VK_ERROR_OUT_OF_DATE_KHR || shown == VK_SUBOPTIMAL_KHR) {
-                chain.stale = true;
-            } else if (shown == VK_ERROR_SURFACE_LOST_KHR) {
-                drop_surface();
-            }
-        } else if (result == VK_ERROR_OUT_OF_DATE_KHR) {
-            chain.stale = true;
-        } else if (result == VK_ERROR_SURFACE_LOST_KHR) {
-            drop_surface();
+    g_present_window = window;
+    g_present_aspect = aspect;
+    static auto checked = std::chrono::steady_clock::time_point{};
+    if (std::chrono::steady_clock::now() - checked > std::chrono::seconds(2)) {
+        checked = std::chrono::steady_clock::now();
+        static const settings::LiveNumber fps("video.fps", "WP_FPS");
+        int highest = 0;
+        int hz = video::display_rate(std::max(60, static_cast<int>(fps())), highest);
+        pacing::set_highest_hz(highest);
+        if (hz != g_display_hz) {
+            log::write("video", "display refresh rate %d Hz, up to %d Hz", hz, highest);
+            g_display_hz = hz;
+            pacing::set_display_hz(hz);
         }
+    }
+    static uint64_t queued_frame = 0;
+    bool fresh = queued_frame != g_frame;
+    queued_frame = g_frame;
+    bool presented = true;
+    if (g_interpolated_ready == 0 && g_show_queue.empty()) {
+        if (fresh || !g_recording || gx::veil_moving()) {
+            presented = present_image(window, aspect, g_device.frame.image);
+            g_last_shown = std::chrono::steady_clock::now();
+        }
+    } else if (!fresh) {
+        service_deferred();
+    } else {
+        auto now = std::chrono::steady_clock::now();
+        auto last = g_show_queue.empty() ? g_last_shown : g_shown[g_show_queue.back()].due;
+        if (last - now > std::chrono::duration<double>(g_period / 2)) {
+            g_show_queue.clear();
+            last = g_last_shown;
+        }
+        g_slot = std::clamp(g_planned_slot, 0.002, 0.025);
+        uint32_t queued = g_interpolated_ready + (g_show_real ? 1 : 0);
+        if (queued > 0) {
+            double lead = std::chrono::duration<double>(last - now).count();
+            g_slot = std::clamp(g_slot - (lead - g_slot / 4) * 0.1 / queued, g_slot * 0.9, g_slot * 1.1);
+        }
+        auto step = std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(g_slot));
+        auto slot = std::max(now, last + step);
+        for (uint32_t i = 0; i < g_interpolated_ready; i++) {
+            if (queue_image(g_device.interpolated[i], slot, true)) {
+                slot += step;
+            }
+        }
+        g_interpolated_ready = 0;
+        if (g_show_real) {
+            queue_image(g_device.frame, slot, false);
+        } else {
+            g_hidden_frames++;
+        }
+        service_deferred();
     }
     video::park_while_background();
     apply_scale();
     apply_anisotropy();
-    return true;
+    return presented;
+}
+
+int64_t service_presents() {
+    service_deferred();
+    if (g_show_queue.empty()) {
+        return -1;
+    }
+    auto left = g_shown[g_show_queue.front()].due - std::chrono::steady_clock::now();
+    return std::max<int64_t>(0, std::chrono::duration_cast<std::chrono::microseconds>(left).count());
+}
+
+uint32_t take_interpolated_frames() {
+    uint32_t shown = g_interpolated_frames.exchange(0);
+    uint32_t hidden = g_hidden_frames.exchange(0);
+    return shown > hidden ? shown - hidden : 0;
+}
+
+uint32_t take_late_frames() {
+    return g_late_frames.exchange(0);
 }
 
 void dump_copies(const char* prefix) {
@@ -3834,63 +4835,23 @@ void clear(int x, int y, int width, int height) {
         return;
     }
     place_on_canvas(x, y, width, height);
-    VkClearColorValue color_value{{red / 255.0f, green / 255.0f, blue / 255.0f, alpha / 255.0f}};
-    float depth_value = static_cast<float>(depth) / 16777215.0f;
-    bool whole = x == 0 && y == 0 && width == canvas_width() && height >= std::min(g_shown_height, canvas_height());
-    bool full_color = color_enable && alpha_enable;
-    if (whole && g_pass != Pass::Efb) {
-        if (depth_enable) {
-            g_clear_depth_pending = true;
-            g_clear_depth = depth_value;
-            depth_enable = false;
-        }
-        if (full_color) {
-            g_clear_color_pending = true;
-            g_clear_color = color_value;
-            color_enable = false;
-            alpha_enable = false;
-        }
-        if (!color_enable && !alpha_enable && !depth_enable) {
-            return;
-        }
-    }
-    begin_efb(depth_enable);
-    VkClearRect rect{};
-    rect.rect = {{scaled(x), scaled(y)}, {static_cast<uint32_t>(scaled(x + width) - scaled(x)), static_cast<uint32_t>(scaled(y + height) - scaled(y))}};
-    rect.layerCount = 1;
-    if (color_enable == alpha_enable) {
-        VkClearAttachment attachments[2]{};
-        uint32_t count = 0;
-        if (color_enable) {
-            attachments[count].aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            attachments[count].colorAttachment = 0;
-            attachments[count].clearValue.color = color_value;
-            count++;
-        }
-        if (depth_enable) {
-            attachments[count].aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-            attachments[count].clearValue.depthStencil = {depth_value, 0};
-            count++;
-        }
-        if (count) {
-            vkCmdClearAttachments(g_current->draw, count, attachments, 1, &rect);
-        }
+    ClearCommand command;
+    command.color = color_enable;
+    command.alpha = alpha_enable;
+    command.depth = depth_enable;
+    command.color_value = VkClearColorValue{{red / 255.0f, green / 255.0f, blue / 255.0f, alpha / 255.0f}};
+    command.depth_value = static_cast<float>(depth) / 16777215.0f;
+    command.x = x;
+    command.y = y;
+    command.width = width;
+    command.height = height;
+    if (g_frame_end.due && !g_frame_end.has_clear) {
+        g_frame_end.has_clear = true;
+        g_frame_end.clear = command;
         return;
     }
-    VkPipeline pipeline = clear_pipeline(color_enable, alpha_enable, depth_enable);
-    if (!pipeline) {
-        return;
-    }
-    bind_pipeline(pipeline);
-    set_scissor(rect.rect.offset.x, rect.rect.offset.y, static_cast<int>(rect.rect.extent.width), static_cast<int>(rect.rect.extent.height));
-    struct {
-        float color[4];
-        float depth[4];
-    } values{{color_value.float32[0], color_value.float32[1], color_value.float32[2], color_value.float32[3]}, {depth_value, 0, 0, 0}};
-    vkCmdPushConstants(g_current->draw, g_device.clear_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof values, &values);
-    vkCmdDraw(g_current->draw, 3, 1, 0, 0);
-    g_bound_draw_set = VK_NULL_HANDLE;
-    g_bound_maps = VK_NULL_HANDLE;
+    finish_frame();
+    apply_clear(command);
 }
 
 }

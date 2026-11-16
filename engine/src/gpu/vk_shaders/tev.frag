@@ -214,49 +214,92 @@ vec4 sample_map(uint m, vec2 uv, vec2 dx, vec2 dy) {
     }
 }
 
-const int kFractions[8] = int[8](255, 223, 191, 159, 128, 96, 64, 32);
+ivec4 r0, r1, r2, r3;
+ivec4 k0, k1, k2, k3;
+ivec4 c0, c1;
+ivec3 ind0, ind1, ind2, ind3;
+ivec2 tevcoord;
+int alphabump;
+uint indirect_stages;
+uint texgens;
 
 ivec4 quantized(vec4 value) {
     return ivec4(roundEven(value * 255.0));
 }
 
-ivec3 konst_color(uint sel, ivec4 k[4]) {
+ivec4 reg(uint i) {
+    return i == 0u ? r0 : (i == 1u ? r1 : (i == 2u ? r2 : r3));
+}
+
+ivec4 konst_reg(uint i) {
+    return i == 0u ? k0 : (i == 1u ? k1 : (i == 2u ? k2 : k3));
+}
+
+ivec3 ind_texel(uint i) {
+    return i == 0u ? ind0 : (i == 1u ? ind1 : (i == 2u ? ind2 : ind3));
+}
+
+void set_rgb(uint i, ivec3 value) {
+    if (i == 0u) {
+        r0.rgb = value;
+    } else if (i == 1u) {
+        r1.rgb = value;
+    } else if (i == 2u) {
+        r2.rgb = value;
+    } else {
+        r3.rgb = value;
+    }
+}
+
+void set_alpha(uint i, int value) {
+    if (i == 0u) {
+        r0.a = value;
+    } else if (i == 1u) {
+        r1.a = value;
+    } else if (i == 2u) {
+        r2.a = value;
+    } else {
+        r3.a = value;
+    }
+}
+
+int fraction(uint sel) {
+    return sel < 4u ? 255 - 32 * int(sel) : 128 - 32 * int(sel - 4u);
+}
+
+ivec3 konst_color(uint sel) {
     if (sel < 8u) {
-        return ivec3(kFractions[sel]);
+        return ivec3(fraction(sel));
     }
     if (sel >= 12u && sel < 16u) {
-        return k[sel - 12u].rgb;
+        return konst_reg(sel - 12u).rgb;
     }
     if (sel >= 16u) {
-        uint index = (sel - 16u) & 3u;
-        uint component = (sel - 16u) >> 2u;
-        return ivec3(k[index][component]);
+        return ivec3(konst_reg((sel - 16u) & 3u)[(sel - 16u) >> 2u]);
     }
     return ivec3(0);
 }
 
-int konst_alpha(uint sel, ivec4 k[4]) {
+int konst_alpha(uint sel) {
     if (sel < 8u) {
-        return kFractions[sel];
+        return fraction(sel);
     }
     if (sel >= 16u) {
-        uint index = (sel - 16u) & 3u;
-        uint component = (sel - 16u) >> 2u;
-        return k[index][component];
+        return konst_reg((sel - 16u) & 3u)[(sel - 16u) >> 2u];
     }
     return 0;
 }
 
-ivec3 color_input(uint sel, ivec4 r[4], ivec4 tex, ivec4 ras, ivec3 kc) {
+ivec3 color_input(uint sel, ivec4 tex, ivec4 ras, ivec3 kc) {
     switch (sel) {
-    case 0u: return r[0].rgb;
-    case 1u: return r[0].aaa;
-    case 2u: return r[1].rgb;
-    case 3u: return r[1].aaa;
-    case 4u: return r[2].rgb;
-    case 5u: return r[2].aaa;
-    case 6u: return r[3].rgb;
-    case 7u: return r[3].aaa;
+    case 0u: return r0.rgb;
+    case 1u: return r0.aaa;
+    case 2u: return r1.rgb;
+    case 3u: return r1.aaa;
+    case 4u: return r2.rgb;
+    case 5u: return r2.aaa;
+    case 6u: return r3.rgb;
+    case 7u: return r3.aaa;
     case 8u: return tex.rgb;
     case 9u: return tex.aaa;
     case 10u: return ras.rgb;
@@ -268,12 +311,12 @@ ivec3 color_input(uint sel, ivec4 r[4], ivec4 tex, ivec4 ras, ivec3 kc) {
     }
 }
 
-int alpha_input(uint sel, ivec4 r[4], ivec4 tex, ivec4 ras, int ka) {
+int alpha_input(uint sel, ivec4 tex, ivec4 ras, int ka) {
     switch (sel) {
-    case 0u: return r[0].a;
-    case 1u: return r[1].a;
-    case 2u: return r[2].a;
-    case 3u: return r[3].a;
+    case 0u: return r0.a;
+    case 1u: return r1.a;
+    case 2u: return r2.a;
+    case 3u: return r3.a;
     case 4u: return tex.a;
     case 5u: return ras.a;
     case 6u: return ka;
@@ -317,8 +360,7 @@ ivec3 compare_color(uint mode, bool eq, ivec3 a, ivec3 b, ivec3 c) {
 
 ivec4 apply_swap(ivec4 value, uint table) {
     uint order_bits = SWAPS[table];
-    int components[4] = int[4](value.r, value.g, value.b, value.a);
-    return ivec4(components[order_bits & 3u], components[(order_bits >> 2u) & 3u], components[(order_bits >> 4u) & 3u], components[(order_bits >> 6u) & 3u]);
+    return ivec4(value[order_bits & 3u], value[(order_bits >> 2u) & 3u], value[(order_bits >> 4u) & 3u], value[(order_bits >> 6u) & 3u]);
 }
 
 ivec3 combine(ivec3 a, ivec3 b, ivec3 c, ivec3 d, uint bias_code, bool subtract, uint scale_code) {
@@ -335,156 +377,195 @@ int idot(ivec3 a, ivec3 b) {
     return a.x * b.x + a.y * b.y + a.z * b.z;
 }
 
-const int kWraps[5] = int[5](256 << 7, 128 << 7, 64 << 7, 32 << 7, 16 << 7);
-const int kFormatShifts[4] = int[4](0, 3, 4, 5);
-const int kBumpShifts[4] = int[4](0, 5, 4, 3);
+int wrap_bits(int coord, uint wrap) {
+    return wrap == 0u ? coord : (wrap >= 6u ? 0 : (coord & ((32768 >> int(wrap - 1u)) - 1)));
+}
 
 ivec2 fixpoint(uint coord) {
     return ivec2(select_uv(coord) * texdims[coord].zw * 128.0);
 }
 
-ivec4 sample_fixed(uint map, ivec2 coords, vec2 dx, vec2 dy, uint coord) {
+ivec4 sample_fixed(uint map, ivec2 coords, uint coord) {
+    vec2 uv = select_uv(coord);
     vec2 size = texdims[map].xy;
     vec2 ratio = texdims[coord].zw / size;
-    return quantized(sample_map(map, vec2(coords) / (size * 128.0), dx * ratio, dy * ratio));
+    return quantized(sample_map(map, vec2(coords) / (size * 128.0), dFdx(uv) * ratio, dFdy(uv) * ratio));
+}
+
+void ind_fetch(uint j) {
+    uint reference = INDIRECT.y >> (6u * j);
+    uint map = reference & 7u;
+    uint coord = (reference >> 3u) & 7u;
+    if (coord >= texgens) {
+        coord = 0u;
+    }
+    uint scales = j < 2u ? INDIRECT.z : INDIRECT.w;
+    uint shift_s = (scales >> ((j & 1u) * 8u)) & 15u;
+    uint shift_t = (scales >> ((j & 1u) * 8u + 4u)) & 15u;
+    ivec2 base = fixpoint(coord);
+    ivec3 texel = sample_fixed(map, ivec2(base.x >> shift_s, base.y >> shift_t), coord).abg;
+    if (j == 0u) {
+        ind0 = texel;
+    } else if (j == 1u) {
+        ind1 = texel;
+    } else if (j == 2u) {
+        ind2 = texel;
+    } else {
+        ind3 = texel;
+    }
+}
+
+void tev_stage(uint i) {
+    uint ce = STAGE(i).x;
+    uint ae = STAGE(i).y;
+    uint order = STAGE(i).z;
+    uint ksel = STAGE(i).w;
+    uint coord = (order >> 3u) & 7u;
+    if (coord >= texgens) {
+        coord = 0u;
+    }
+    uint ind = TEVIND(i).x;
+    uint bt = ind & 3u;
+    uint format = (ind >> 2u) & 3u;
+    uint bias = (ind >> 4u) & 7u;
+    uint bump = (ind >> 7u) & 3u;
+    uint matrix_index = (ind >> 9u) & 3u;
+    uint matrix_id = (ind >> 11u) & 3u;
+    uint wrap_s = (ind >> 13u) & 7u;
+    uint wrap_t = (ind >> 16u) & 7u;
+    bool has_stage = bt < indirect_stages;
+    ivec2 base = fixpoint(coord);
+    ivec2 offset = ivec2(0);
+    if (has_stage && bump != 0u) {
+        alphabump = (ind_texel(bt)[max(bump, 1u) - 1u] << (format == 0u ? 0 : 6 - int(format))) & 248;
+    }
+    if (has_stage && matrix_index != 0u) {
+        ivec3 crd = ind_texel(bt) >> (format == 0u ? 0 : int(format) + 2);
+        int add = format == 0u ? -128 : 1;
+        if ((bias & 1u) != 0u) crd.x += add;
+        if ((bias & 2u) != 0u) crd.y += add;
+        if ((bias & 4u) != 0u) crd.z += add;
+        uint m = 2u * (matrix_index - 1u);
+        if (matrix_id == 0u) {
+            offset = ivec2(idot(indmtx[m].xyz, crd), idot(indmtx[m + 1u].xyz, crd)) >> 3;
+        } else if (matrix_id == 1u) {
+            offset = (base * crd.xx) >> 8;
+        } else if (matrix_id == 2u) {
+            offset = (base * crd.yy) >> 8;
+        }
+        int shift = indmtx[m].w;
+        offset = shift >= 0 ? (offset >> shift) : (offset << (-shift));
+    }
+    ivec2 wrapped = ivec2(wrap_bits(base.x, wrap_s), wrap_bits(base.y, wrap_t));
+    tevcoord = ((ind >> 20u) & 1u) != 0u ? tevcoord + wrapped + offset : wrapped + offset;
+    tevcoord = (tevcoord << 8) >> 8;
+    ivec4 tex = ivec4(255);
+    if ((order & 0x40u) != 0u) {
+        tex = texgens == 0u ? ivec4(0) : apply_swap(sample_fixed(order & 7u, tevcoord, coord), (ae >> 2u) & 3u);
+    }
+    ivec4 ras = ivec4(0);
+    uint chan = (order >> 7u) & 7u;
+    if (chan == 0u) {
+        ras = c0;
+    } else if (chan == 1u) {
+        ras = c1;
+    } else if (chan == 5u) {
+        ras = ivec4(alphabump);
+    } else if (chan == 6u) {
+        ras = ivec4(alphabump | (alphabump >> 5));
+    }
+    ras = apply_swap(ras, ae & 3u);
+    ivec3 kc = konst_color(ksel & 31u);
+    int ka = konst_alpha((ksel >> 5u) & 31u);
+    ivec3 a = color_input((ce >> 12u) & 15u, tex, ras, kc) & 255;
+    ivec3 b = color_input((ce >> 8u) & 15u, tex, ras, kc) & 255;
+    ivec3 c = color_input((ce >> 4u) & 15u, tex, ras, kc) & 255;
+    ivec3 d = color_input(ce & 15u, tex, ras, kc);
+    uint bias_code = (ce >> 16u) & 3u;
+    uint scale_code = (ce >> 20u) & 3u;
+    ivec3 color;
+    if (bias_code == 3u) {
+        color = d + compare_color(scale_code, ((ce >> 18u) & 1u) != 0u, a, b, c);
+    } else {
+        color = combine(a, b, c, d, bias_code, ((ce >> 18u) & 1u) != 0u, scale_code);
+    }
+    color = ((ce >> 19u) & 1u) != 0u ? clamp(color, 0, 255) : clamp(color, -1024, 1023);
+    int aa = alpha_input((ae >> 13u) & 7u, tex, ras, ka) & 255;
+    int ab = alpha_input((ae >> 10u) & 7u, tex, ras, ka) & 255;
+    int ac = alpha_input((ae >> 7u) & 7u, tex, ras, ka) & 255;
+    int ad = alpha_input((ae >> 4u) & 7u, tex, ras, ka);
+    uint abias_code = (ae >> 16u) & 3u;
+    uint ascale_code = (ae >> 20u) & 3u;
+    int alpha;
+    if (abias_code == 3u) {
+        bool aequal = ((ae >> 18u) & 1u) != 0u;
+        bool apass = ascale_code == 3u ? (aequal ? aa == ab : aa > ab) : compare_inputs(ascale_code, aequal, a, b);
+        alpha = ad + (apass ? ac : 0);
+    } else {
+        alpha = combine(ivec3(aa, 0, 0), ivec3(ab, 0, 0), ivec3(ac, 0, 0), ivec3(ad, 0, 0), abias_code, ((ae >> 18u) & 1u) != 0u, ascale_code).x;
+    }
+    alpha = ((ae >> 19u) & 1u) != 0u ? clamp(alpha, 0, 255) : clamp(alpha, -1024, 1023);
+    set_rgb((ce >> 22u) & 3u, color);
+    set_alpha((ae >> 22u) & 3u, alpha);
 }
 
 void main() {
-    vec2 gradient_x[8];
-    vec2 gradient_y[8];
-    for (int g = 0; g < 8; g++) {
-        vec2 value = projected(v_uv[g]);
-        gradient_x[g] = dFdx(value);
-        gradient_y[g] = dFdy(value);
-    }
-    ivec4 k[4] = ivec4[4](quantized(konst[0]), quantized(konst[1]), quantized(konst[2]), quantized(konst[3]));
-    ivec4 r[4] = ivec4[4](quantized(initial[0]), quantized(initial[1]), quantized(initial[2]), quantized(initial[3]));
-    ivec4 c0 = quantized(v_c0);
-    ivec4 c1 = quantized(v_c1);
+    k0 = quantized(konst[0]);
+    k1 = quantized(konst[1]);
+    k2 = quantized(konst[2]);
+    k3 = quantized(konst[3]);
+    r0 = quantized(initial[0]);
+    r1 = quantized(initial[1]);
+    r2 = quantized(initial[2]);
+    r3 = quantized(initial[3]);
+    c0 = quantized(v_c0);
+    c1 = quantized(v_c1);
     uint count = COUNT;
     if (count == 0u) {
-        r[0] = c0;
+        r0 = c0;
     }
-    uint indirect_stages = INDIRECT.x & 7u;
-    uint texgens = (INDIRECT.x >> 8u) & 15u;
-    ivec3 indirect_texel[4] = ivec3[4](ivec3(0), ivec3(0), ivec3(0), ivec3(0));
-    for (uint j = 0u; j < indirect_stages && j < 4u; j++) {
-        uint reference = INDIRECT.y >> (6u * j);
-        uint map = reference & 7u;
-        uint coord = (reference >> 3u) & 7u;
-        if (coord >= texgens) {
-            coord = 0u;
+    indirect_stages = INDIRECT.x & 7u;
+    texgens = (INDIRECT.x >> 8u) & 15u;
+    ind0 = ivec3(0);
+    ind1 = ivec3(0);
+    ind2 = ivec3(0);
+    ind3 = ivec3(0);
+    tevcoord = ivec2(0);
+    alphabump = 0;
+    if (kVariant) {
+        if (indirect_stages > 0u) ind_fetch(0u);
+        if (indirect_stages > 1u) ind_fetch(1u);
+        if (indirect_stages > 2u) ind_fetch(2u);
+        if (indirect_stages > 3u) ind_fetch(3u);
+        if (kCount > 0u) tev_stage(0u);
+        if (kCount > 1u) tev_stage(1u);
+        if (kCount > 2u) tev_stage(2u);
+        if (kCount > 3u) tev_stage(3u);
+        if (kCount > 4u) tev_stage(4u);
+        if (kCount > 5u) tev_stage(5u);
+        if (kCount > 6u) tev_stage(6u);
+        if (kCount > 7u) tev_stage(7u);
+        if (kCount > 8u) tev_stage(8u);
+        if (kCount > 9u) tev_stage(9u);
+        if (kCount > 10u) tev_stage(10u);
+        if (kCount > 11u) tev_stage(11u);
+        if (kCount > 12u) tev_stage(12u);
+        if (kCount > 13u) tev_stage(13u);
+        if (kCount > 14u) tev_stage(14u);
+        if (kCount > 15u) tev_stage(15u);
+    } else {
+        for (uint j = 0u; j < indirect_stages && j < 4u; j++) {
+            ind_fetch(j);
         }
-        uint scales = j < 2u ? INDIRECT.z : INDIRECT.w;
-        uint shift_s = (scales >> ((j & 1u) * 8u)) & 15u;
-        uint shift_t = (scales >> ((j & 1u) * 8u + 4u)) & 15u;
-        ivec2 base = fixpoint(coord);
-        indirect_texel[j] = sample_fixed(map, ivec2(base.x >> shift_s, base.y >> shift_t), gradient_x[coord], gradient_y[coord], coord).abg;
+        for (uint i = 0u; i < count; i++) {
+            tev_stage(i);
+        }
     }
-    ivec2 tevcoord = ivec2(0);
-    int alphabump = 0;
-    for (uint i = 0u; i < count; i++) {
-        uint ce = STAGE(i).x;
-        uint ae = STAGE(i).y;
-        uint order = STAGE(i).z;
-        uint ksel = STAGE(i).w;
-        uint coord = (order >> 3u) & 7u;
-        if (coord >= texgens) {
-            coord = 0u;
-        }
-        uint ind = TEVIND(i).x;
-        uint bt = ind & 3u;
-        uint format = (ind >> 2u) & 3u;
-        uint bias = (ind >> 4u) & 7u;
-        uint bump = (ind >> 7u) & 3u;
-        uint matrix_index = (ind >> 9u) & 3u;
-        uint matrix_id = (ind >> 11u) & 3u;
-        uint wrap_s = (ind >> 13u) & 7u;
-        uint wrap_t = (ind >> 16u) & 7u;
-        bool has_stage = bt < indirect_stages;
-        ivec2 base = fixpoint(coord);
-        ivec2 offset = ivec2(0);
-        if (has_stage && bump != 0u) {
-            alphabump = (indirect_texel[bt][max(bump, 1u) - 1u] << kBumpShifts[format]) & 248;
-        }
-        if (has_stage && matrix_index != 0u) {
-            ivec3 crd = indirect_texel[bt] >> kFormatShifts[format];
-            int add = format == 0u ? -128 : 1;
-            if ((bias & 1u) != 0u) crd.x += add;
-            if ((bias & 2u) != 0u) crd.y += add;
-            if ((bias & 4u) != 0u) crd.z += add;
-            uint m = 2u * (matrix_index - 1u);
-            if (matrix_id == 0u) {
-                offset = ivec2(idot(indmtx[m].xyz, crd), idot(indmtx[m + 1u].xyz, crd)) >> 3;
-            } else if (matrix_id == 1u) {
-                offset = (base * crd.xx) >> 8;
-            } else if (matrix_id == 2u) {
-                offset = (base * crd.yy) >> 8;
-            }
-            int shift = indmtx[m].w;
-            offset = shift >= 0 ? (offset >> shift) : (offset << (-shift));
-        }
-        ivec2 wrapped;
-        wrapped.x = wrap_s == 0u ? base.x : (wrap_s >= 6u ? 0 : (base.x & (kWraps[max(wrap_s, 1u) - 1u] - 1)));
-        wrapped.y = wrap_t == 0u ? base.y : (wrap_t >= 6u ? 0 : (base.y & (kWraps[max(wrap_t, 1u) - 1u] - 1)));
-        tevcoord = ((ind >> 20u) & 1u) != 0u ? tevcoord + wrapped + offset : wrapped + offset;
-        tevcoord = (tevcoord << 8) >> 8;
-        ivec4 tex = ivec4(255);
-        if ((order & 0x40u) != 0u) {
-            tex = texgens == 0u ? ivec4(0) : apply_swap(sample_fixed(order & 7u, tevcoord, gradient_x[coord], gradient_y[coord], coord), (ae >> 2u) & 3u);
-        }
-        ivec4 ras = ivec4(0);
-        uint chan = (order >> 7u) & 7u;
-        if (chan == 0u) {
-            ras = c0;
-        } else if (chan == 1u) {
-            ras = c1;
-        } else if (chan == 5u) {
-            ras = ivec4(alphabump);
-        } else if (chan == 6u) {
-            ras = ivec4(alphabump | (alphabump >> 5));
-        }
-        ras = apply_swap(ras, ae & 3u);
-        ivec3 kc = konst_color(ksel & 31u, k);
-        int ka = konst_alpha((ksel >> 5u) & 31u, k);
-        ivec3 a = color_input((ce >> 12u) & 15u, r, tex, ras, kc) & 255;
-        ivec3 b = color_input((ce >> 8u) & 15u, r, tex, ras, kc) & 255;
-        ivec3 c = color_input((ce >> 4u) & 15u, r, tex, ras, kc) & 255;
-        ivec3 d = color_input(ce & 15u, r, tex, ras, kc);
-        uint bias_code = (ce >> 16u) & 3u;
-        uint scale_code = (ce >> 20u) & 3u;
-        ivec3 color;
-        if (bias_code == 3u) {
-            color = d + compare_color(scale_code, ((ce >> 18u) & 1u) != 0u, a, b, c);
-        } else {
-            color = combine(a, b, c, d, bias_code, ((ce >> 18u) & 1u) != 0u, scale_code);
-        }
-        color = ((ce >> 19u) & 1u) != 0u ? clamp(color, 0, 255) : clamp(color, -1024, 1023);
-        int aa = alpha_input((ae >> 13u) & 7u, r, tex, ras, ka) & 255;
-        int ab = alpha_input((ae >> 10u) & 7u, r, tex, ras, ka) & 255;
-        int ac = alpha_input((ae >> 7u) & 7u, r, tex, ras, ka) & 255;
-        int ad = alpha_input((ae >> 4u) & 7u, r, tex, ras, ka);
-        uint abias_code = (ae >> 16u) & 3u;
-        uint ascale_code = (ae >> 20u) & 3u;
-        int alpha;
-        if (abias_code == 3u) {
-            bool aequal = ((ae >> 18u) & 1u) != 0u;
-            bool apass = ascale_code == 3u ? (aequal ? aa == ab : aa > ab) : compare_inputs(ascale_code, aequal, a, b);
-            alpha = ad + (apass ? ac : 0);
-        } else {
-            alpha = combine(ivec3(aa, 0, 0), ivec3(ab, 0, 0), ivec3(ac, 0, 0), ivec3(ad, 0, 0), abias_code, ((ae >> 18u) & 1u) != 0u, ascale_code).x;
-        }
-        alpha = ((ae >> 19u) & 1u) != 0u ? clamp(alpha, 0, 255) : clamp(alpha, -1024, 1023);
-        uint color_dest = (ce >> 22u) & 3u;
-        uint alpha_dest = (ae >> 22u) & 3u;
-        r[color_dest].rgb = color;
-        r[alpha_dest].a = alpha;
-    }
-    ivec4 result = r[0];
+    ivec4 result = r0;
     if (count > 0u) {
         uint last_color = (STAGE(max(count, 1u) - 1u).x >> 22u) & 3u;
         uint last_alpha = (STAGE(max(count, 1u) - 1u).y >> 22u) & 3u;
-        result = ivec4(r[last_color].rgb, r[last_alpha].a);
+        result = ivec4(reg(last_color).rgb, reg(last_alpha).a);
     }
     result &= 255;
     if ((header.w & 2u) != 0u) {
