@@ -37,6 +37,7 @@
 #include "wp/screenshot.h"
 #include "wp/settings.h"
 #include "wp/ui_text.h"
+#include "wp/touch.h"
 
 namespace wp::video {
 
@@ -237,7 +238,38 @@ void handle_event(SDL_Window* window, const SDL_Event& event) {
         play_time::save();
         log::flush();
         std::_Exit(0);
+    case SDL_EVENT_FINGER_DOWN:
+    case SDL_EVENT_FINGER_MOTION:
+    case SDL_EVENT_FINGER_UP: {
+        int width = 0;
+        int height = 0;
+        SDL_GetWindowSizeInPixels(window, &width, &height);
+        float x = event.tfinger.x * static_cast<float>(width);
+        float y = event.tfinger.y * static_cast<float>(height);
+        if (options::menu_open()) {
+            if (event.type == SDL_EVENT_FINGER_DOWN) {
+                apply_option(window, options::menu_click(window, static_cast<int>(x), static_cast<int>(y), false));
+            } else if (event.type == SDL_EVENT_FINGER_MOTION) {
+                options::menu_hover(window, static_cast<int>(x), static_cast<int>(y));
+                apply_option(window, options::menu_drag(window, static_cast<int>(x), static_cast<int>(y)));
+            }
+            return;
+        }
+        touch::Phase phase = event.type == SDL_EVENT_FINGER_DOWN ? touch::Phase::Down : event.type == SDL_EVENT_FINGER_UP ? touch::Phase::Up : touch::Phase::Move;
+        touch::finger(static_cast<int64_t>(event.tfinger.fingerID), phase, x, y, width, height);
+        if (touch::take_menu_press()) {
+            options::toggle_menu(window);
+        }
+        return;
+    }
     case SDL_EVENT_KEY_DOWN: {
+        if (event.key.scancode == SDL_SCANCODE_AC_BACK) {
+            if (!event.key.repeat) {
+                options::toggle_menu(window);
+            }
+            return;
+        }
+        touch::other_input();
         int vk = vk_for(event.key.scancode);
         bool repeat = event.key.repeat;
         if (vk == kF11 && !repeat) {
@@ -350,6 +382,10 @@ void finish_start(SDL_Window* window, SDL_GLContext context) {
 }
 
 void window_thread(bool visible) {
+    if (touch::enabled()) {
+        SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
+    }
+    SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");
     if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) {
         std::fprintf(stderr, "cannot open a window: %s\n", SDL_GetError());
         finish_start(nullptr, nullptr);
