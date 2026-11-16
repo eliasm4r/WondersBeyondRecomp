@@ -17,7 +17,7 @@ OUTPUTS = {"pokepark2": "apk", "android_smoke": "smoke"}
 
 
 def newest(folder, pattern):
-    found = sorted(Path(folder).glob(pattern), key=lambda path: [int(part) if part.isdigit() else part for part in re.split(r"[.\-_]", path.name)])
+    found = sorted(Path(folder).glob(pattern), key=lambda path: [(0, int(part), "") if part.isdigit() else (1, 0, part) for part in re.split(r"[.\-_]", path.name)])
     if not found:
         sys.exit(f"nothing matches {pattern} in {folder}")
     return found[-1]
