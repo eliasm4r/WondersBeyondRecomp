@@ -1321,6 +1321,8 @@ struct MappedRing {
 MappedRing g_mapped_vertices;
 MappedRing g_mapped_indices;
 MappedRing g_mapped_rows;
+MappedRing g_mapped_kept_vertices;
+MappedRing g_mapped_kept_indices;
 
 bool map_ring(MappedRing& ring, GLuint& buffer, uint32_t bytes) {
     constexpr GLbitfield kPersistent = 0x0040;
@@ -1751,6 +1753,15 @@ bool create_kept_buffers() {
     }
     g_device.kept_vertices = buffers[0];
     g_device.kept_indices = buffers[1];
+    if (g_es && g_buffer_storage) {
+        bool mapped = map_ring(g_mapped_kept_vertices, g_device.kept_vertices, kKeptVertexBytes) &&
+                      map_ring(g_mapped_kept_indices, g_device.kept_indices, kKeptIndexBytes);
+        if (!mapped) {
+            g_mapped_kept_vertices.memory = nullptr;
+            g_mapped_kept_indices.memory = nullptr;
+        }
+        log::write("video", mapped ? "kept models written straight into mapped video memory" : "kept models uploaded one by one: persistent mapping refused");
+    }
     return true;
 }
 
@@ -2576,6 +2587,10 @@ bool keep_run(const VertexRun& run, const uint8_t* vertices, const uint16_t* ind
         return false;
     }
     uint32_t bytes = run.vertices * run.stride;
+    const bool mapped = g_mapped_kept_vertices.memory && g_mapped_kept_indices.memory;
+    if (mapped) {
+        placed = false;
+    }
     if (placed && kept.generation == g_kept_generation) {
         if (g_run_kept != 0) {
             flush_pending();
@@ -2591,6 +2606,11 @@ bool keep_run(const VertexRun& run, const uint8_t* vertices, const uint16_t* ind
         g_kept_vertex_used = vertex + bytes;
         g_kept_index_used += run.indices;
     }
+    if (mapped) {
+        std::memcpy(g_mapped_kept_vertices.memory + kept.vertex, vertices, bytes);
+        std::memcpy(g_mapped_kept_indices.memory + static_cast<size_t>(kept.index) * sizeof(uint16_t), indices, static_cast<size_t>(run.indices) * sizeof(uint16_t));
+        return true;
+    }
     gl.BindBuffer(GL_ARRAY_BUFFER, g_device.kept_vertices);
     gl.BufferSubData(GL_ARRAY_BUFFER, kept.vertex, bytes, vertices);
     gl.BindBuffer(GL_ARRAY_BUFFER, g_device.kept_indices);
@@ -2601,6 +2621,11 @@ bool keep_run(const VertexRun& run, const uint8_t* vertices, const uint16_t* ind
 void reset_kept() {
     if (g_run_kept != 0) {
         flush_pending();
+    }
+    if (g_mapped_kept_vertices.memory) {
+        GLsync idle = gl.FenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        gl.ClientWaitSync(idle, GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
+        gl.DeleteSync(idle);
     }
     g_kept_generation++;
     g_kept_vertex_used = 0;
