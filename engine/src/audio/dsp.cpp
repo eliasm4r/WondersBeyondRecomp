@@ -9,8 +9,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <random>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -109,7 +111,21 @@ struct Statistics {
 
 DSP::DSPCore* g_core = nullptr;
 bool g_started = false;
-uint16_t g_control = kControlHalt;
+std::mutex g_lock;
+std::atomic<int> g_guest_waiting{0};
+bool g_own_thread = false;
+
+struct GuestLock {
+    GuestLock() {
+        g_guest_waiting.fetch_add(1, std::memory_order_relaxed);
+        g_lock.lock();
+        g_guest_waiting.fetch_sub(1, std::memory_order_relaxed);
+    }
+    ~GuestLock() {
+        g_lock.unlock();
+    }
+};
+std::atomic<uint16_t> g_control{kControlHalt};
 uint16_t g_aram_info = 0;
 uint16_t g_aram_mode = 1;
 uint16_t g_aram_refresh = 156;
@@ -200,8 +216,12 @@ bool load_rom(RomBlob rom, uint16_t* words, size_t count) {
     return true;
 }
 
+thread_local bool g_on_dsp_thread = false;
+
 void assert_interrupt_line() {
-    g_poll_counter = 1;
+    if (!g_on_dsp_thread) {
+        g_poll_counter = 1;
+    }
 }
 
 void raise(uint16_t interrupt) {
@@ -553,6 +573,8 @@ void report(Clock::time_point now) {
     g_statistics.since = now;
 }
 
+void dsp_thread();
+
 void start() {
     if (g_started) {
         return;
@@ -575,6 +597,14 @@ void start() {
     g_core = core;
     g_last_update = Clock::now();
     audio::start_output();
+#ifdef __ANDROID__
+    g_own_thread = !std::getenv("WP_DSP_ON_CPU_THREAD");
+#else
+    g_own_thread = std::getenv("WP_DSP_THREAD") != nullptr;
+#endif
+    if (g_own_thread) {
+        std::thread([] { wp::run_with_stack(16u << 20, [] { dsp_thread(); }); }).detach();
+    }
 }
 
 void do_aram_dma() {
@@ -621,13 +651,7 @@ void run_for_mail() {
     }
 }
 
-}
-
-void update() {
-    if (!g_core) {
-        return;
-    }
-    Clock::time_point now = Clock::now();
+void run_owed(Clock::time_point now) {
     accumulate(now);
     while (g_owed >= kSlice && !halted()) {
         run_slice(kSlice);
@@ -635,15 +659,57 @@ void update() {
     if (halted()) {
         g_owed = 0.0;
     }
+}
+
+void dsp_thread() {
+    g_on_dsp_thread = true;
+    while (true) {
+        bool more = true;
+        while (more) {
+            while (g_guest_waiting.load(std::memory_order_relaxed) != 0) {
+                std::this_thread::yield();
+            }
+            std::lock_guard<std::mutex> hold(g_lock);
+            accumulate(Clock::now());
+            more = g_owed >= kSlice && !halted();
+            if (more) {
+                run_slice(kSlice);
+            } else if (halted()) {
+                g_owed = 0.0;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::microseconds(500));
+    }
+}
+
+}
+
+void update() {
+    std::unique_lock<std::mutex> hold(g_lock, std::defer_lock);
+    if (g_own_thread) {
+        if (!hold.try_lock()) {
+            return;
+        }
+    } else {
+        hold.lock();
+    }
+    if (!g_core) {
+        return;
+    }
+    Clock::time_point now = Clock::now();
+    if (!g_own_thread) {
+        run_owed(now);
+    }
     pump_audio_dma(now);
     report(now);
 }
 
 std::chrono::microseconds idle_wait() {
+    GuestLock hold;
     if (!g_core) {
         return std::chrono::microseconds::max();
     }
-    if (!halted() && !g_core->DSPState().GetAnalyzer().IsIdleSkip(g_core->DSPState().pc)) {
+    if (!g_own_thread && !halted() && !g_core->DSPState().GetAnalyzer().IsIdleSkip(g_core->DSPState().pc)) {
         return std::chrono::microseconds(0);
     }
     if (!(g_audio_dma.control & 0x8000) || g_audio_dma.remaining == 0) {
@@ -655,6 +721,7 @@ std::chrono::microseconds idle_wait() {
 }
 
 uint16_t read16(uint32_t address) {
+    GuestLock hold;
     start();
     uint32_t reg = 0x5000 | (address & 0xFFE);
     switch (reg) {
@@ -708,6 +775,7 @@ uint16_t read16(uint32_t address) {
 }
 
 void write16(uint32_t address, uint16_t value) {
+    GuestLock hold;
     start();
     uint32_t reg = 0x5000 | (address & 0xFFE);
     switch (reg) {
@@ -795,7 +863,8 @@ Status status() {
 }
 
 uint32_t pending_interrupt() {
-    uint16_t active = static_cast<uint16_t>((g_control >> 1) & g_control & kIntAll);
+    uint16_t control = g_control.load(std::memory_order_acquire);
+    uint16_t active = static_cast<uint16_t>((control >> 1) & control & kIntAll);
     if (active & kIntDsp) {
         return kInterruptDsp;
     }

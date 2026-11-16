@@ -566,7 +566,11 @@ void window_thread(bool visible) {
 #endif
     bool cursor_hidden = false;
     while (true) {
+#ifdef __ANDROID__
+        SDL_Delay(4);
+#else
         SDL_WaitEventTimeout(nullptr, kMenuPeriodMs);
+#endif
         drain_events(window);
         if (g_title_changed.exchange(false)) {
             std::string title;

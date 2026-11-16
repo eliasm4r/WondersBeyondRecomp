@@ -978,6 +978,9 @@ struct Device {
     uint32_t touch_height = 0;
     uint64_t touch_version = 0;
     bool touch_visible = false;
+    GLuint knob_texture = 0;
+    uint32_t knob_width = 0;
+    uint32_t knob_height = 0;
     GLuint hud_texture = 0;
     uint32_t hud_width = 0;
     uint32_t hud_height = 0;
@@ -1419,6 +1422,142 @@ constexpr uint32_t kMaxLinking = 4;
 uint32_t g_variants_ready = 0;
 uint32_t g_variants_failed = 0;
 double g_variant_seconds = 0.0;
+uint32_t g_variant_spacing = 0;
+
+using GetProgramBinaryFunction = void(APIENTRY*)(GLuint, GLsizei, GLsizei*, GLenum*, void*);
+using ProgramBinaryFunction = void(APIENTRY*)(GLuint, GLenum, const void*, GLsizei);
+
+struct BinaryCache {
+    bool opened = false;
+    GetProgramBinaryFunction get = nullptr;
+    ProgramBinaryFunction load = nullptr;
+    std::string path;
+    std::unordered_map<std::string, std::pair<GLenum, std::string>> programs;
+};
+
+BinaryCache g_binaries;
+
+std::string binary_name(int kind, const std::string& key) {
+    return std::string(1, static_cast<char>('0' + kind)) + key;
+}
+
+void open_binaries() {
+    BinaryCache& cache = g_binaries;
+    cache.opened = true;
+    const char* setting = std::getenv("WP_SHADER_CACHE");
+    if (setting && std::strcmp(setting, "0") == 0) {
+        return;
+    }
+    cache.get = reinterpret_cast<GetProgramBinaryFunction>(SDL_GL_GetProcAddress("glGetProgramBinary"));
+    cache.load = reinterpret_cast<ProgramBinaryFunction>(SDL_GL_GetProcAddress("glProgramBinary"));
+    GLint formats = 0;
+    if (cache.get && cache.load) {
+        gl.GetIntegerv(0x87FE, &formats);
+    }
+    if (formats <= 0) {
+        cache.get = nullptr;
+        cache.load = nullptr;
+        return;
+    }
+    std::string identity = "WPGL1|";
+    for (GLenum name : {GLenum(GL_VENDOR), GLenum(GL_RENDERER), GLenum(GL_VERSION)}) {
+        const GLubyte* text = gl.GetString(name);
+        identity += text ? reinterpret_cast<const char*>(text) : "";
+        identity += "|";
+    }
+    uint64_t sources = 1469598103934665603ull;
+    for (const char* source : {kTevFragment, kTevVertex, kRunVertex}) {
+        for (const char* at = source; *at; at++) {
+            sources = (sources ^ static_cast<uint8_t>(*at)) * 1099511628211ull;
+        }
+    }
+    identity += std::to_string(sources) + "\n";
+    cache.path = (std::filesystem::path(game::description().settings_file).parent_path() / "programs_gl.bin").string();
+    std::string bytes;
+    if (FILE* file = std::fopen(cache.path.c_str(), "rb")) {
+        char buffer[1 << 16];
+        size_t read = 0;
+        while ((read = std::fread(buffer, 1, sizeof buffer, file)) > 0) {
+            bytes.append(buffer, read);
+        }
+        std::fclose(file);
+    }
+    if (bytes.compare(0, identity.size(), identity) != 0) {
+        if (FILE* file = std::fopen(cache.path.c_str(), "wb")) {
+            std::fwrite(identity.data(), 1, identity.size(), file);
+            std::fclose(file);
+        }
+        log::write("video", "compiled pixel shaders start a new cache");
+        return;
+    }
+    size_t at = identity.size();
+    while (bytes.size() - at >= 12) {
+        uint32_t sizes[3] = {};
+        std::memcpy(sizes, bytes.data() + at, 12);
+        size_t end = at + 12 + static_cast<size_t>(sizes[0]) + sizes[2];
+        if (end > bytes.size()) {
+            break;
+        }
+        cache.programs[bytes.substr(at + 12, sizes[0])] = {static_cast<GLenum>(sizes[1]), bytes.substr(at + 12 + sizes[0], sizes[2])};
+        at = end;
+    }
+    log::write("video", "%zu compiled pixel shaders loaded from the cache", cache.programs.size());
+}
+
+bool load_binary(Variant& variant, int kind, const std::string& key) {
+    BinaryCache& cache = g_binaries;
+    if (!cache.opened) {
+        open_binaries();
+    }
+    if (!cache.load) {
+        return false;
+    }
+    auto found = cache.programs.find(binary_name(kind, key));
+    if (found == cache.programs.end()) {
+        return false;
+    }
+    GLuint id = gl.CreateProgram();
+    cache.load(id, found->second.first, found->second.second.data(), static_cast<GLsizei>(found->second.second.size()));
+    GLint ok = 0;
+    gl.GetProgramiv(id, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        gl.DeleteProgram(id);
+        cache.programs.erase(found);
+        return false;
+    }
+    variant.linking = id;
+    g_variants_linking++;
+    return true;
+}
+
+void store_binary(GLuint id, int kind, const std::string& key) {
+    BinaryCache& cache = g_binaries;
+    if (!cache.get || cache.path.empty()) {
+        return;
+    }
+    GLint length = 0;
+    gl.GetProgramiv(id, 0x8741, &length);
+    if (length <= 0) {
+        return;
+    }
+    std::string binary(static_cast<size_t>(length), '\0');
+    GLenum format = 0;
+    GLsizei written = 0;
+    cache.get(id, length, &written, &format, binary.data());
+    if (written <= 0) {
+        return;
+    }
+    binary.resize(static_cast<size_t>(written));
+    std::string name = binary_name(kind, key);
+    const uint32_t sizes[3] = {static_cast<uint32_t>(name.size()), static_cast<uint32_t>(format), static_cast<uint32_t>(binary.size())};
+    if (FILE* file = std::fopen(cache.path.c_str(), "ab")) {
+        std::fwrite(sizes, 1, sizeof sizes, file);
+        std::fwrite(name.data(), 1, name.size(), file);
+        std::fwrite(binary.data(), 1, binary.size(), file);
+        std::fclose(file);
+    }
+    cache.programs[name] = {format, std::move(binary)};
+}
 
 bool parallel_compile() {
     static const bool available = [] {
@@ -1491,7 +1630,7 @@ void start_variant(Variant& variant, int kind, const std::string& key) {
     g_variants_linking++;
 }
 
-void finish_variant(Variant& variant, int kind) {
+void finish_variant(Variant& variant, int kind, const std::string& key, bool fresh) {
     GLuint id = variant.linking;
     variant.linking = 0;
     g_variants_linking--;
@@ -1516,6 +1655,40 @@ void finish_variant(Variant& variant, int kind) {
     gl.UniformBlockBinding(id, gl.GetUniformBlockIndex(id, "Constants"), 0);
     variant.program.id = id;
     g_variants_ready++;
+    if (fresh) {
+        store_binary(id, kind, key);
+    }
+}
+
+void warm_variants() {
+    if (!g_binaries.opened) {
+        open_binaries();
+    }
+    auto started = std::chrono::steady_clock::now();
+    std::vector<std::string> names;
+    for (const auto& entry : g_binaries.programs) {
+        names.push_back(entry.first);
+    }
+    size_t prepared = 0;
+    for (const std::string& name : names) {
+        int kind = name.empty() ? -1 : name[0] - '0';
+        if (kind != 0 && kind != 1) {
+            continue;
+        }
+        std::string key = name.substr(1);
+        Variant& variant = g_variants[kind][key];
+        if (variant.program.id || variant.done || variant.linking) {
+            continue;
+        }
+        if (load_binary(variant, kind, key)) {
+            finish_variant(variant, kind, key, false);
+            prepared++;
+        }
+    }
+    if (prepared) {
+        log::write("video", "%zu pixel shader variants prepared at launch in %.0f ms", prepared,
+                   std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
+    }
 }
 
 const Program& tev_program(const Constants& constants, bool early_depth, int kind) {
@@ -1524,6 +1697,8 @@ const Program& tev_program(const Constants& constants, bool early_depth, int kin
     if (off) {
         return generic;
     }
+    static const bool warmed = (warm_variants(), true);
+    (void)warmed;
     bool early = early_depth && g_device.early_tev.id != g_device.tev.id;
     std::string key = variant_key(constants, early);
     Variant& variant = g_variants[kind][key];
@@ -1533,8 +1708,13 @@ const Program& tev_program(const Constants& constants, bool early_depth, int kin
     if (variant.done) {
         return generic;
     }
-    bool parallel = parallel_compile();
     auto started = std::chrono::steady_clock::now();
+    if (!variant.linking && load_binary(variant, kind, key)) {
+        finish_variant(variant, kind, key, false);
+        g_variant_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+        return variant.program.id ? variant.program : generic;
+    }
+    bool parallel = parallel_compile();
     if (!variant.linking) {
         if (parallel ? g_variants_linking >= kMaxLinking : g_variant_budget == 0) {
             return generic;
@@ -1547,7 +1727,7 @@ const Program& tev_program(const Constants& constants, bool early_depth, int kin
         gl.GetProgramiv(variant.linking, kCompletionStatus, &complete);
     }
     if (complete) {
-        finish_variant(variant, kind);
+        finish_variant(variant, kind, key, true);
     }
     g_variant_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     return variant.program.id ? variant.program : generic;
@@ -2755,7 +2935,13 @@ void copy_to_framebuffer(int x, int y, int width, int height, bool depth, const 
     wait_for_frame(g_frame % 2);
     g_frames_in_flight[g_frame % 2] = gl.FenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     g_frame_to_wait = static_cast<int>((g_frame + 1) % 2);
-    g_variant_budget = 1;
+    constexpr uint32_t kSlowCompileSpacing = 6;
+    if (g_es && !parallel_compile()) {
+        g_variant_spacing = (g_variant_spacing + 1) % kSlowCompileSpacing;
+        g_variant_budget = g_variant_spacing == 0 ? 1 : 0;
+    } else {
+        g_variant_budget = 1;
+    }
     static auto logged = std::chrono::steady_clock::now();
     auto now = std::chrono::steady_clock::now();
     if (g_variant_seconds > 0.0 && now - logged >= std::chrono::seconds(1)) {
@@ -2896,11 +3082,14 @@ void draw_overlay(int client_width, int client_height, int bar) {
         placed.y += bar;
         draw_image(g_device.hint_texture, placed, client_height);
     }
-    if (touch::take(g_device.touch_version, image, g_device.touch_visible, client_width, client_height) && g_device.touch_visible && !image.pixels.empty()) {
+    options::Image knob;
+    if (touch::take(g_device.touch_version, image, knob, g_device.touch_visible, client_width, client_height) && g_device.touch_visible && !image.pixels.empty()) {
         upload_image(g_device.touch_texture, g_device.touch_width, g_device.touch_height, image);
+        upload_image(g_device.knob_texture, g_device.knob_width, g_device.knob_height, knob);
     }
     if (g_device.touch_visible && !g_device.overlay_visible) {
         draw_image(g_device.touch_texture, options::Rect{0, 0, client_width, client_height}, client_height);
+        draw_image(g_device.knob_texture, touch::knob_rect(client_height), client_height);
     }
     if (g_device.overlay_visible) {
         draw_image(g_device.overlay_texture, options::place(client_width, client_height, static_cast<int>(g_device.overlay_width), static_cast<int>(g_device.overlay_height)),
