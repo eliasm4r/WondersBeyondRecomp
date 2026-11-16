@@ -1444,9 +1444,37 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
 - The activity takes every configuration change itself, as in SDL's own template: with a shorter list, the first
   rotation to landscape restarted the activity and SDL ended the app.
 - Touch controls (`touch.cpp`): a floating stick in the left 45 % of the screen and the Wii Remote buttons on the
-  right, sized from the screen's height, drawn over the game at half resolution. They hide when a gamepad or a key
-  is used and come back at the next touch. The Menu button and Android's back button open the options menu, where
-  touches act as mouse clicks. `WP_TOUCH=1` turns them on elsewhere.
+  right, sized from the screen's height (`input.touch_size`), placed inside the safe area that SDL reports so a
+  notch never covers them, drawn over the game at half resolution. They hide when a gamepad or a key is used and
+  come back at the next touch. The Menu button and Android's back button open the options menu. `WP_TOUCH=1` turns
+  them on elsewhere. Until 2026-11-16 the touch state only reached the scripted input path, so player one ignored
+  it: it is now added in `device_sample` next to the gamepad.
+- A finger that lands on neither the stick nor a button turns the camera: its movement goes to
+  `free_camera::add_mouse`, 1900 counts per screen height at 100 %, scaled so `camera.touch_speed` replaces the mouse
+  speed. In Cake Contraption (attraction mode Aim) the same finger is the Wii pointer instead, converted to the
+  picture with `video::image_point`; a tap (under 300 ms, under 4 % of the height of travel) also holds A for 150 ms,
+  so a tap aims and shoots. In Power Bash (mode Shake) the touch A becomes `kMotionShakeLeft`, one strike per press,
+  as the keyboard's strike keys; 2 drops the bomb through the existing Two to A swap.
+- Shaking the phone: SDL's accelerometer, in g, shakes the remote for 250 ms whenever the force differs from gravity
+  by more than 1.1 g (`input.phone_shake`). Walking or tilting stays far below that.
+- While touch is in use the button prompts and the dance badges keep the Wii Remote's own pictures, since the touch
+  buttons carry the same names (A, B, 1, 2, + and -).
+- Options on phones: the Keyboard page of Controls becomes Touch screen (`input.touch`, size, opacity, phone shake,
+  camera), and the rows that mean nothing there are left out (fullscreen, Discord, the bug recorder's key). In the
+  menu a finger taps on release, so a drag can scroll the list (one row per 6 % of the height) without changing a
+  row; a finger that lands on a slider drags it; a tap outside the menu closes it. The bottom bar then says "Tap a
+  row to change it" and "Back: close".
+- Background: when Android sends `SDL_EVENT_WILL_ENTER_BACKGROUND` (through an event watch, on the Java thread,
+  before the surface is destroyed) the GPU thread is asked to stop; after its next swap it releases the OpenGL
+  context and waits, and the event watch waits up to 2 s for that. The game thread then waits for the GPU as usual,
+  so the whole game stops. On `SDL_EVENT_DID_ENTER_FOREGROUND` the GPU thread makes the context current again on the
+  new surface. Without this the GPU thread kept drawing on a destroyed surface.
+- Vibration: with no gamepad in slot 0, the Wii Remote's rumble plays on the phone's vibrator through SDL haptics
+  (`input.rumble`).
+- On Android stdout and stderr go through a pipe to logcat (tag `WondersBeyond`).
+- The automatic internal resolution is 2x on Android instead of 4x: phone GPUs are far slower.
+- `tools/android_tools.py --install` also downloads Android's platform tools and, through adb, installs the package,
+  copies `game/extracted` (and `game/textures`, and `game/nand` with `--saves`) to the app's folder and starts it.
 - Fonts on Android come from `/system/fonts` (Roboto, Noto Sans, Droid Sans Mono).
 - On Android and in the Steam Deck's gaming mode (`SteamDeck=1` or a gamescope display) the game opens on the whole
   screen and the title bar is never drawn.

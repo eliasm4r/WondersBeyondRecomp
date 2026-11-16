@@ -10,6 +10,16 @@ Every change to WondersBeyondRecomp, newest first.
 
 <br>
 
+## Unreleased
+
+### Added
+- **Linux and Steam Deck**: `Setup.sh` installs the game from your disc image like the Windows setup, with nothing to install on the system first (it brings its own compiler). It adds the game to the applications menu; on the Steam Deck, "Add to Steam" on it puts the game in gaming mode, where it opens on the whole screen.
+- **Android** (64-bit phones with OpenGL ES 3.2): the game is built on your computer from your own disc image with `python tools/android_tools.py`, then `python tools/android_tools.py --install` puts it on a phone connected by USB, with the game files (and your saves with `--saves`).
+- **Touch controls** on phones: a stick on the left, the Wii Remote's buttons on the right, + and - at the top, a shake button, and a Menu button for the options. Drag a finger on the right of the screen to turn the camera. They hide while a gamepad is used and come back at the next touch.
+- The attractions on a phone: in Cake Contraption a tap aims and shoots (or aim with a finger and press A), in Power Bash A strikes and shaking the phone strikes too, Dance Inferno shows the touch buttons on its moves, and Flight of Fancy steers with the stick.
+- A **Touch screen** page in Options > Controls on phones: touch controls on or off, button size and opacity, shaking the phone, camera speed. Tap a row to change it, drag to scroll, tap outside the menu or press Back to close it.
+- On phones the game pauses in the background, avoids the screen's notch, vibrates when the Wii Remote would, and uses 2x as its automatic internal resolution.
+
 ## v0.3.1-alpha · 2026-11-16
 
 > **Cheats and a fly camera.** A Cheats tab (speed, jump, damage, berries, prices), a camera that flies around the map, sharper photos, an automatic resolution, smoother 240 fps and a freeze fixed. [Download it here.](https://github.com/eliasm4r/WondersBeyondRecomp/releases/tag/v0.3.1-alpha)
