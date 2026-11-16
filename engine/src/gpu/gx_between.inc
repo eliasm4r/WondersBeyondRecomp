@@ -791,7 +791,7 @@ bool replay_runs(const RecordedCommand& command, float t) {
         if (before && !same_shape(before->draw, run.draw, then, now)) {
             before = nullptr;
         }
-        if (g_replay_rows.size() + run.draw.rows + kPaletteRows + kNormalRows > kRunRowCapacity / 2) {
+        if (g_replay_rows.size() + run.draw.rows + kPaletteRows + kNormalRows > kRunRowBatch) {
             if (!send_replayed()) {
                 return false;
             }
