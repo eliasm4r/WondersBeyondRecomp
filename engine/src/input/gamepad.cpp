@@ -422,6 +422,52 @@ void drive_virtual(std::array<Virtual, kSlots>& virtuals) {
     }
 }
 
+struct PhoneVibration {
+    SDL_Haptic* handle = nullptr;
+    bool on = false;
+    std::chrono::steady_clock::time_point refresh;
+};
+
+void open_phone_vibration(PhoneVibration& phone) {
+#ifdef __ANDROID__
+    if (!SDL_InitSubSystem(SDL_INIT_HAPTIC)) {
+        return;
+    }
+    int count = 0;
+    SDL_HapticID* haptics = SDL_GetHaptics(&count);
+    for (int i = 0; haptics && i < count && !phone.handle; i++) {
+        SDL_Haptic* haptic = SDL_OpenHaptic(haptics[i]);
+        if (haptic && SDL_InitHapticRumble(haptic)) {
+            phone.handle = haptic;
+            log::write("input", "phone vibration: %s", SDL_GetHapticName(haptic) ? SDL_GetHapticName(haptic) : "?");
+        } else if (haptic) {
+            SDL_CloseHaptic(haptic);
+        }
+    }
+    SDL_free(haptics);
+#else
+    (void)phone;
+#endif
+}
+
+void vibrate_phone(PhoneVibration& phone, bool pad_present) {
+    static const settings::LiveFlag rumble_enabled("input.rumble", "WP_RUMBLE");
+    if (!phone.handle) {
+        return;
+    }
+    bool rumble = !pad_present && g_rumble[0].load() && rumble_enabled();
+    auto now = std::chrono::steady_clock::now();
+    if (rumble != phone.on || (rumble && now >= phone.refresh)) {
+        phone.on = rumble;
+        phone.refresh = now + kRumbleRefresh;
+        if (rumble) {
+            SDL_PlayHapticRumble(phone.handle, 0.6f, static_cast<Uint32>(kRumbleDuration));
+        } else {
+            SDL_StopHapticRumble(phone.handle);
+        }
+    }
+}
+
 void worker() {
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_JOY_CONS, "1");
@@ -436,6 +482,8 @@ void worker() {
     }
     std::array<Pad, kSlots> pads;
     std::array<Virtual, kSlots> virtuals;
+    PhoneVibration phone;
+    open_phone_vibration(phone);
     attach_virtual(virtuals);
     uint32_t seen_revision = 0;
     int last_used = -1;
@@ -476,6 +524,7 @@ void worker() {
                 pads[slot].pressing = pressing;
             }
         }
+        vibrate_phone(phone, pads[0].handle != nullptr);
         int shown = last_used >= 0 && pads[static_cast<size_t>(last_used)].handle ? last_used : -1;
         for (size_t slot = 0; slot < kSlots && shown < 0; slot++) {
             if (pads[slot].handle) {
