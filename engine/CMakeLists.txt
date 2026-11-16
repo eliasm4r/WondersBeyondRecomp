@@ -152,6 +152,50 @@ if(NOT WIN32 OR WP_OPENGL)
         endif()
     elseif(SDL3_FOUND)
         target_sources(wp_engine PRIVATE src/gpu/gx_render_gl.cpp src/platform/video_sdl.cpp src/platform/titlebar_sdl.cpp)
+        if(ANDROID)
+            find_program(WP_GLSLC glslc HINTS "${ANDROID_NDK}/shader-tools/${ANDROID_HOST_TAG}" "${CMAKE_ANDROID_NDK}/shader-tools/${ANDROID_HOST_TAG}")
+        endif()
+        if(ANDROID AND WP_GLSLC)
+            set(WP_VK_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/vk_shaders")
+            set(WP_VK_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/vk_shaders")
+            file(MAKE_DIRECTORY "${WP_VK_OUTPUT}")
+            set(WP_VK_SHADERS
+                "fullscreen.vert|vk_fullscreen_vert|"
+                "present.frag|vk_present_frag|"
+                "present.frag|vk_present_smooth_frag|-DWP_SMOOTH"
+                "overlay.frag|vk_overlay_frag|"
+                "clear.frag|vk_clear_frag|"
+                "copy.frag|vk_copy_frag|"
+                "tev.vert|vk_tev_vert|"
+                "run.vert|vk_run_vert|"
+                "tev.frag|vk_tev_frag|"
+                "tev.frag|vk_tev_early_frag|-DWP_EARLY"
+                "tev.frag|vk_tev_single_frag|-DWP_SINGLE_OUTPUT"
+                "tev.frag|vk_tev_early_single_frag|-DWP_EARLY|-DWP_SINGLE_OUTPUT")
+            set(WP_VK_HEADERS)
+            foreach(entry IN LISTS WP_VK_SHADERS)
+                string(REPLACE "|" ";" parts "${entry}")
+                list(GET parts 0 shader_source)
+                list(GET parts 1 shader_name)
+                list(LENGTH parts part_count)
+                set(shader_defines)
+                if(part_count GREATER 2)
+                    list(SUBLIST parts 2 -1 shader_defines)
+                endif()
+                set(shader_header "${WP_VK_OUTPUT}/${shader_name}.inc")
+                add_custom_command(OUTPUT "${shader_header}"
+                    COMMAND "${WP_GLSLC}" --target-env=vulkan1.0 -O -mfmt=c ${shader_defines} "${WP_VK_SOURCE}/${shader_source}" -o "${shader_header}"
+                    DEPENDS "${WP_VK_SOURCE}/${shader_source}"
+                    VERBATIM)
+                list(APPEND WP_VK_HEADERS "${shader_header}")
+            endforeach()
+            add_custom_target(wp_vk_shaders DEPENDS ${WP_VK_HEADERS})
+            add_dependencies(wp_engine wp_vk_shaders)
+            target_sources(wp_engine PRIVATE src/gpu/gx_render_vk.cpp src/gpu/gx_render_select.cpp)
+            target_include_directories(wp_engine PRIVATE "${WP_VK_OUTPUT}")
+            target_compile_definitions(wp_engine PRIVATE WP_VULKAN)
+            target_link_libraries(wp_engine PUBLIC vulkan)
+        endif()
         if(NOT WIN32)
             target_compile_definitions(wp_engine PRIVATE WP_SDL_PLATFORM)
         endif()

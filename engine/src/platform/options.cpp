@@ -197,6 +197,7 @@ std::vector<std::string> tab_keys(size_t tab, Device device) {
             for (const char* unused : {"video.fullscreen", "video.vsync"}) {
                 keys.erase(std::find(keys.begin(), keys.end(), unused));
             }
+            keys.insert(keys.begin() + 1, "video.renderer");
         }
         return keys;
     }
@@ -315,6 +316,9 @@ std::vector<std::string> choices(const std::string& key) {
         }
         return {"1", "2", "4", "8", "16"};
     }
+    if (key == "video.renderer") {
+        return {"vulkan", "opengl"};
+    }
     if (key == "video.aspect") {
         if (kPhone) {
             return {"16:9", "21:9", "auto"};
@@ -405,6 +409,9 @@ std::string shown_value(const std::string& key, const std::string& value) {
     }
     if (key == "video.anisotropy") {
         return value == "1" ? text.menu_off : value + "x";
+    }
+    if (key == "video.renderer") {
+        return value == "opengl" ? "OpenGL ES" : "Vulkan";
     }
     if (key == "video.aspect") {
         return value == "auto" ? ui::label("menu.aspect.auto") : value == "16:9" ? ui::label("menu.aspect.original") : value;

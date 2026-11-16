@@ -78,6 +78,7 @@ const Option kBaseOptions[] = {
     {"system.widescreen", "1"},
 #ifdef __ANDROID__
     {"video.aspect", "auto"},
+    {"video.renderer", "vulkan"},
 #else
     {"video.aspect", "16:9"},
 #endif
@@ -273,6 +274,7 @@ void keep_phone_values() {
     keep("video.fps", {"30", "60"}, "30");
     keep("video.anisotropy", {"1", "2", "4"}, "1");
     keep("video.aspect", {"16:9", "21:9", "auto"}, "auto");
+    keep("video.renderer", {"vulkan", "opengl"}, "vulkan");
     g_values["video.dump_textures"] = "0";
     g_values["video.bug_recorder"] = "0";
     g_values["audio.wiimote_speaker"] = "0";

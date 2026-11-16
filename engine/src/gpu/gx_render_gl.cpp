@@ -37,7 +37,11 @@
 #include "wp/settings.h"
 #include "wp/video.h"
 
+#ifdef WP_VULKAN
+namespace wp::gx::render::opengl {
+#else
 namespace wp::gx::render {
+#endif
 
 void finish_write_backs();
 bool write_back_overlaps(uint32_t address, size_t size);
