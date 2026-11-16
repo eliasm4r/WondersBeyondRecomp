@@ -8,6 +8,8 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#elif defined(__ANDROID__)
+#include <unwind.h>
 #else
 #include <execinfo.h>
 #endif
@@ -175,9 +177,29 @@ std::vector<HostFunction> host_functions() {
     return functions;
 }
 
+#ifdef __ANDROID__
+struct FoundFrames {
+    void** frames;
+    size_t count;
+};
+
+_Unwind_Reason_Code add_host_frame(_Unwind_Context* context, void* data) {
+    FoundFrames& found = *static_cast<FoundFrames*>(data);
+    uintptr_t address = _Unwind_GetIP(context);
+    if (address && found.count < kHostFrames) {
+        found.frames[found.count++] = reinterpret_cast<void*>(address);
+    }
+    return found.count < kHostFrames ? _URC_NO_REASON : _URC_END_OF_STACK;
+}
+#endif
+
 size_t capture_host_frames(void** frames) {
 #ifdef _WIN32
     return RtlCaptureStackBackTrace(0, kHostFrames, frames, nullptr);
+#elif defined(__ANDROID__)
+    FoundFrames found{frames, 0};
+    _Unwind_Backtrace(add_host_frame, &found);
+    return found.count;
 #else
     return static_cast<size_t>(backtrace(frames, static_cast<int>(kHostFrames)));
 #endif

@@ -38,6 +38,11 @@
 #include "wp/play_time.h"
 #include "wp/runtime.h"
 
+#ifdef __ANDROID__
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>
+#endif
+
 #ifdef _WIN32
 extern "C" {
 __declspec(dllexport) DWORD NvOptimusEnablement = 1;
@@ -258,8 +263,36 @@ int run(int argc, char** argv) {
     return 0;
 }
 
+#ifdef __ANDROID__
+bool enter_android_folder() {
+    const char* folder = SDL_GetAndroidExternalStoragePath();
+    if (!folder) {
+        folder = SDL_GetAndroidInternalStoragePath();
+    }
+    std::error_code error;
+    if (folder) {
+        std::filesystem::current_path(folder, error);
+    }
+    std::string data = wp::game::description().data_directory;
+    if (std::filesystem::is_regular_file(data + "/sys/main.dol", error)) {
+        return true;
+    }
+    std::filesystem::create_directories(data, error);
+    std::string message = "The game files are missing. Connect the phone to the computer with a USB cable and copy the folder game/extracted "
+                          "of the computer's installation into:\n\n" +
+                          std::string(folder ? folder : "?") + "/game/\n\nThen open the game again.";
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "PokePark 2: Wonders Beyond", message.c_str(), nullptr);
+    return false;
+}
+#endif
+
 int main(int argc, char** argv) {
     std::set_terminate(report_terminate);
+#ifdef __ANDROID__
+    if (!enter_android_folder()) {
+        return 1;
+    }
+#endif
     if (const char* root = std::getenv("WP_ROOT")) {
         std::error_code error;
         std::filesystem::current_path(root, error);

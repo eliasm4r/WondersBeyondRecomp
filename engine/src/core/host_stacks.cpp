@@ -1,7 +1,13 @@
 #include "wp/host_stacks.h"
 
 #ifndef _WIN32
+#ifdef __ANDROID__
+#include <unwind.h>
+
+#include <cinttypes>
+#else
 #include <execinfo.h>
+#endif
 #include <pthread.h>
 #include <signal.h>
 #include <unistd.h>
@@ -35,10 +41,35 @@ std::mutex g_lock;
 std::vector<Watched> g_threads;
 std::atomic<bool> g_written{false};
 
+#ifdef __ANDROID__
+struct Frames {
+    void** frames;
+    int count;
+    int limit;
+};
+
+_Unwind_Reason_Code add_frame(_Unwind_Context* context, void* data) {
+    Frames& found = *static_cast<Frames*>(data);
+    uintptr_t address = _Unwind_GetIP(context);
+    if (address && found.count < found.limit) {
+        found.frames[found.count++] = reinterpret_cast<void*>(address);
+    }
+    return found.count < found.limit ? _URC_NO_REASON : _URC_END_OF_STACK;
+}
+#endif
+
 void write_stack(int) {
     void* frames[64];
+#ifdef __ANDROID__
+    Frames found{frames, 0, 64};
+    _Unwind_Backtrace(add_frame, &found);
+    for (int i = 0; i < found.count; i++) {
+        std::fprintf(stderr, "  %p\n", frames[i]);
+    }
+#else
     int count = backtrace(frames, 64);
     backtrace_symbols_fd(frames, count, STDERR_FILENO);
+#endif
     g_written.store(true);
 }
 
