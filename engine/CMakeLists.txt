@@ -23,6 +23,7 @@ add_library(wp_engine STATIC
     src/gpu/gx_render_common.cpp
     src/audio/dsp.cpp
     src/audio/audio.cpp
+    src/audio/hle_audio.cpp
     src/audio/dsp_roms.cpp
     src/ios/ios.cpp
     src/ios/ipc.cpp
@@ -40,6 +41,7 @@ add_library(wp_engine STATIC
     src/core/exi.cpp
     src/core/hollywood.cpp
     src/core/io.cpp
+    src/platform/performance_hints.cpp
     src/platform/png.cpp
     src/platform/save_backup.cpp
     src/platform/screenshot.cpp

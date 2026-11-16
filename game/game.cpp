@@ -12,6 +12,7 @@
 #include "wp/game.h"
 #include "wp/gx.h"
 #include "wp/gx_render.h"
+#include "wp/hle_audio.h"
 #include "wp/hint.h"
 #include "wp/disc.h"
 #include "wp/frame_pacing.h"
@@ -965,6 +966,71 @@ bool skip_scene(Cpu& c, bool scene, bool over) {
     return active;
 }
 
+namespace {
+
+void ensure_audio_layout() {
+    static const bool configured = [] {
+        hle_audio::Layout layout;
+        layout.voices = 0x804b1b10;
+        layout.voice_count = 0x804b1b1c;
+        layout.resume_callback = 0x802b7060;
+        layout.aux_return[0] = -0x2a04;
+        layout.aux_return[1] = -0x2a06;
+        layout.aux_return[2] = -0x2a08;
+        hle_audio::configure(layout);
+        return true;
+    }();
+    (void)configured;
+}
+
+void audio_hardware_setup(Cpu& c, HleFunction original) {
+    ensure_audio_layout();
+    if (!hle_audio::active()) {
+        original(c);
+    }
+}
+
+void dsp_mail_taken(Cpu& c, HleFunction original) {
+    ensure_audio_layout();
+    if (hle_audio::active()) {
+        c.r[3] = 0;
+        return;
+    }
+    original(c);
+}
+
+template <int Bus, bool Output>
+void aux_buffer(Cpu& c, HleFunction original) {
+    uint32_t where = c.r[3];
+    uint32_t small_data = c.r[13];
+    original(c);
+    hle_audio::set_aux(Bus, Output, rd32(where), small_data);
+}
+
+void ai_register_callback(Cpu& c, HleFunction original) {
+    ensure_audio_layout();
+    hle_audio::set_dma_callback(c.r[3]);
+    original(c);
+}
+
+void ai_init_dma(Cpu& c, HleFunction original) {
+    ensure_audio_layout();
+    hle_audio::set_dma_bytes(c.r[4]);
+    original(c);
+}
+
+void ai_start_dma(Cpu& c, HleFunction original) {
+    original(c);
+    hle_audio::start_dma();
+}
+
+void ai_stop_dma(Cpu& c, HleFunction original) {
+    hle_audio::stop_dma();
+    original(c);
+}
+
+}
+
 HookFunction hook(const char* name) {
     static const struct {
         const char* name;
@@ -978,7 +1044,12 @@ HookFunction hook(const char* name) {
                    {"DanceJudge", dance_judge}, {"CullingFrustum", culling_frustum}, {"CameraView", camera_view},
                    {"DialogueWriterStep", dialogue_writer_step}, {"MovieSceneUpdate", movie_scene_update},
                    {"FontResource", font_resource}, {"TextureBind", texture_bind}, {"MessageUpdate", message_update}, {"LayoutDraw", layout_draw},
-                   {"KineticEnergyUpdate", kinetic_energy_update}, {"ChaseStep", chase_step}, {"PlayerMove", player_move}, {"LifeDamage", life_damage}};
+                   {"KineticEnergyUpdate", kinetic_energy_update}, {"ChaseStep", chase_step}, {"PlayerMove", player_move}, {"LifeDamage", life_damage},
+                   {"AudioSystemInit", audio_hardware_setup}, {"AudioRateConverterInit", audio_hardware_setup}, {"MixerDspInit", audio_hardware_setup},
+                   {"DspCheckMailToDsp", dsp_mail_taken}, {"AuxAInput", aux_buffer<0, false>}, {"AuxAOutput", aux_buffer<0, true>},
+                   {"AuxBInput", aux_buffer<1, false>}, {"AuxBOutput", aux_buffer<1, true>}, {"AuxCInput", aux_buffer<2, false>},
+                   {"AuxCOutput", aux_buffer<2, true>}, {"AiRegisterDmaCallback", ai_register_callback}, {"AiInitDma", ai_init_dma},
+                   {"AiStartDma", ai_start_dma}, {"AiStopDma", ai_stop_dma}};
     for (const auto& entry : kHooks) {
         if (std::strcmp(entry.name, name) == 0) {
             return entry.function;

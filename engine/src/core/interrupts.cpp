@@ -10,6 +10,8 @@
 #include "wp/dsp.h"
 #include "wp/exi.h"
 #include "wp/gx.h"
+#include "wp/hle_audio.h"
+#include "wp/performance_hints.h"
 #include "wp/log.h"
 #include "wp/hle.h"
 #include "wp/ipc.h"
@@ -48,6 +50,7 @@ constexpr std::chrono::microseconds kNtscPeriod(16683);
 using Clock = wp::FastClock;
 constexpr uint32_t kCurrentThread = 0x800000E4;
 std::atomic<int64_t> g_idle_nanoseconds{0};
+int64_t g_idle_total = 0;
 
 std::atomic<uint32_t> g_retrace_speed{1};
 
@@ -131,6 +134,25 @@ void deliver_external_interrupt(Cpu& c, uint32_t index) {
     c = saved;
 }
 
+void deliver_callback(Cpu& c, uint32_t function) {
+    if (function == 0) {
+        return;
+    }
+    Cpu saved = c;
+    bool was_in_interrupt = g_in_interrupt;
+    g_in_interrupt = true;
+    c.msr &= ~kMsrExternalInterrupt;
+    call(c, function);
+    c = saved;
+    g_in_interrupt = was_in_interrupt;
+    if (!was_in_interrupt) {
+        c.r[3] = 0;
+        static const uint32_t select_thread = symbol_address("OSSelectThread");
+        call(c, select_thread);
+        c = saved;
+    }
+}
+
 void deliver_video_interrupt(Cpu& c) {
     uint32_t handler = rd32(kInterruptTable + 4 * kVideoInterrupt);
     if (handler == 0 || !arm_video_interrupt()) {
@@ -170,6 +192,10 @@ void interrupt_left() {
     g_in_interrupt = false;
 }
 
+void run_interrupt_callback(Cpu& c, uint32_t function) {
+    deliver_callback(c, function);
+}
+
 void poll_interrupts(Cpu& c) {
     static const uint32_t interval = [] {
         const char* setting = std::getenv("WP_POLL_INTERVAL");
@@ -199,6 +225,7 @@ void poll_interrupts(Cpu& c) {
     if (decrementer_due() && !gx::frame_owed()) {
         deliver_decrementer(c);
     }
+    hle_audio::run_due_frames(c);
     if (ipc::interrupt_pending()) {
         deliver_external_interrupt(c, ipc::kInterrupt);
     }
@@ -232,7 +259,9 @@ void poll_interrupts(Cpu& c) {
     static bool previous_idle = false;
     bool idle = rd32(kCurrentThread) == 0;
     if (idle && previous_idle) {
-        g_idle_nanoseconds += std::chrono::duration_cast<std::chrono::nanoseconds>(now - previous_poll).count();
+        int64_t rested = std::chrono::duration_cast<std::chrono::nanoseconds>(now - previous_poll).count();
+        g_idle_nanoseconds += rested;
+        g_idle_total += rested;
     }
     bool resting = idle && previous_idle;
     previous_poll = now;
@@ -260,6 +289,7 @@ void poll_interrupts(Cpu& c) {
         g_next_retrace = now + period;
     }
     si::poll();
+    performance_hints::retrace_done(g_idle_total);
     deliver_video_interrupt(c);
     if (decrementer_imminent()) {
         g_poll_counter = 1;
