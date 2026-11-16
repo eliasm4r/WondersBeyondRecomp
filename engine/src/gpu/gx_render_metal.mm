@@ -228,6 +228,10 @@ uint64_t g_next_serial = 1;
 std::mutex g_done_lock;
 std::condition_variable g_done_changed;
 uint64_t g_done = 0;
+double g_gpu_seconds = 0.0;
+uint32_t g_efb_passes = 0;
+uint32_t g_cleared_passes = 0;
+int g_shown_height = kEfbHeight;
 
 id<MTLRenderCommandEncoder> g_encoder = nil;
 const void* g_encoder_target = nullptr;
@@ -250,8 +254,12 @@ void ensure_command() {
     }
     g_command_serial = g_next_serial++;
     const uint64_t serial = g_command_serial;
-    [g_command addCompletedHandler:^(id<MTLCommandBuffer>) {
+    [g_command addCompletedHandler:^(id<MTLCommandBuffer> done) {
+        double busy = done.GPUEndTime - done.GPUStartTime;
         std::lock_guard<std::mutex> hold(g_done_lock);
+        if (busy > 0.0) {
+            g_gpu_seconds += busy;
+        }
         g_done = std::max(g_done, serial);
         g_done_changed.notify_all();
     }];
@@ -302,7 +310,7 @@ void wait_idle() {
     wait_serial(last);
 }
 
-id<MTLRenderCommandEncoder> begin_pass(id<MTLTexture> color, id<MTLTexture> depth, MTLLoadAction load, MTLClearColor clear_color) {
+id<MTLRenderCommandEncoder> begin_pass(id<MTLTexture> color, id<MTLTexture> depth, MTLLoadAction load, MTLClearColor clear_color, double clear_depth = 1.0) {
     end_encoder();
     ensure_command();
     @autoreleasepool {
@@ -314,7 +322,7 @@ id<MTLRenderCommandEncoder> begin_pass(id<MTLTexture> color, id<MTLTexture> dept
         if (depth) {
             pass.depthAttachment.texture = depth;
             pass.depthAttachment.loadAction = load == MTLLoadActionClear ? MTLLoadActionClear : MTLLoadActionLoad;
-            pass.depthAttachment.clearDepth = 1.0;
+            pass.depthAttachment.clearDepth = clear_depth;
             pass.depthAttachment.storeAction = MTLStoreActionStore;
         }
         g_encoder = [g_command renderCommandEncoderWithDescriptor:pass];
@@ -335,7 +343,20 @@ id<MTLRenderCommandEncoder> efb_encoder() {
     begin_pass(g_device.efb_color, g_device.efb_depth, MTLLoadActionLoad, MTLClearColorMake(0, 0, 0, 0));
     set_viewport(0, 0, scaled(kEfbWidth), scaled(kEfbHeight));
     [g_encoder setDepthClipMode:MTLDepthClipModeClamp];
+    g_efb_passes++;
     return g_encoder;
+}
+
+bool clear_on_load(MTLClearColor color, double depth) {
+    if (g_encoder && g_encoder_target == (__bridge const void*)g_device.efb_color) {
+        return false;
+    }
+    begin_pass(g_device.efb_color, g_device.efb_depth, MTLLoadActionClear, color, depth);
+    set_viewport(0, 0, scaled(kEfbWidth), scaled(kEfbHeight));
+    [g_encoder setDepthClipMode:MTLDepthClipModeClamp];
+    g_efb_passes++;
+    g_cleared_passes++;
+    return true;
 }
 
 void bind_pipeline(id<MTLRenderPipelineState> pipeline) {
@@ -2008,6 +2029,27 @@ void copy_to_framebuffer(int x, int y, int width, int height, bool depth, const 
                 log::write("video", "%u pixel shader variants ready, %u refused, %u building in the background", g_variants_ready, g_variants_failed, g_compiling);
             }
         }
+        {
+            static auto measured = std::chrono::steady_clock::now();
+            static uint64_t measured_frame = g_frame;
+            auto now = std::chrono::steady_clock::now();
+            if (now - measured >= std::chrono::seconds(1)) {
+                double frames = static_cast<double>(std::max<uint64_t>(g_frame - measured_frame, 1));
+                double gpu = 0.0;
+                {
+                    std::lock_guard<std::mutex> hold(g_done_lock);
+                    gpu = g_gpu_seconds;
+                    g_gpu_seconds = 0.0;
+                }
+                log::write("video", "Metal: GPU busy %.0f%% (%.1f ms per frame), %.1f EFB passes per frame, %.1f started by a clear, scale %d",
+                           100.0 * gpu / std::chrono::duration<double>(now - measured).count(), 1000.0 * gpu / frames, g_efb_passes / frames,
+                           g_cleared_passes / frames, g_scale);
+                measured = now;
+                measured_frame = g_frame;
+                g_efb_passes = 0;
+                g_cleared_passes = 0;
+            }
+        }
         g_frame++;
         g_texture_epoch++;
         x = std::max(0, x);
@@ -2017,6 +2059,7 @@ void copy_to_framebuffer(int x, int y, int width, int height, bool depth, const 
         if (width <= 0 || height <= 0) {
             return;
         }
+        g_shown_height = y + height;
         uint32_t physical_width = static_cast<uint32_t>(scaled(width));
         uint32_t physical_height = static_cast<uint32_t>(scaled(height));
         if (!g_device.frame.texture || g_device.frame.width != physical_width || g_device.frame.height != physical_height) {
@@ -2160,6 +2203,10 @@ void clear(int x, int y, int width, int height) {
         return;
     }
     @autoreleasepool {
+        if (color_enable && alpha_enable && depth_enable && x == 0 && y == 0 && width == kEfbWidth && height >= g_shown_height &&
+            clear_on_load(MTLClearColorMake(red / 255.0, green / 255.0, blue / 255.0, alpha / 255.0), static_cast<double>(depth) / 16777215.0)) {
+            return;
+        }
         efb_encoder();
         MTLScissorRect scissor{static_cast<NSUInteger>(scaled(x)), static_cast<NSUInteger>(scaled(y)), static_cast<NSUInteger>(scaled(x + width) - scaled(x)),
                                static_cast<NSUInteger>(scaled(y + height) - scaled(y))};
