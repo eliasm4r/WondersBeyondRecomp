@@ -10,7 +10,9 @@ Every change to WondersBeyondRecomp, newest first.
 
 <br>
 
-## Unreleased
+## v0.3.1-alpha · 2026-11-16
+
+> **Cheats and a fly camera.** A Cheats tab (speed, jump, damage, berries, prices), a camera that flies around the map, sharper photos, an automatic resolution, smoother 240 fps and a freeze fixed. [Download it here.](https://github.com/eliasm4r/WondersBeyondRecomp/releases/tag/v0.3.1-alpha)
 
 ### Added
 - **Cheats** tab in the options menu (and in RecompLauncher), all off by default: berries collected up to 10 times, prices down to free, the Pokémon you chase in the chase games slower or faster, running speed up to 2 times, jumps up to 3 times higher, damage dealt up to 10 times and damage taken down to none.
@@ -19,9 +21,12 @@ Every change to WondersBeyondRecomp, newest first.
 - **Auto internal resolution**, now the default: the game picks, from your screen's resolution, the lowest scale that draws at least 1.25 times the picture's size in fullscreen, across and down, so the smoothing has pixels to spare (4x on a 1080p screen, 3x at 720p, 5x at 1440p, 6x above). It takes that scale's place in the list (Native, 2x, 3x, Auto (4x), 5x, 6x on a 1080p screen) and does not change while you play. Settings saved by an earlier build keep their choice.
 
 ### Changed
+- The options menu is in a clearer order: the frame-rate limit is with the screen settings, the camera comes first in Controls and the fly camera first in Cheats.
 - The options menu's bottom bar follows the device used last: with a gamepad it shows its own buttons (Xbox, PlayStation shapes or Switch) for confirming, changing tab and closing, and it adds "select" (Enter or A) on rows that need it, like key bindings and buttons.
 
 ### Fixed
+- The game no longer freezes for many seconds after a few F9 bug captures in a row: on a slow disk, a log write could stall every thread of the game. The log is now written from its own thread, and the sound skips what it missed instead of playing it fast.
+- Above 60 fps, the pictures in between stay locked to the game's frames (no more short hold every few seconds), running legs no longer jump, and fades, lit colours, scrolling textures, facial expressions and scene changes are smoothed instead of switching at once.
 - Above 60 fps, an object drawn several times alike, like the red circles under the Pokémon in a minigame, could be drawn halfway to another copy on the images in between, so it seemed to jump aside for an instant. Two copies are now only blended when they could be the same object moving. In Power Bash, the rings under the target no longer slide in from the side and out again above 60 fps: they appear and leave at once, as at 30 fps.
 - Pressing the right stick quickly on a gamepad no longer flashes the aiming cursor: it only recentres it while you aim.
 - Loading screens can no longer be skipped as if they were story scenes, and a scene skip now stops when a loading screen starts.
