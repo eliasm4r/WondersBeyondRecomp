@@ -1730,3 +1730,5 @@ What the code added for frame interpolation, the timers and the input changes do
 - Metal samplers have no LOD bias: the shader multiplies the texture gradients by `2^bias`, which is the same level choice.
 - Pixel shader variants and their pipelines are built with the completion-handler calls of Metal; the generic shader draws until they are ready. Every pipeline used (blend word, vertex kind, variant key) is recorded in `pipelines_metal.bin` and rebuilt in the background at the next launch.
 - `tests/engine/metal_shaders_test.mm` builds every shader and pipeline on the macOS workflow's Metal device.
+- Apple GPUs remove hidden pixels before shading unless the fragment shader can discard. When the alpha test passes for every alpha value, the variant is built with `WP_NO_DISCARD` (an extra key word), so opaque draws keep that removal and early depth.
+- When the game clears the whole shown picture with color, alpha and depth on, and no EFB pass is open (the usual clear right after the XFB copy), the next pass starts with Metal clear load actions instead of loading the old tiles and drawing a clear triangle.
