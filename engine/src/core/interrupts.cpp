@@ -214,8 +214,16 @@ void poll_interrupts(Cpu& c) {
     g_poll_counter = interval;
     audio::update();
     dsp::update();
-    log::watch_modules();
-    ipc::update();
+    {
+        constexpr std::chrono::microseconds kDeviceInterval(500);
+        static Clock::time_point next_device_update{};
+        Clock::time_point checked = Clock::now();
+        if (checked >= next_device_update) {
+            next_device_update = checked + kDeviceInterval;
+            log::watch_modules();
+            ipc::update();
+        }
+    }
     if (masked) {
         gx::process();
         return;
