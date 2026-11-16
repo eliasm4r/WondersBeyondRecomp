@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
 #include <mutex>
 
 #include "wp/options_window.h"
@@ -34,8 +36,21 @@ float scale_of(SDL_Window* window) {
     return scale >= 1.0f ? scale : 1.0f;
 }
 
+bool without_bar() {
+#ifdef __ANDROID__
+    return true;
+#else
+    static const bool gaming_mode = [] {
+        const char* deck = std::getenv("SteamDeck");
+        const char* gamescope = std::getenv("GAMESCOPE_WAYLAND_DISPLAY");
+        return (deck && std::strcmp(deck, "1") == 0) || (gamescope && *gamescope);
+    }();
+    return gaming_mode;
+#endif
+}
+
 bool covered(SDL_Window* window) {
-    return (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
+    return without_bar() || (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
 }
 
 float density_of(SDL_Window* window) {

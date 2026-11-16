@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <mutex>
@@ -440,7 +441,13 @@ void window_thread(bool visible) {
         return;
     }
     g_window = window;
-    if (settings::flag("video.fullscreen", "WP_FULLSCREEN")) {
+#ifdef __ANDROID__
+    const bool whole_screen = true;
+#else
+    const char* deck = std::getenv("SteamDeck");
+    const bool whole_screen = deck && std::strcmp(deck, "1") == 0;
+#endif
+    if (whole_screen || settings::flag("video.fullscreen", "WP_FULLSCREEN")) {
         set_fullscreen(window, true);
     }
     bool cursor_hidden = false;
