@@ -1720,3 +1720,13 @@ What the code added for frame interpolation, the timers and the input changes do
 
 - `hle_audio::wanted()` is on for Android and macOS: the interpreted DSP microcode could not keep up there and the sound stuttered. Windows and Linux keep the emulated DSP unless `WP_HLE_AUDIO` is set; `WP_DSP_EMULATED` forces the emulated DSP everywhere.
 - macOS OpenGL (Apple M5, 4.1 Metal) reports no program binary format, so `programs_gl.bin` keeps only the variant keys there (format 0, no binary). At launch each known key is compiled from source and drawn once with an empty scissor, since Apple builds the Metal pipeline at the first draw: a log from a Mac showed images of 65 ms, one per new variant, for 2-3 s at every scene start.
+
+## Metal renderer (macOS)
+
+- `engine/src/gpu/gx_render_metal.mm` replaces the OpenGL renderer on macOS (`WP_METAL`, on by default; `-DWP_METAL=OFF` keeps OpenGL). Apple's OpenGL 4.1 runs on Metal underneath, cannot compile in the background and keeps no program binaries; a Mac log showed 15 fps for 2-3 s at each scene start and frames slower than the GPU load explains at 3x.
+- Same memory layout as the OpenGL renderer: row 0 of every render target is the top of the GX picture. OpenGL got there by negating y; Metal and Direct3D have y up in clip space and row 0 at the top, so the vertex shaders keep y and the full-screen triangle always uses `1 - 2 * corner.y`. Metal's default front face (clockwise) is OpenGL's counter-clockwise seen through that flip, so the GX cull bits map unchanged.
+- Depth stays OpenGL's 0 to 1 (clip control) convention, with depth clamping instead of clipping, as `GL_DEPTH_CLAMP`.
+- Vertices are read in the vertex shaders from raw buffers (`vertex_id`), so one pipeline serves every model layout. Index offsets are kept even: the index buffer offset stays a multiple of 4 bytes.
+- Metal samplers have no LOD bias: the shader multiplies the texture gradients by `2^bias`, which is the same level choice.
+- Pixel shader variants and their pipelines are built with the completion-handler calls of Metal; the generic shader draws until they are ready. Every pipeline used (blend word, vertex kind, variant key) is recorded in `pipelines_metal.bin` and rebuilt in the background at the next launch.
+- `tests/engine/metal_shaders_test.mm` builds every shader and pipeline on the macOS workflow's Metal device.
