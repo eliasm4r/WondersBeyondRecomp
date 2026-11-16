@@ -25,6 +25,9 @@ jobs:
       - name: Test
         working-directory: build/out
         run: ctest --output-on-failure
+      - name: Check the Metal shaders
+        working-directory: build/out
+        run: ./metal_shaders_test
 
   setup:
     runs-on: macos-latest

@@ -2016,6 +2016,11 @@ bool present_frame(void* window_handle, double aspect) {
         if (!CGSizeEqualToSize(g_device.layer.drawableSize, size)) {
             g_device.layer.drawableSize = size;
         }
+        static const settings::LiveFlag vsync("video.vsync", "WP_VSYNC");
+        BOOL synced = vsync() ? YES : NO;
+        if (g_device.layer.displaySyncEnabled != synced) {
+            g_device.layer.displaySyncEnabled = synced;
+        }
         id<CAMetalDrawable> drawable = [g_device.layer nextDrawable];
         if (drawable) {
             begin_pass(drawable.texture, nil, MTLLoadActionClear, MTLClearColorMake(0, 0, 0, 1));
