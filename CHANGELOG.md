@@ -10,6 +10,13 @@ Every change to WondersBeyondRecomp, newest first.
 
 <br>
 
+## v0.3.2-alpha · 2026-11-16
+
+> **Setup fix for Windows 10.** The setup no longer stops with "LZMA codec is unsupported". [Download it here.](https://github.com/eliasm4r/WondersBeyondRecomp/releases/tag/v0.3.2-alpha)
+
+### Fixed
+- The setup no longer stops with "tar.exe: LZMA codec is unsupported" on Windows 10 and older Windows 11 builds: their built-in tar cannot read the compiler's archive, so the setup now lets the archive unpack itself there.
+
 ## v0.3.1-alpha · 2026-11-16
 
 > **Cheats and a fly camera.** A Cheats tab (speed, jump, damage, berries, prices), a camera that flies around the map, sharper photos, an automatic resolution, smoother 240 fps and a freeze fixed. [Download it here.](https://github.com/eliasm4r/WondersBeyondRecomp/releases/tag/v0.3.1-alpha)
