@@ -468,8 +468,11 @@ MTLBlendOperation metal_operation(BlendOperation operation) {
     }
 }
 
-const BlendState& blend_for(uint32_t word) {
+std::mutex g_blend_lock;
+
+BlendState blend_for(uint32_t word) {
     static std::map<uint32_t, BlendState> cache;
+    std::lock_guard<std::mutex> hold(g_blend_lock);
     auto found = cache.find(word);
     if (found == cache.end()) {
         BlendState state = blend_state_for(word);
@@ -482,6 +485,25 @@ const BlendState& blend_for(uint32_t word) {
     return found->second;
 }
 
+uint32_t canonical_blend(uint32_t word) {
+    static std::unordered_map<uint32_t, uint32_t> words;
+    static std::unordered_map<uint32_t, uint32_t> states;
+    auto known = words.find(word);
+    if (known != words.end()) {
+        return known->second;
+    }
+    BlendState blend = blend_for(word);
+    uint32_t packed = (blend.color_update ? 1u : 0u) | (blend.alpha_update ? 2u : 0u);
+    if (blend.enable) {
+        packed |= 4u | (static_cast<uint32_t>(blend.operation) << 3) | (static_cast<uint32_t>(blend.alpha_operation) << 5) |
+                  (static_cast<uint32_t>(blend.source) << 7) | (static_cast<uint32_t>(blend.destination) << 11) |
+                  (static_cast<uint32_t>(blend.source_alpha) << 15) | (static_cast<uint32_t>(blend.destination_alpha) << 19);
+    }
+    uint32_t chosen = states.emplace(packed, word).first->second;
+    words.emplace(word, chosen);
+    return chosen;
+}
+
 MTLRenderPipelineDescriptor* tev_descriptor(int kind, id<MTLFunction> fragment, uint32_t blend_word) {
     MTLRenderPipelineDescriptor* descriptor = [MTLRenderPipelineDescriptor new];
     descriptor.vertexFunction = kind ? g_device.run_vertex : g_device.tev_vertex;
@@ -489,7 +511,7 @@ MTLRenderPipelineDescriptor* tev_descriptor(int kind, id<MTLFunction> fragment, 
     descriptor.depthAttachmentPixelFormat = kDepthFormat;
     MTLRenderPipelineColorAttachmentDescriptor* color = descriptor.colorAttachments[0];
     color.pixelFormat = kColorFormat;
-    const BlendState& blend = blend_for(blend_word);
+    BlendState blend = blend_for(blend_word);
     color.blendingEnabled = blend.enable ? YES : NO;
     color.rgbBlendOperation = metal_operation(blend.operation);
     color.alphaBlendOperation = metal_operation(blend.alpha_operation);
@@ -774,6 +796,7 @@ id<MTLRenderPipelineState> generic_pipeline(int kind, bool early, uint32_t blend
 
 id<MTLRenderPipelineState> tev_pipeline(const Constants& constants, bool early, int kind, uint32_t blend) {
     static const bool generic_only = std::getenv("WP_GENERIC_SHADER") != nullptr;
+    blend = canonical_blend(blend);
     uint64_t key = pipe_key(kind, early, blend);
     if (!generic_only) {
         std::string name = variant_key(constants, early);
@@ -1357,6 +1380,13 @@ void flush_pending() {
                 uint32_t start = 0;
                 if (!upload(g_device.screen, pending.vertices.data() + offset, batch * sizeof(ScreenVertex), start)) {
                     break;
+                }
+                if (!g_encoder) {
+                    if (!set_batch_state(pending)) {
+                        break;
+                    }
+                    bind_pipeline(pipeline);
+                    bind_cull(0);
                 }
                 [g_encoder setVertexBuffer:g_device.screen.buffer offset:start atIndex:0];
                 [g_encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:batch];
