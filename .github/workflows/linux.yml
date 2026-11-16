@@ -1,0 +1,28 @@
+name: Linux
+
+on:
+  push:
+    branches: [main, ports]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  engine:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the build tools and the SDL3 dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build python3-numpy libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libegl-dev libgl-dev libpulse-dev libasound2-dev libudev-dev libdbus-1-dev
+      - name: Configure
+        run: cmake -S . -B build/out -G Ninja -DCMAKE_BUILD_TYPE=Release -DWP_REQUIRE_SDL3=ON
+      - name: Build
+        run: cmake --build build/out --target runtime_tests translator_tests
+      - name: Test
+        working-directory: build/out
+        run: ctest --output-on-failure

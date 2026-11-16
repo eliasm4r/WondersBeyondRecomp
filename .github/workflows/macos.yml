@@ -2,7 +2,7 @@ name: macOS
 
 on:
   push:
-    branches: [main, macos]
+    branches: [main, macos, ports]
   pull_request:
   workflow_dispatch:
 
