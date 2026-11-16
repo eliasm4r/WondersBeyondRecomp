@@ -1719,3 +1719,4 @@ What the code added for frame interpolation, the timers and the input changes do
 ## Native AX mixer
 
 - `hle_audio::wanted()` is on for Android and macOS: the interpreted DSP microcode could not keep up there and the sound stuttered. Windows and Linux keep the emulated DSP unless `WP_HLE_AUDIO` is set; `WP_DSP_EMULATED` forces the emulated DSP everywhere.
+- macOS OpenGL (Apple M5, 4.1 Metal) reports no program binary format, so `programs_gl.bin` keeps only the variant keys there (format 0, no binary). At launch each known key is compiled from source and drawn once with an empty scissor, since Apple builds the Metal pipeline at the first draw: a log from a Mac showed images of 65 ms, one per new variant, for 2-3 s at every scene start.

@@ -1433,6 +1433,7 @@ struct BinaryCache {
     bool opened = false;
     GetProgramBinaryFunction get = nullptr;
     ProgramBinaryFunction load = nullptr;
+    bool keys_only = false;
     std::string path;
     std::unordered_map<std::string, std::pair<GLenum, std::string>> programs;
 };
@@ -1459,9 +1460,9 @@ void open_binaries() {
     if (formats <= 0) {
         cache.get = nullptr;
         cache.load = nullptr;
-        return;
+        cache.keys_only = true;
     }
-    std::string identity = "WPGL1|";
+    std::string identity = cache.keys_only ? "WPGL1 keys|" : "WPGL1|";
     for (GLenum name : {GLenum(GL_VENDOR), GLenum(GL_RENDERER), GLenum(GL_VERSION)}) {
         const GLubyte* text = gl.GetString(name);
         identity += text ? reinterpret_cast<const char*>(text) : "";
@@ -1503,7 +1504,7 @@ void open_binaries() {
         cache.programs[bytes.substr(at + 12, sizes[0])] = {static_cast<GLenum>(sizes[1]), bytes.substr(at + 12 + sizes[0], sizes[2])};
         at = end;
     }
-    log::write("video", "%zu compiled pixel shaders loaded from the cache", cache.programs.size());
+    log::write("video", cache.keys_only ? "%zu pixel shader variants known from earlier games" : "%zu compiled pixel shaders loaded from the cache", cache.programs.size());
 }
 
 bool load_binary(Variant& variant, int kind, const std::string& key) {
@@ -1532,8 +1533,27 @@ bool load_binary(Variant& variant, int kind, const std::string& key) {
     return true;
 }
 
+void store_key(int kind, const std::string& key) {
+    BinaryCache& cache = g_binaries;
+    std::string name = binary_name(kind, key);
+    if (cache.path.empty() || cache.programs.count(name)) {
+        return;
+    }
+    const uint32_t sizes[3] = {static_cast<uint32_t>(name.size()), 0, 0};
+    if (FILE* file = std::fopen(cache.path.c_str(), "ab")) {
+        std::fwrite(sizes, 1, sizeof sizes, file);
+        std::fwrite(name.data(), 1, name.size(), file);
+        std::fclose(file);
+    }
+    cache.programs[name] = {0, std::string()};
+}
+
 void store_binary(GLuint id, int kind, const std::string& key) {
     BinaryCache& cache = g_binaries;
+    if (cache.keys_only) {
+        store_key(kind, key);
+        return;
+    }
     if (!cache.get || cache.path.empty()) {
         return;
     }
@@ -1662,10 +1682,22 @@ void finish_variant(Variant& variant, int kind, const std::string& key, bool fre
     }
 }
 
+void prime_variant(GLuint id) {
+    GLint box[4] = {};
+    gl.GetIntegerv(GL_SCISSOR_BOX, box);
+    gl.Enable(GL_SCISSOR_TEST);
+    gl.Scissor(0, 0, 0, 0);
+    gl.UseProgram(id);
+    gl.BindVertexArray(g_device.empty_layout);
+    gl.DrawArrays(GL_TRIANGLES, 0, 3);
+    gl.Scissor(box[0], box[1], box[2], box[3]);
+}
+
 void warm_variants() {
     if (!g_binaries.opened) {
         open_binaries();
     }
+    const bool from_source = g_binaries.keys_only;
     auto started = std::chrono::steady_clock::now();
     std::vector<std::string> names;
     for (const auto& entry : g_binaries.programs) {
@@ -1682,7 +1714,14 @@ void warm_variants() {
         if (variant.program.id || variant.done || variant.linking) {
             continue;
         }
-        if (load_binary(variant, kind, key)) {
+        if (from_source) {
+            start_variant(variant, kind, key);
+            finish_variant(variant, kind, key, false);
+            if (variant.program.id) {
+                prime_variant(variant.program.id);
+                prepared++;
+            }
+        } else if (load_binary(variant, kind, key)) {
             finish_variant(variant, kind, key, false);
             prepared++;
         }
