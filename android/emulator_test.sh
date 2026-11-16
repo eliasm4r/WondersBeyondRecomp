@@ -17,7 +17,7 @@ adb logcat -c
 adb shell am start -W -n io.github.eliasm4r.wondersbeyondrecomp/.GameActivity
 sleep 15
 adb logcat -d > logcat.txt
-pid=$(adb shell pidof io.github.eliasm4r.wondersbeyondrecomp | tr -d '')
+pid=$(adb shell pidof io.github.eliasm4r.wondersbeyondrecomp | tr -d '\r')
 echo "app process: ${pid:-not running}"
 grep -iE "SDL|wondersbeyond|libmain|FATAL|crash|DEBUG|nativeRunMain|message" logcat.txt | grep -vE "SdkSandbox|GameManager|SplashScreen|CoreBack|WindowManagerShell" | tail -n 80
 adb shell screencap -p /data/local/tmp/screen.png && adb pull /data/local/tmp/screen.png screen.png >/dev/null
