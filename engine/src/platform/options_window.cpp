@@ -108,6 +108,26 @@ bool menu_open() {
     return g_menu.open();
 }
 
+bool menu_covers(void* window, int x, int y) {
+    Layout frame;
+    Rect placed;
+    Hover target;
+    if (!g_menu.open() || !hit(window, x, y, frame, placed, target)) {
+        return false;
+    }
+    return x >= placed.x && y >= placed.y && x < placed.x + placed.width && y < placed.y + placed.height;
+}
+
+bool menu_slider_at(void* window, int x, int y) {
+    Layout frame;
+    Rect placed;
+    Hover target;
+    if (!g_menu.open() || !hit(window, x, y, frame, placed, target) || target.row < 0 || target.part == Part::Label) {
+        return false;
+    }
+    return g_menu.rows()[static_cast<size_t>(target.row)].kind == Kind::Slider;
+}
+
 bool menu_capturing() {
     return g_menu.open() && g_menu.capturing();
 }

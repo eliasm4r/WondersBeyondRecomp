@@ -23,6 +23,7 @@
 #include "wp/memory.h"
 #include "wp/runtime.h"
 #include "wp/settings.h"
+#include "wp/touch.h"
 #include "wp/video.h"
 #include "lookup.h"
 
@@ -390,6 +391,11 @@ void fly(Cpu& c, uint32_t camera, bool start, float mouse_x, float mouse_y, floa
     float pad_rise = 0.0f;
     bool pad_fast = false;
     gamepad::fly_controls(pad_along, pad_side, pad_rise, pad_fast);
+    touch::State fingers = touch::poll(false);
+    pad_along -= fingers.stick_y;
+    pad_side += fingers.stick_x;
+    pad_rise += ((fingers.buttons & input::kButtonA) ? 1.0f : 0.0f) - ((fingers.buttons & input::kButtonB) ? 1.0f : 0.0f);
+    pad_fast = pad_fast || (fingers.buttons & input::kButtonTwo) != 0;
     float along = std::clamp(fly_key(keymap::Action::Up) - fly_key(keymap::Action::Down) + pad_along, -1.0f, 1.0f);
     float side = std::clamp(fly_key(keymap::Action::Right) - fly_key(keymap::Action::Left) + pad_side, -1.0f, 1.0f);
     float rise = std::clamp((video::key_down(kKeyRise) ? 1.0f : 0.0f) - (video::key_down(kKeySink) ? 1.0f : 0.0f) + pad_rise, -1.0f, 1.0f);

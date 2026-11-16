@@ -2162,7 +2162,11 @@ const char* api_name() {
 }
 
 int auto_scale() {
+#ifdef __ANDROID__
+    return 2;
+#else
     return 4;
+#endif
 }
 
 bool interpolating() {
@@ -2841,6 +2845,7 @@ bool present_frame(void* window_handle, double aspect) {
     draw_overlay(client_width, client_height, bar);
     draw_titlebar(client_width, client_height, bar);
     SDL_GL_SwapWindow(window);
+    video::park_while_background();
     apply_scale();
     return true;
 }

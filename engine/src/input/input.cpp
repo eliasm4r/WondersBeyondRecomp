@@ -216,14 +216,6 @@ Sample gamepad_sample(uint32_t channel, bool sideways) {
     }
     result.stick_x = pad.stick_x;
     result.stick_y = pad.stick_y;
-    if (channel == 0) {
-        touch::State fingers = touch::poll(sideways);
-        result.buttons |= fingers.buttons;
-        if (fingers.stick_x != 0.0f || fingers.stick_y != 0.0f) {
-            result.stick_x = fingers.stick_x;
-            result.stick_y = fingers.stick_y;
-        }
-    }
     return result;
 }
 
@@ -370,6 +362,12 @@ Sample device_sample(uint32_t channel) {
     } else if (from_keys != 0) {
         g_gamepad_in_use = false;
     }
+    touch::State fingers = touch::poll(sideways);
+    result.buttons |= fingers.buttons;
+    if (fingers.stick_x != 0.0f || fingers.stick_y != 0.0f) {
+        pad.stick_x = fingers.stick_x;
+        pad.stick_y = fingers.stick_y;
+    }
     if (mode == attraction::Mode::Shake) {
         uint32_t bomb = (result.buttons & kButtonTwo) ? kButtonA : 0;
         result.buttons = (result.buttons & ~(kButtonA | kButtonTwo)) | bomb;
@@ -412,7 +410,14 @@ Sample device_sample(uint32_t channel) {
     last_cursor_x = cursor_x;
     last_cursor_y = cursor_y;
     bool pad_wins = free_aim && pad_aims && pad.pointer_valid;
-    if (mouse_aims && !pad_wins && video::cursor_on_image(result.pointer_x, result.pointer_y)) {
+    float touch_x = 0.0f;
+    float touch_y = 0.0f;
+    if (free_aim && fingers.pointer_valid &&
+        video::image_point(static_cast<long>(fingers.pointer_x), static_cast<long>(fingers.pointer_y), fingers.width, fingers.height, touch_x, touch_y)) {
+        result.pointer_valid = true;
+        result.pointer_x = touch_x;
+        result.pointer_y = touch_y;
+    } else if (mouse_aims && !pad_wins && video::cursor_on_image(result.pointer_x, result.pointer_y)) {
         result.pointer_valid = true;
     } else if (pad.pointer_valid) {
         result.pointer_valid = true;

@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
 #include <ctime>
 #include <filesystem>
 #include <mutex>
@@ -229,6 +230,99 @@ std::string window_title(double fps) {
     return show_statistics() ? title + " | " + gx::render::api_name() + " | " + statistics : title;
 }
 
+struct Background {
+    std::mutex lock;
+    std::condition_variable changed;
+    bool wanted = false;
+    bool parked = false;
+};
+
+Background g_background;
+
+bool on_app_event(void*, SDL_Event* event) {
+    if (event->type == SDL_EVENT_WILL_ENTER_BACKGROUND) {
+        std::unique_lock<std::mutex> hold(g_background.lock);
+        g_background.wanted = true;
+        g_background.changed.notify_all();
+        g_background.changed.wait_for(hold, std::chrono::seconds(2), [] { return g_background.parked; });
+        log::write("video", "app in the background");
+    } else if (event->type == SDL_EVENT_DID_ENTER_FOREGROUND) {
+        std::lock_guard<std::mutex> hold(g_background.lock);
+        g_background.wanted = false;
+        g_background.changed.notify_all();
+        log::write("video", "app in the foreground");
+    }
+    return true;
+}
+
+struct MenuFinger {
+    SDL_FingerID id = 0;
+    bool down = false;
+    bool slider = false;
+    bool scrolled = false;
+    float start_y = 0.0f;
+    float scroll_y = 0.0f;
+};
+
+MenuFinger g_menu_finger;
+
+void menu_finger(SDL_Window* window, const SDL_Event& event, int x, int y, int height) {
+    MenuFinger& finger = g_menu_finger;
+    if (event.type == SDL_EVENT_FINGER_DOWN) {
+        if (finger.down) {
+            return;
+        }
+        finger = MenuFinger{event.tfinger.fingerID, true, options::menu_slider_at(window, x, y), false, static_cast<float>(y), static_cast<float>(y)};
+        options::menu_hover(window, x, y);
+        if (finger.slider) {
+            apply_option(window, options::menu_click(window, x, y, false));
+        }
+        return;
+    }
+    if (!finger.down || event.tfinger.fingerID != finger.id) {
+        return;
+    }
+    if (event.type == SDL_EVENT_FINGER_MOTION) {
+        if (finger.slider) {
+            apply_option(window, options::menu_drag(window, x, y));
+            return;
+        }
+        float step = 0.06f * static_cast<float>(height);
+        if (std::fabs(static_cast<float>(y) - finger.start_y) > 0.03f * static_cast<float>(height)) {
+            finger.scrolled = true;
+        }
+        while (finger.scrolled && std::fabs(static_cast<float>(y) - finger.scroll_y) >= step) {
+            bool down = static_cast<float>(y) > finger.scroll_y;
+            apply_option(window, options::menu_wheel(window, down ? 120 : -120));
+            finger.scroll_y += down ? step : -step;
+        }
+        return;
+    }
+    finger.down = false;
+    if (finger.slider || finger.scrolled) {
+        return;
+    }
+    if (options::menu_covers(window, x, y)) {
+        apply_option(window, options::menu_click(window, x, y, false));
+    } else {
+        options::toggle_menu(window);
+    }
+}
+
+void update_insets(SDL_Window* window) {
+    SDL_Rect safe{};
+    int width = 0;
+    int height = 0;
+    if (!SDL_GetWindowSafeArea(window, &safe) || !SDL_GetWindowSize(window, &width, &height) || safe.w <= 0 || safe.h <= 0) {
+        touch::set_insets(0, 0, 0, 0);
+        return;
+    }
+    float density = SDL_GetWindowPixelDensity(window);
+    density = density > 0.0f ? density : 1.0f;
+    touch::set_insets(static_cast<int>(safe.x * density), static_cast<int>(safe.y * density), static_cast<int>((width - safe.x - safe.w) * density),
+                      static_cast<int>((height - safe.y - safe.h) * density));
+}
+
 void handle_event(SDL_Window* window, const SDL_Event& event) {
     if (titlebar::handle_event(window, event)) {
         return;
@@ -248,19 +342,23 @@ void handle_event(SDL_Window* window, const SDL_Event& event) {
         float x = event.tfinger.x * static_cast<float>(width);
         float y = event.tfinger.y * static_cast<float>(height);
         if (options::menu_open()) {
-            if (event.type == SDL_EVENT_FINGER_DOWN) {
-                apply_option(window, options::menu_click(window, static_cast<int>(x), static_cast<int>(y), false));
-            } else if (event.type == SDL_EVENT_FINGER_MOTION) {
-                options::menu_hover(window, static_cast<int>(x), static_cast<int>(y));
-                apply_option(window, options::menu_drag(window, static_cast<int>(x), static_cast<int>(y)));
-            }
+            menu_finger(window, event, static_cast<int>(x), static_cast<int>(y), height);
             return;
         }
+        g_menu_finger.down = false;
         touch::Phase phase = event.type == SDL_EVENT_FINGER_DOWN ? touch::Phase::Down : event.type == SDL_EVENT_FINGER_UP ? touch::Phase::Up : touch::Phase::Move;
         touch::finger(static_cast<int64_t>(event.tfinger.fingerID), phase, x, y, width, height);
         if (touch::take_menu_press()) {
             options::toggle_menu(window);
         }
+        return;
+    }
+    case SDL_EVENT_WINDOW_SAFE_AREA_CHANGED:
+        update_insets(window);
+        return;
+    case SDL_EVENT_SENSOR_UPDATE: {
+        constexpr float kGravity = 9.80665f;
+        touch::phone_motion(event.sensor.data[0] / kGravity, event.sensor.data[1] / kGravity, event.sensor.data[2] / kGravity);
         return;
     }
     case SDL_EVENT_KEY_DOWN: {
@@ -349,6 +447,7 @@ void handle_event(SDL_Window* window, const SDL_Event& event) {
         return;
     }
     case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+        update_insets(window);
         options::refresh_menu(window);
         return;
     default:
@@ -450,6 +549,21 @@ void window_thread(bool visible) {
     if (whole_screen || settings::flag("video.fullscreen", "WP_FULLSCREEN")) {
         set_fullscreen(window, true);
     }
+    update_insets(window);
+#ifdef __ANDROID__
+    SDL_AddEventWatch(on_app_event, nullptr);
+    if (SDL_InitSubSystem(SDL_INIT_SENSOR)) {
+        int count = 0;
+        SDL_SensorID* sensors = SDL_GetSensors(&count);
+        for (int i = 0; sensors && i < count; i++) {
+            if (SDL_GetSensorTypeForID(sensors[i]) == SDL_SENSOR_ACCEL && SDL_OpenSensor(sensors[i])) {
+                log::write("input", "phone accelerometer open");
+                break;
+            }
+        }
+        SDL_free(sensors);
+    }
+#endif
     bool cursor_hidden = false;
     while (true) {
         SDL_WaitEventTimeout(nullptr, kMenuPeriodMs);
@@ -465,8 +579,12 @@ void window_thread(bool visible) {
         }
         apply_option(window, options::poll_gamepads(window));
         perf::update();
+#ifdef __ANDROID__
+        bool capture = false;
+#else
         bool capture = (free_camera::current().enabled || free_camera::flying()) && free_camera::driving() && (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) &&
                        !options::menu_open() && !free_camera::pointer_held();
+#endif
         if (capture != SDL_GetWindowRelativeMouseMode(window)) {
             SDL_SetWindowRelativeMouseMode(window, capture);
         }
@@ -563,6 +681,22 @@ void present_on_gpu(SDL_Window* window, double aspect) {
     }
 }
 
+}
+
+void park_while_background() {
+    std::unique_lock<std::mutex> hold(g_background.lock);
+    if (!g_background.wanted) {
+        return;
+    }
+    SDL_Window* window = g_state.window;
+    SDL_GLContext context = g_state.context;
+    SDL_GL_MakeCurrent(window, nullptr);
+    g_background.parked = true;
+    g_background.changed.notify_all();
+    g_background.changed.wait(hold, [] { return !g_background.wanted; });
+    g_background.parked = false;
+    SDL_GL_MakeCurrent(window, context);
+    SDL_GL_SetSwapInterval(0);
 }
 
 bool make_gl_current() {

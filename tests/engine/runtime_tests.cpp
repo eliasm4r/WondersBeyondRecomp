@@ -19,6 +19,7 @@
 #include "wp/fast_clock.h"
 #include "wp/fiber.h"
 #include "wp/touch.h"
+#include "wp/attraction.h"
 #include "wp/free_camera.h"
 #include "wp/canvas.h"
 #include "wp/color.h"
@@ -1878,11 +1879,28 @@ void test_free_camera() {
     std::vector<std::string> keyboard = wp::options::tab_keys(3, wp::options::Device::Keyboard);
     std::vector<std::string> gamepad = wp::options::tab_keys(3, wp::options::Device::Gamepad);
     auto has = [](const std::vector<std::string>& keys, const char* key) { return std::find(keys.begin(), keys.end(), key) != keys.end(); };
+#ifdef __ANDROID__
+    CHECK(has(keyboard, "camera.free") && has(keyboard, "camera.touch_speed") && has(keyboard, "input.touch") && !has(keyboard, "camera.mouse_speed"));
+#else
     CHECK(has(keyboard, "camera.free") && has(keyboard, "camera.mouse_speed") && has(keyboard, "camera.invert_y") && !has(keyboard, "camera.stick_speed"));
+#endif
     CHECK(has(gamepad, "camera.free") && has(gamepad, "camera.stick_speed") && has(gamepad, "camera.invert_y") && !has(gamepad, "camera.mouse_speed"));
     CHECK(wp::options::kind("camera.free") == wp::options::Kind::Toggle && wp::options::kind("camera.mouse_speed") == wp::options::Kind::Slider);
     CHECK(wp::options::live("camera.free") && wp::options::live("camera.stick_speed"));
     CHECK(std::strcmp(wp::ui::label("camera.free", wp::ui::Language::French), "Caméra libre") == 0);
+}
+
+void test_phone_options() {
+    auto has = [](const std::vector<std::string>& keys, const char* key) { return std::find(keys.begin(), keys.end(), key) != keys.end(); };
+    CHECK(!has(wp::options::tab_keys(0), "video.fullscreen") && has(wp::options::tab_keys(0), "video.scale"));
+    CHECK(!has(wp::options::tab_keys(1), "system.discord") && has(wp::options::tab_keys(1), "game.text_speed"));
+    CHECK(!has(wp::options::tab_keys(5), "video.bug_recorder") && has(wp::options::tab_keys(5), "video.dump_textures"));
+    std::vector<std::string> touch_page = wp::options::tab_keys(3, wp::options::Device::Keyboard);
+    CHECK((touch_page == std::vector<std::string>{"controls.device", "input.touch", "input.touch_size", "input.touch_opacity", "input.phone_shake", "camera.free",
+                                                  "camera.touch_speed", "camera.invert_y"}));
+    CHECK(wp::options::kind("input.touch") == wp::options::Kind::Toggle && wp::options::kind("input.touch_size") == wp::options::Kind::Slider);
+    CHECK((wp::options::choices("controls.device") == std::vector<std::string>{"touch", "gamepad"}));
+    CHECK(wp::gx::render::auto_scale() == 2);
 }
 
 void test_options_menu() {
@@ -2798,7 +2816,46 @@ void test_touch() {
     bool visible = false;
     CHECK(wp::touch::take(version, image, visible, width, height) && visible && image.width == width / 2 && image.height == height / 2);
     CHECK(!wp::touch::take(version, image, visible, width, height));
+    CHECK(wp::touch::in_use());
+
+    float turn_x = 0.0f;
+    float turn_y = 0.0f;
+    wp::free_camera::take_mouse(turn_x, turn_y);
+    wp::touch::finger(4, wp::touch::Phase::Down, 1500, 300, width, height);
+    wp::touch::finger(4, wp::touch::Phase::Move, 1600, 300, width, height);
+    wp::touch::finger(4, wp::touch::Phase::Up, 1600, 300, width, height);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    wp::free_camera::take_mouse(turn_x, turn_y);
+    CHECK(turn_x > 50.0f && std::fabs(turn_y) < 1.0f && wp::touch::poll(true).buttons == 0);
+
+    wp::attraction::set_mode(wp::attraction::Mode::Aim);
+    wp::touch::finger(5, wp::touch::Phase::Down, 1500, 400, width, height);
+    wp::touch::finger(5, wp::touch::Phase::Up, 1500, 400, width, height);
+    wp::touch::State aim = wp::touch::poll(true);
+    CHECK(aim.pointer_valid && aim.pointer_x == 1500.0f && aim.pointer_y == 400.0f && aim.width == width && (aim.buttons & wp::input::kButtonA));
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    CHECK(wp::touch::poll(true).buttons == 0 && wp::touch::poll(true).pointer_valid);
+    wp::attraction::set_mode(wp::attraction::Mode::Shake);
+    CHECK(!wp::touch::poll(true).pointer_valid);
+    wp::touch::finger(6, wp::touch::Phase::Down, width - 0.19f * height, height - 0.44f * height, width, height);
+    CHECK(wp::touch::poll(true).buttons == wp::input::kMotionShakeLeft);
+    wp::touch::finger(6, wp::touch::Phase::Up, 0, 0, width, height);
+    wp::attraction::set_mode(wp::attraction::Mode::None);
+    wp::touch::phone_motion(0.0f, 0.3f, 1.0f);
+    CHECK(wp::touch::poll(true).buttons == 0);
+    wp::touch::phone_motion(2.5f, 0.0f, 1.0f);
+    CHECK(wp::touch::poll(true).buttons == wp::input::kMotionShake);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    CHECK(wp::touch::poll(true).buttons == 0);
+
+    wp::touch::set_insets(0, 0, 100, 0);
+    wp::touch::finger(7, wp::touch::Phase::Down, width - 100 - 0.15f * height, height - 0.17f * height, width, height);
+    CHECK(wp::touch::poll(true).buttons == wp::input::kButtonTwo);
+    wp::touch::finger(7, wp::touch::Phase::Up, 0, 0, width, height);
+    wp::touch::set_insets(0, 0, 0, 0);
+
     wp::touch::other_input();
+    CHECK(!wp::touch::in_use());
     CHECK(wp::touch::take(version, image, visible, width, height) && !visible);
     wp::touch::set_enabled(false);
     CHECK(wp::touch::poll(true).buttons == 0);
@@ -2809,7 +2866,6 @@ int main() {
     test_memory();
     test_fast_clock();
     std::thread(test_fibers).join();
-    test_touch();
     test_rotate_and_shift();
     test_arithmetic();
     test_condition_register();
@@ -2851,7 +2907,11 @@ int main() {
     test_stall_watch();
     test_guest_call_chain();
     test_facing_of_thin_triangles();
+#ifdef __ANDROID__
+    test_phone_options();
+#else
     test_options_menu();
+#endif
     test_pad_motion();
     test_options_repeat();
     test_options_layout();
@@ -2866,6 +2926,7 @@ int main() {
     test_hollywood_registers();
     test_linked_fifo_registers();
     test_wiimote_speaker_decoder();
+    test_touch();
     std::free(wp::g_memory);
     if (failures == 0) {
         std::puts("all runtime tests passed");

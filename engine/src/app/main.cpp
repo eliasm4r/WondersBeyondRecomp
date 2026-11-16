@@ -41,6 +41,10 @@
 #ifdef __ANDROID__
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
+#include <android/log.h>
+#include <unistd.h>
+
+#include <thread>
 #endif
 
 #ifdef _WIN32
@@ -264,6 +268,32 @@ int run(int argc, char** argv) {
 }
 
 #ifdef __ANDROID__
+void forward_output() {
+    static int pipes[2];
+    if (pipe(pipes) != 0) {
+        return;
+    }
+    std::setvbuf(stdout, nullptr, _IOLBF, 0);
+    std::setvbuf(stderr, nullptr, _IONBF, 0);
+    dup2(pipes[1], 1);
+    dup2(pipes[1], 2);
+    std::thread([] {
+        std::string line;
+        char buffer[1024];
+        ssize_t count = 0;
+        while ((count = read(pipes[0], buffer, sizeof buffer)) > 0) {
+            for (ssize_t i = 0; i < count; i++) {
+                if (buffer[i] == '\n') {
+                    __android_log_write(ANDROID_LOG_INFO, "WondersBeyond", line.c_str());
+                    line.clear();
+                } else {
+                    line += buffer[i];
+                }
+            }
+        }
+    }).detach();
+}
+
 bool enter_android_folder() {
     const char* folder = SDL_GetAndroidExternalStoragePath();
     if (!folder) {
@@ -289,6 +319,7 @@ bool enter_android_folder() {
 int main(int argc, char** argv) {
     std::set_terminate(report_terminate);
 #ifdef __ANDROID__
+    forward_output();
     if (!enter_android_folder()) {
         return 1;
     }

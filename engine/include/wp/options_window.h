@@ -15,6 +15,8 @@ std::string menu_click(void* window, int x, int y, bool right);
 void menu_hover(void* window, int x, int y);
 // The mouse moved with the left button held: drags a slider.
 std::string menu_drag(void* window, int x, int y);
+bool menu_covers(void* window, int x, int y);
+bool menu_slider_at(void* window, int x, int y);
 std::string poll_gamepads(void* window);
 void refresh_menu(void* window);
 Image render(const Menu& menu, int client_height);
