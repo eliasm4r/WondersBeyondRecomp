@@ -359,7 +359,15 @@ class Install:
                 content.extractall(folder)
         else:
             tar = Path(os.environ.get("SystemRoot", "C:\\Windows")) / "System32" / "tar.exe"
-            self.run([str(tar), "-xf", str(archive), "-C", str(folder)])
+            try:
+                self.run([str(tar), "-xf", str(archive), "-C", str(folder)])
+            except Failure:
+                if archive.suffix.lower() != ".exe":
+                    raise
+                self.note("tar could not unpack the archive, letting it unpack itself")
+                shutil.rmtree(folder, ignore_errors=True)
+                folder.mkdir(parents=True, exist_ok=True)
+                self.run([str(archive), "-y", f"-o{folder}"])
         if self.stop.is_set():
             raise Stopped()
         (folder / ".ready").write_text(tool["sha256"])
