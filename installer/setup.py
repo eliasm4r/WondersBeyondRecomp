@@ -19,6 +19,8 @@ UPDATE_FAILED = 4
 
 
 def use_tk():
+    if sys.platform != "win32":
+        return
     for name, folder in (("TCL_LIBRARY", "tcl8.6"), ("TK_LIBRARY", "tk8.6")):
         os.environ[name] = str(HERE.parent / "python" / "tcl" / folder)
 

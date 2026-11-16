@@ -95,3 +95,84 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
           script: bash android/emulator_test.sh artifact
+
+  sdl3-linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            machine: x86_64
+          - runner: ubuntu-22.04-arm
+            machine: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the SDL3 dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libegl-dev libgl-dev libpulse-dev libasound2-dev libudev-dev libdbus-1-dev libpipewire-0.3-dev libibus-1.0-dev
+      - name: Build SDL3 as a shared library on an older system
+        run: |
+          curl -fsSL -o sdl.tar.gz https://github.com/libsdl-org/SDL/releases/download/release-3.4.16/SDL3-3.4.16.tar.gz
+          echo "7322236cd12090c3eb40b9728be4d49c76f66ad17d04369584d4ecad5cf77c68  sdl.tar.gz" | sha256sum -c
+          tar -xzf sdl.tar.gz
+          cmake -S SDL3-3.4.16 -B sdl-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TEST_LIBRARY=OFF -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF -DCMAKE_INSTALL_PREFIX="$PWD/sdl3" -DCMAKE_INSTALL_LIBDIR=lib
+          cmake --build sdl-build
+          cmake --install sdl-build
+      - name: Make the Linux setup
+        run: python3 tools/make_setup.py --linux sdl3 ${{ matrix.machine }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: setup-linux-${{ matrix.machine }}
+          path: build/dist/WondersBeyondRecomp-Setup-Linux-${{ matrix.machine }}.zip
+          retention-days: 14
+
+  setup-linux:
+    needs: sdl3-linux
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            machine: x86_64
+          - runner: ubuntu-24.04-arm
+            machine: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: setup-linux-${{ matrix.machine }}
+      - name: Run the setup steps that need no disc, with no compiler from the system
+        run: |
+          sudo apt-get remove -y --purge g++ gcc clang || true
+          unzip -q WondersBeyondRecomp-Setup-Linux-${{ matrix.machine }}.zip
+          cd WondersBeyondRecomp-Setup
+          url=$(sed -n 's/^PYTHON_URL="\(.*\)"$/\1/p' Setup.sh | sed "s/\${PYTHON_ARCH}/${{ matrix.machine }}/")
+          curl -fsSL -o python.tar.gz "$url"
+          tar -xzf python.tar.gz
+          python/bin/python3 -c "import tkinter; print('Tk', tkinter.TkVersion)"
+          python/bin/python3 - <<'PY'
+          import os, shutil, subprocess, sys
+          from pathlib import Path
+          sys.path.insert(0, "installer")
+          import steps, texts
+          root = Path.home() / "WondersBeyondRecomp"
+          install = steps.Install(root, "", Path(".").resolve(), True, texts.TEXTS, lambda kind, value: print(kind, value, flush=True))
+          install.python = str(Path("python/bin/python3").resolve())
+          install.log = sys.stdout
+          move = lambda part: None
+          install.copy_sources(move)
+          for tool in steps.TOOLS:
+              install.download(tool, move)
+              install.unpack(tool)
+          print(install.program("cmake"), install.program("ninja"), install.program("nodtool"))
+          install.run([install.program("nodtool"), "--version"])
+          install.configure(move)
+          install.run([install.program("cmake"), "--build", "build/out", "--parallel", str(steps.compile_jobs()), "--target", "runtime_tests"])
+          install.run([str(root / "build" / "out" / "runtime_tests")])
+          shutil.copyfile(root / "build" / "out" / "runtime_tests", root / "build" / "out" / steps.EXECUTABLE)
+          install.finish(move)
+          print(sorted(path.name for path in root.iterdir()))
+          print((Path.home() / ".local/share/applications" / (steps.APP_IDENTIFIER + ".desktop")).read_text())
+          PY

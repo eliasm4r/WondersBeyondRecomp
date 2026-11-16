@@ -87,7 +87,48 @@ def add_sources():
                 archive.write(root / name, name)
 
 
+def write_sources(target):
+    listed = subprocess.run(["git", "ls-files", "-z", "--"] + SOURCES, cwd=root, capture_output=True, check=True).stdout.decode("utf-8")
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+        for name in sorted(filter(None, listed.split("\0"))):
+            if (root / name).is_file():
+                archive.write(root / name, name)
+
+
+def make_linux(sdl, machine):
+    output = root / "build" / "dist" / f"{NAME}-Linux-{machine}.zip"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.unlink(missing_ok=True)
+    folder = Path(NAME)
+    sources = work / "linux-sources.zip"
+    sources.parent.mkdir(parents=True, exist_ok=True)
+    write_sources(sources)
+
+    def add(archive, name, data, mode=0o644):
+        entry = zipfile.ZipInfo(str(folder / name).replace("\\", "/"), (2026, 1, 1, 0, 0, 0))
+        entry.external_attr = (0o100000 | mode) << 16
+        entry.compress_type = zipfile.ZIP_DEFLATED
+        archive.writestr(entry, data)
+
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+        add(archive, "Setup.sh", (root / "installer" / "Setup.sh").read_bytes().replace(b"\r\n", b"\n"), 0o755)
+        for file in sorted((root / "installer").glob("*.py")):
+            if file.name != "sitecustomize.py":
+                add(archive, f"installer/{file.name}", file.read_bytes())
+        add(archive, "installer/sources.zip", sources.read_bytes())
+        for file in sorted(Path(sdl).rglob("*")):
+            if file.is_file() and not file.is_symlink() or file.is_symlink() and file.resolve().is_file():
+                relative = file.relative_to(sdl).as_posix()
+                if relative.startswith(("lib/", "include/")) and "/pkgconfig/" not in relative and not relative.endswith(".a"):
+                    add(archive, f"installer/sdl3/{relative}", file.read_bytes(), 0o755 if ".so" in file.name else 0o644)
+        for name in ("LICENSE", "THIRD_PARTY_NOTICES.md"):
+            add(archive, name, (root / name).read_bytes())
+    print(f"{output} {output.stat().st_size / (1 << 20):.1f} MB")
+
+
 def main():
+    if len(sys.argv) == 4 and sys.argv[1] == "--linux":
+        return make_linux(Path(sys.argv[2]), sys.argv[3])
     if sys.platform != "win32":
         sys.exit("the setup is made on Windows")
     shutil.rmtree(bundle, ignore_errors=True)
