@@ -9,6 +9,7 @@ add_library(wp_engine STATIC
     src/core/frame_pacing.cpp
     src/core/hle.cpp
     src/core/stall_watch.cpp
+    src/core/host_stacks.cpp
     src/core/threads.cpp
     src/core/interrupts.cpp
     src/core/modules.cpp
@@ -56,8 +57,12 @@ add_library(wp_engine STATIC
     src/platform/update_check.cpp
     src/platform/hd_textures.cpp
 )
-if(WIN32)
+option(WP_OPENGL "Draw with OpenGL instead of Direct3D 11 on Windows" OFF)
+if(WIN32 AND NOT WP_OPENGL)
     target_sources(wp_engine PRIVATE src/gpu/gx_render.cpp src/platform/video.cpp)
+endif()
+if(WIN32 AND WP_OPENGL)
+    target_compile_definitions(wp_engine PUBLIC WP_OPENGL)
 endif()
 target_sources(wp_engine PRIVATE src/platform/options_render_stb.cpp src/platform/canvas.cpp src/platform/embedded_fonts.cpp)
 set(WP_FONT_DIR "${CMAKE_SOURCE_DIR}/third_party/fonts/nunito")
@@ -103,10 +108,10 @@ else()
         foreach(WP_SDL_FEATURE X11 WAYLAND PULSEAUDIO PIPEWIRE ALSA)
             get_directory_property(WP_HAVE_${WP_SDL_FEATURE} DIRECTORY "${sdl3_SOURCE_DIR}" DEFINITION HAVE_${WP_SDL_FEATURE})
         endforeach()
-        if(NOT WP_HAVE_X11 AND NOT WP_HAVE_WAYLAND)
+        if(NOT APPLE AND NOT WP_HAVE_X11 AND NOT WP_HAVE_WAYLAND)
             message(FATAL_ERROR "SDL3 found no X11 or Wayland development files, so the game could not open a window. Install them and build again:\n${WP_SDL_PACKAGES}")
         endif()
-        if(NOT WP_HAVE_PULSEAUDIO AND NOT WP_HAVE_PIPEWIRE AND NOT WP_HAVE_ALSA)
+        if(NOT APPLE AND NOT WP_HAVE_PULSEAUDIO AND NOT WP_HAVE_PIPEWIRE AND NOT WP_HAVE_ALSA)
             message(FATAL_ERROR "SDL3 found no PulseAudio, PipeWire or ALSA development files, so the game would have no sound. Install them and build again:\n${WP_SDL_PACKAGES}")
         endif()
     endif()
@@ -125,10 +130,12 @@ if(SDL3_FOUND)
 else()
     target_sources(wp_engine PRIVATE src/input/no_gamepad.cpp src/input/no_real_wiimote.cpp)
 endif()
-if(NOT WIN32)
+if(NOT WIN32 OR WP_OPENGL)
     if(SDL3_FOUND)
         target_sources(wp_engine PRIVATE src/gpu/gx_render_gl.cpp src/platform/video_sdl.cpp src/platform/titlebar_sdl.cpp)
-        target_compile_definitions(wp_engine PRIVATE WP_SDL_PLATFORM)
+        if(NOT WIN32)
+            target_compile_definitions(wp_engine PRIVATE WP_SDL_PLATFORM)
+        endif()
     else()
         target_sources(wp_engine PRIVATE src/gpu/null_render.cpp src/platform/video_headless.cpp)
     endif()

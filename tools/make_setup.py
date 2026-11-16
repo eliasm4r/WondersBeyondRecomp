@@ -113,6 +113,29 @@ def main():
             if file.is_file():
                 archive.write(file, Path(NAME) / file.relative_to(bundle))
     print(f"{output} {output.stat().st_size / (1 << 20):.1f} MB")
+    make_mac()
+
+
+def make_mac():
+    output = root / "build" / "dist" / (NAME + "-macOS.zip")
+    output.unlink(missing_ok=True)
+    folder = Path(NAME)
+
+    def add(archive, name, data, mode=0o644):
+        entry = zipfile.ZipInfo(str(folder / name).replace("\\", "/"), (2026, 1, 1, 0, 0, 0))
+        entry.external_attr = (0o100000 | mode) << 16
+        entry.compress_type = zipfile.ZIP_DEFLATED
+        archive.writestr(entry, data)
+
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+        add(archive, "Setup.command", (root / "installer" / "Setup.command").read_bytes().replace(b"\r\n", b"\n"), 0o755)
+        for file in sorted((root / "installer").glob("*.py")):
+            if file.name != "sitecustomize.py":
+                add(archive, f"installer/{file.name}", file.read_bytes())
+        add(archive, "installer/sources.zip", (bundle / "installer" / "sources.zip").read_bytes())
+        for name in ("LICENSE", "THIRD_PARTY_NOTICES.md"):
+            add(archive, name, (root / name).read_bytes())
+    print(f"{output} {output.stat().st_size / (1 << 20):.1f} MB")
 
 
 if __name__ == "__main__":
