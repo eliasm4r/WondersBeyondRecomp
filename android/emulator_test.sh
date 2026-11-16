@@ -25,4 +25,8 @@ adb shell ls -la /sdcard/Android/data/io.github.eliasm4r.wondersbeyondrecomp/fil
 if grep -q "FATAL EXCEPTION\|Fatal signal" logcat.txt; then
     status=1
 fi
+if [ -z "$pid" ]; then
+    echo "the app is not running"
+    status=1
+fi
 exit $status
