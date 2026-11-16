@@ -119,6 +119,8 @@ def install_on_phone(saves):
     adb("install", "-r", str(APK))
     adb("shell", "mkdir", "-p", PHONE_FOLDER)
     adb("push", "--sync", str(extracted), PHONE_FOLDER + "/")
+    if (ROOT / "game" / "textures").is_dir():
+        adb("push", "--sync", str(ROOT / "game" / "textures"), PHONE_FOLDER + "/")
     if saves and (ROOT / "game" / "nand").is_dir():
         adb("push", "--sync", str(ROOT / "game" / "nand"), PHONE_FOLDER + "/")
     adb("shell", "am", "start", "-n", f"{PACKAGE}/.GameActivity", check=False)
