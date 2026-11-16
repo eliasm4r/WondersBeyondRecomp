@@ -44,6 +44,12 @@
 #include "wp/ui_text.h"
 #include "wp/touch.h"
 
+#ifdef WP_VULKAN
+namespace wp::gx::render {
+bool choose_vulkan();
+}
+#endif
+
 namespace wp::video {
 
 namespace {
@@ -153,6 +159,8 @@ struct Window {
     std::mutex lock;
     std::condition_variable changed;
     bool finished = false;
+    bool started = false;
+    bool vulkan = false;
     SDL_Window* window = nullptr;
     SDL_GLContext context = nullptr;
 };
@@ -492,6 +500,10 @@ void finish_start(SDL_Window* window, SDL_GLContext context) {
 }
 
 void window_thread(bool visible) {
+    {
+        std::lock_guard<std::mutex> hold(g_state.lock);
+        g_state.started = true;
+    }
     if (touch::enabled()) {
         SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
     }
@@ -507,7 +519,16 @@ void window_thread(bool visible) {
     const char* wanted = std::getenv("WP_GLES");
     const bool embedded = wanted && *wanted && *wanted != '0';
 #endif
-    if (embedded && !kMetal) {
+    bool vulkan = false;
+#ifdef WP_VULKAN
+    vulkan = visible && gx::render::choose_vulkan();
+#endif
+    {
+        std::lock_guard<std::mutex> hold(g_state.lock);
+        g_state.vulkan = vulkan;
+    }
+    if (vulkan) {
+    } else if (embedded && !kMetal) {
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
@@ -517,7 +538,7 @@ void window_thread(bool visible) {
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
     }
-    if (!kMetal) {
+    if (!kMetal && !vulkan) {
         SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
         SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
         SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 0);
@@ -532,14 +553,14 @@ void window_thread(bool visible) {
             client_height = static_cast<int>(client_width / g_aspect + 0.5);
         }
     }
-    SDL_WindowFlags flags = (kMetal ? SDL_WINDOW_METAL : SDL_WINDOW_OPENGL) | SDL_WINDOW_RESIZABLE | SDL_WINDOW_BORDERLESS | (visible ? 0 : SDL_WINDOW_HIDDEN);
+    SDL_WindowFlags flags = (kMetal ? SDL_WINDOW_METAL : (vulkan ? SDL_WINDOW_VULKAN : SDL_WINDOW_OPENGL)) | SDL_WINDOW_RESIZABLE | SDL_WINDOW_BORDERLESS | (visible ? 0 : SDL_WINDOW_HIDDEN);
     SDL_Window* window = SDL_CreateWindow(window_title(0.0).c_str(), client_width, client_height, flags);
 #ifdef WP_METAL
     SDL_GLContext context = window ? reinterpret_cast<SDL_GLContext>(SDL_Metal_CreateView(window)) : nullptr;
 #else
-    SDL_GLContext context = window ? SDL_GL_CreateContext(window) : nullptr;
+    SDL_GLContext context = window && !vulkan ? SDL_GL_CreateContext(window) : nullptr;
 #endif
-    if (!context) {
+    if (!context && !(vulkan && window)) {
         std::fprintf(stderr, "cannot create a %s context: %s\n", kMetal ? "Metal" : (embedded ? "OpenGL ES 3.2" : "OpenGL 4.1"), SDL_GetError());
         if (window) {
             SDL_DestroyWindow(window);
@@ -550,7 +571,7 @@ void window_thread(bool visible) {
     titlebar::install(window);
     titlebar::set_title(window_title(0.0));
     SDL_SetWindowSize(window, client_width, client_height + titlebar::height(window));
-    if (!kMetal) {
+    if (!kMetal && !vulkan) {
         SDL_GL_MakeCurrent(window, nullptr);
     }
     finish_start(window, context);
@@ -712,17 +733,31 @@ void park_while_background() {
     }
     SDL_Window* window = g_state.window;
     SDL_GLContext context = g_state.context;
-    if (!kMetal) {
+    if (!kMetal && context) {
         SDL_GL_MakeCurrent(window, nullptr);
     }
     g_background.parked = true;
     g_background.changed.notify_all();
     g_background.changed.wait(hold, [] { return !g_background.wanted; });
     g_background.parked = false;
-    if (!kMetal) {
+    if (!kMetal && context) {
         SDL_GL_MakeCurrent(window, context);
         SDL_GL_SetSwapInterval(0);
     }
+}
+
+bool background_wanted() {
+    std::lock_guard<std::mutex> hold(g_background.lock);
+    return g_background.wanted;
+}
+
+int vulkan_window() {
+    std::unique_lock<std::mutex> hold(g_state.lock);
+    if (!g_state.started) {
+        return -1;
+    }
+    g_state.changed.wait(hold, [] { return g_state.finished; });
+    return g_state.vulkan && g_state.window ? 1 : 0;
 }
 
 void* metal_view() {
