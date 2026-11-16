@@ -1,5 +1,6 @@
 #include "wp/gamepad.h"
 #include "wp/padmap.h"
+#include "wp/touch.h"
 
 #include <SDL3/SDL.h>
 
@@ -641,6 +642,9 @@ State poll(uint32_t slot, bool sideways) {
     b |= padmap::buttons(pressed, padmap::current_mapping());
     if (current.shaking) {
         b |= input::kMotionShake;
+    }
+    if (b != 0) {
+        touch::other_input();
     }
     bool left = held(SDL_GAMEPAD_BUTTON_DPAD_LEFT) || current.left_x < -stick_threshold();
     bool right = held(SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || current.left_x > stick_threshold();

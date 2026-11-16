@@ -15,6 +15,7 @@
 
 #include "wp/attraction.h"
 #include "wp/game.h"
+#include "wp/touch.h"
 #include "wp/gamepad.h"
 #include "wp/free_camera.h"
 #include "wp/gx.h"
@@ -215,6 +216,14 @@ Sample gamepad_sample(uint32_t channel, bool sideways) {
     }
     result.stick_x = pad.stick_x;
     result.stick_y = pad.stick_y;
+    if (channel == 0) {
+        touch::State fingers = touch::poll(sideways);
+        result.buttons |= fingers.buttons;
+        if (fingers.stick_x != 0.0f || fingers.stick_y != 0.0f) {
+            result.stick_x = fingers.stick_x;
+            result.stick_y = fingers.stick_y;
+        }
+    }
     return result;
 }
 

@@ -18,6 +18,7 @@
 
 #include "wp/fast_clock.h"
 #include "wp/fiber.h"
+#include "wp/touch.h"
 #include "wp/free_camera.h"
 #include "wp/canvas.h"
 #include "wp/color.h"
@@ -2775,11 +2776,40 @@ void test_fibers() {
     wp::fiber::destroy(run.other);
 }
 
+void test_touch() {
+    wp::touch::set_enabled(true);
+    const int width = 2400;
+    const int height = 1080;
+    wp::touch::finger(1, wp::touch::Phase::Down, width - 0.15f * height, height - 0.17f * height, width, height);
+    CHECK(wp::touch::poll(true).buttons == wp::input::kButtonTwo);
+    wp::touch::finger(2, wp::touch::Phase::Down, 300, 800, width, height);
+    wp::touch::finger(2, wp::touch::Phase::Move, 450, 800, width, height);
+    wp::touch::State sideways = wp::touch::poll(true);
+    CHECK(sideways.buttons == (wp::input::kButtonTwo | wp::input::kButtonDown) && sideways.stick_x > 0.9f);
+    CHECK(wp::touch::poll(false).buttons == (wp::input::kButtonTwo | wp::input::kButtonRight));
+    wp::touch::finger(1, wp::touch::Phase::Up, 0, 0, width, height);
+    wp::touch::finger(2, wp::touch::Phase::Up, 0, 0, width, height);
+    CHECK(wp::touch::poll(true).buttons == 0);
+    wp::touch::finger(3, wp::touch::Phase::Down, 0.09f * height, 0.08f * height, width, height);
+    CHECK(wp::touch::take_menu_press() && !wp::touch::take_menu_press());
+    wp::touch::finger(3, wp::touch::Phase::Up, 0, 0, width, height);
+    uint64_t version = 0;
+    wp::options::Image image;
+    bool visible = false;
+    CHECK(wp::touch::take(version, image, visible, width, height) && visible && image.width == width / 2 && image.height == height / 2);
+    CHECK(!wp::touch::take(version, image, visible, width, height));
+    wp::touch::other_input();
+    CHECK(wp::touch::take(version, image, visible, width, height) && !visible);
+    wp::touch::set_enabled(false);
+    CHECK(wp::touch::poll(true).buttons == 0);
+}
+
 int main() {
     wp::g_memory = static_cast<uint8_t*>(std::calloc(wp::kMemorySize, 1));
     test_memory();
     test_fast_clock();
     std::thread(test_fibers).join();
+    test_touch();
     test_rotate_and_shift();
     test_arithmetic();
     test_condition_register();

@@ -32,6 +32,7 @@
 #include "wp/options.h"
 #include "wp/hint.h"
 #include "wp/perf_overlay.h"
+#include "wp/touch.h"
 #include "wp/settings.h"
 #include "wp/video.h"
 
@@ -970,6 +971,11 @@ struct Device {
     uint32_t overlay_height = 0;
     uint64_t overlay_version = 0;
     bool overlay_visible = false;
+    GLuint touch_texture = 0;
+    uint32_t touch_width = 0;
+    uint32_t touch_height = 0;
+    uint64_t touch_version = 0;
+    bool touch_visible = false;
     GLuint hud_texture = 0;
     uint32_t hud_width = 0;
     uint32_t hud_height = 0;
@@ -2783,6 +2789,12 @@ void draw_overlay(int client_width, int client_height, int bar) {
         options::Rect placed = hint::place(client_width, client_height - bar, static_cast<int>(g_device.hint_width), static_cast<int>(g_device.hint_height));
         placed.y += bar;
         draw_image(g_device.hint_texture, placed, client_height);
+    }
+    if (touch::take(g_device.touch_version, image, g_device.touch_visible, client_width, client_height) && g_device.touch_visible && !image.pixels.empty()) {
+        upload_image(g_device.touch_texture, g_device.touch_width, g_device.touch_height, image);
+    }
+    if (g_device.touch_visible && !g_device.overlay_visible) {
+        draw_image(g_device.touch_texture, options::Rect{0, 0, client_width, client_height}, client_height);
     }
     if (g_device.overlay_visible) {
         draw_image(g_device.overlay_texture, options::place(client_width, client_height, static_cast<int>(g_device.overlay_width), static_cast<int>(g_device.overlay_height)),

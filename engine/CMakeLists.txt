@@ -35,6 +35,7 @@ add_library(wp_engine STATIC
     src/input/keymap.cpp
     src/input/padmap.cpp
     src/input/free_camera.cpp
+    src/input/touch.cpp
     src/input/si.cpp
     src/core/exi.cpp
     src/core/hollywood.cpp
