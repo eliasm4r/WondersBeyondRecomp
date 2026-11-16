@@ -1,21 +1,37 @@
 #include "wp/touch.h"
 
 #include <algorithm>
-#include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <mutex>
 #include <string>
 #include <vector>
 
+#include "wp/attraction.h"
 #include "wp/canvas.h"
+#include "wp/free_camera.h"
 #include "wp/input.h"
+#include "wp/settings.h"
 
 namespace wp::touch {
 
 namespace {
 
+using Clock = std::chrono::steady_clock;
+
 enum class Kind { Button, Menu };
+enum class Corner { TopLeft, TopRight, BottomRight };
+
+struct Place {
+    Kind kind;
+    const char* label;
+    uint32_t button;
+    Corner corner;
+    float x;
+    float y;
+    float radius;
+};
 
 struct Spot {
     Kind kind;
@@ -30,6 +46,12 @@ struct Finger {
     int64_t id = 0;
     int spot = -1;
     bool stick = false;
+    bool look = false;
+    float x = 0.0f;
+    float y = 0.0f;
+    float start_x = 0.0f;
+    float start_y = 0.0f;
+    Clock::time_point start;
 };
 
 constexpr int kNone = -1;
@@ -39,11 +61,35 @@ constexpr float kStickDead = 0.3f;
 constexpr float kGrab = 1.3f;
 constexpr float kLetGo = 1.8f;
 constexpr float kImageScale = 0.5f;
+constexpr float kLookCounts = 1900.0f;
+constexpr float kTapTravel = 0.04f;
+constexpr auto kTapTime = std::chrono::milliseconds(300);
+constexpr auto kFireTime = std::chrono::milliseconds(150);
+constexpr auto kShakeTime = std::chrono::milliseconds(250);
+constexpr float kShakeForce = 1.1f;
 constexpr uint32_t kFace = 0x46FFFFFF;
 constexpr uint32_t kFacePressed = 0x96FFFFFF;
 constexpr uint32_t kLabel = 0xE6FFFFFF;
 constexpr uint32_t kBase = 0x30FFFFFF;
 constexpr uint32_t kKnob = 0x78FFFFFF;
+
+constexpr Place kPlaces[] = {
+    {Kind::Menu, "Menu", 0, Corner::TopLeft, 0.09f, 0.08f, 0.055f},
+    {Kind::Button, "+", input::kButtonPlus, Corner::TopRight, 0.08f, 0.08f, 0.05f},
+    {Kind::Button, "-", input::kButtonMinus, Corner::TopRight, 0.21f, 0.08f, 0.05f},
+    {Kind::Button, "2", input::kButtonTwo, Corner::BottomRight, 0.15f, 0.17f, 0.11f},
+    {Kind::Button, "1", input::kButtonOne, Corner::BottomRight, 0.39f, 0.12f, 0.09f},
+    {Kind::Button, "A", input::kButtonA, Corner::BottomRight, 0.19f, 0.44f, 0.09f},
+    {Kind::Button, "B", input::kButtonB, Corner::BottomRight, 0.42f, 0.36f, 0.075f},
+    {Kind::Button, "~", input::kMotionShake, Corner::BottomRight, 0.10f, 0.66f, 0.065f},
+};
+
+const settings::LiveFlag g_wanted("input.touch", nullptr);
+const settings::LiveFlag g_phone_shake("input.phone_shake", nullptr);
+const settings::LiveNumber g_size("input.touch_size", nullptr);
+const settings::LiveNumber g_opacity("input.touch_opacity", nullptr);
+const settings::LiveNumber g_touch_speed("camera.touch_speed", nullptr);
+const settings::LiveNumber g_mouse_speed("camera.mouse_speed", nullptr);
 
 std::mutex g_lock;
 bool g_enabled = [] {
@@ -58,6 +104,12 @@ bool g_hidden = false;
 bool g_menu_pressed = false;
 int g_width = 0;
 int g_height = 0;
+int g_inset_left = 0;
+int g_inset_top = 0;
+int g_inset_right = 0;
+int g_inset_bottom = 0;
+int g_drawn_size = 0;
+int g_drawn_opacity = 0;
 std::vector<Finger> g_fingers;
 uint32_t g_held = 0;
 bool g_stick_active = false;
@@ -65,30 +117,48 @@ float g_stick_origin_x = 0.0f;
 float g_stick_origin_y = 0.0f;
 float g_stick_x = 0.0f;
 float g_stick_y = 0.0f;
+bool g_pointer_set = false;
+float g_pointer_x = 0.0f;
+float g_pointer_y = 0.0f;
+Clock::time_point g_fire_until;
+Clock::time_point g_shake_until;
 uint64_t g_version = 1;
 
+bool active() {
+    return g_enabled && g_wanted();
+}
+
+float size_factor() {
+    return std::clamp(g_size(), 50, 200) / 100.0f;
+}
+
+bool aiming() {
+    return attraction::mode() == attraction::Mode::Aim;
+}
+
 std::vector<Spot> spots(int width, int height) {
-    float u = static_cast<float>(height);
+    float u = static_cast<float>(height) * size_factor();
     float w = static_cast<float>(width);
     float h = static_cast<float>(height);
-    return {
-        {Kind::Menu, "Menu", 0, 0.09f * u, 0.08f * u, 0.055f * u},
-        {Kind::Button, "+", input::kButtonPlus, w - 0.08f * u, 0.08f * u, 0.05f * u},
-        {Kind::Button, "-", input::kButtonMinus, w - 0.21f * u, 0.08f * u, 0.05f * u},
-        {Kind::Button, "2", input::kButtonTwo, w - 0.15f * u, h - 0.17f * u, 0.11f * u},
-        {Kind::Button, "1", input::kButtonOne, w - 0.39f * u, h - 0.12f * u, 0.09f * u},
-        {Kind::Button, "A", input::kButtonA, w - 0.19f * u, h - 0.44f * u, 0.09f * u},
-        {Kind::Button, "B", input::kButtonB, w - 0.42f * u, h - 0.36f * u, 0.075f * u},
-        {Kind::Button, "~", input::kMotionShake, w - 0.10f * u, h - 0.66f * u, 0.065f * u},
-    };
+    std::vector<Spot> result;
+    for (const Place& place : kPlaces) {
+        float x = place.corner == Corner::TopLeft ? g_inset_left + place.x * u : w - g_inset_right - place.x * u;
+        float y = place.corner == Corner::BottomRight ? h - g_inset_bottom - place.y * u : g_inset_top + place.y * u;
+        result.push_back({place.kind, place.label, place.button, x, y, place.radius * u});
+    }
+    return result;
+}
+
+float stick_radius(int height) {
+    return kStickRadius * static_cast<float>(height) * size_factor();
 }
 
 float rest_x(int height) {
-    return 0.24f * static_cast<float>(height);
+    return g_inset_left + 0.24f * static_cast<float>(height) * size_factor();
 }
 
 float rest_y(int height) {
-    return static_cast<float>(height) - 0.26f * static_cast<float>(height);
+    return static_cast<float>(height) - g_inset_bottom - 0.26f * static_cast<float>(height) * size_factor();
 }
 
 int nearest_spot(const std::vector<Spot>& all, float x, float y) {
@@ -118,7 +188,7 @@ void update_held(const std::vector<Spot>& all) {
 }
 
 void move_stick(float x, float y) {
-    float radius = kStickRadius * static_cast<float>(g_height);
+    float radius = stick_radius(g_height);
     float dx = (x - g_stick_origin_x) / radius;
     float dy = (y - g_stick_origin_y) / radius;
     float length = std::hypot(dx, dy);
@@ -133,11 +203,40 @@ void move_stick(float x, float y) {
     g_stick_y = dy;
 }
 
+void move_look(Finger& finger, float x, float y) {
+    if (aiming()) {
+        g_pointer_set = true;
+        g_pointer_x = x;
+        g_pointer_y = y;
+    } else if (g_height > 0) {
+        float scale = kLookCounts / static_cast<float>(g_height) * static_cast<float>(std::max(1, g_touch_speed())) /
+                      static_cast<float>(std::max(1, g_mouse_speed()));
+        free_camera::add_mouse((x - finger.x) * scale, (y - finger.y) * scale);
+    }
+    finger.x = x;
+    finger.y = y;
+}
+
+void end_look(const Finger& finger) {
+    if (!aiming()) {
+        return;
+    }
+    float travel = std::hypot(finger.x - finger.start_x, finger.y - finger.start_y);
+    if (Clock::now() - finger.start < kTapTime && travel < kTapTravel * static_cast<float>(g_height)) {
+        g_fire_until = Clock::now() + kFireTime;
+    }
+}
+
+uint32_t faded(uint32_t color) {
+    uint32_t alpha = (color >> 24) * static_cast<uint32_t>(std::clamp(g_opacity(), 10, 100)) / 100;
+    return (alpha << 24) | (color & 0xFFFFFF);
+}
+
 void draw_circle(canvas::Canvas& image, float x, float y, float radius, uint32_t color) {
     int left = static_cast<int>(std::lround(x - radius));
     int top = static_cast<int>(std::lround(y - radius));
     int size = static_cast<int>(std::lround(radius * 2.0f));
-    image.fill_round(left, top, left + size, top + size, size / 2, color);
+    image.fill_round(left, top, left + size, top + size, size / 2, faded(color));
 }
 
 options::Image render(int width, int height) {
@@ -160,13 +259,13 @@ options::Image render(int width, int height) {
         if (fonts) {
             int size = static_cast<int>(radius * (std::string(spot.label).size() > 1 ? 0.55f : 1.1f));
             canvas::Face face = canvas::make_face(canvas::FontId::Heavy, std::max(8, size));
-            image.text(face, kLabel, spot.label, static_cast<int>(x - radius), static_cast<int>(y - radius), static_cast<int>(x + radius),
+            image.text(face, faded(kLabel), spot.label, static_cast<int>(x - radius), static_cast<int>(y - radius), static_cast<int>(x + radius),
                        static_cast<int>(y + radius), canvas::Align::Center, false);
         }
     }
     float base_x = (g_stick_active ? g_stick_origin_x : rest_x(height)) * kImageScale;
     float base_y = (g_stick_active ? g_stick_origin_y : rest_y(height)) * kImageScale;
-    float radius = kStickRadius * static_cast<float>(height) * kImageScale;
+    float radius = stick_radius(height) * kImageScale;
     draw_circle(image, base_x, base_y, radius, kBase);
     draw_circle(image, base_x + g_stick_x * radius, base_y + g_stick_y * radius, radius * 0.45f, kKnob);
     result.pixels = std::move(image.pixels);
@@ -179,7 +278,7 @@ options::Image render(int width, int height) {
 
 bool enabled() {
     std::lock_guard<std::mutex> hold(g_lock);
-    return g_enabled;
+    return active();
 }
 
 void set_enabled(bool on) {
@@ -190,9 +289,25 @@ void set_enabled(bool on) {
     }
 }
 
+bool in_use() {
+    std::lock_guard<std::mutex> hold(g_lock);
+    return active() && !g_hidden;
+}
+
+void set_insets(int left, int top, int right, int bottom) {
+    std::lock_guard<std::mutex> hold(g_lock);
+    if (left != g_inset_left || top != g_inset_top || right != g_inset_right || bottom != g_inset_bottom) {
+        g_inset_left = std::max(0, left);
+        g_inset_top = std::max(0, top);
+        g_inset_right = std::max(0, right);
+        g_inset_bottom = std::max(0, bottom);
+        g_version++;
+    }
+}
+
 void finger(int64_t id, Phase phase, float x, float y, int width, int height) {
     std::lock_guard<std::mutex> hold(g_lock);
-    if (!g_enabled || width <= 0 || height <= 0) {
+    if (!active() || width <= 0 || height <= 0) {
         return;
     }
     if (width != g_width || height != g_height) {
@@ -212,6 +327,9 @@ void finger(int64_t id, Phase phase, float x, float y, int width, int height) {
         }
         Finger added;
         added.id = id;
+        added.x = added.start_x = x;
+        added.y = added.start_y = y;
+        added.start = Clock::now();
         added.spot = nearest_spot(all, x, y);
         if (added.spot >= 0 && all[static_cast<size_t>(added.spot)].kind == Kind::Menu) {
             g_menu_pressed = true;
@@ -224,6 +342,13 @@ void finger(int64_t id, Phase phase, float x, float y, int width, int height) {
             g_stick_x = 0.0f;
             g_stick_y = 0.0f;
             g_version++;
+        } else if (added.spot == kNone) {
+            added.look = true;
+            if (aiming()) {
+                g_pointer_set = true;
+                g_pointer_x = x;
+                g_pointer_y = y;
+            }
         }
         g_fingers.push_back(added);
         update_held(all);
@@ -235,6 +360,8 @@ void finger(int64_t id, Phase phase, float x, float y, int width, int height) {
     if (phase == Phase::Move) {
         if (found->stick) {
             move_stick(x, y);
+        } else if (found->look) {
+            move_look(*found, x, y);
         } else if (found->spot >= 0) {
             const Spot& spot = all[static_cast<size_t>(found->spot)];
             if (std::hypot(x - spot.x, y - spot.y) > spot.radius * kLetGo) {
@@ -258,25 +385,43 @@ void finger(int64_t id, Phase phase, float x, float y, int width, int height) {
         g_stick_y = 0.0f;
         g_version++;
     }
+    if (found->look) {
+        move_look(*found, x, y);
+        end_look(*found);
+    }
     g_fingers.erase(found);
     update_held(all);
 }
 
 void other_input() {
     std::lock_guard<std::mutex> hold(g_lock);
-    if (g_enabled && !g_hidden && g_fingers.empty()) {
+    if (active() && !g_hidden && g_fingers.empty()) {
         g_hidden = true;
         g_version++;
+    }
+}
+
+void phone_motion(float x, float y, float z) {
+    std::lock_guard<std::mutex> hold(g_lock);
+    if (!active() || !g_phone_shake()) {
+        return;
+    }
+    if (std::fabs(std::sqrt(x * x + y * y + z * z) - 1.0f) > kShakeForce) {
+        g_shake_until = Clock::now() + kShakeTime;
     }
 }
 
 State poll(bool sideways) {
     std::lock_guard<std::mutex> hold(g_lock);
     State state;
-    if (!g_enabled) {
+    if (!active()) {
         return state;
     }
+    Clock::time_point now = Clock::now();
     state.buttons = g_held;
+    if (now < g_shake_until) {
+        state.buttons |= input::kMotionShake;
+    }
     state.stick_x = g_stick_x;
     state.stick_y = g_stick_y;
     bool left = g_stick_x < -kStickDead;
@@ -287,6 +432,22 @@ State poll(bool sideways) {
         state.buttons |= (left ? input::kButtonUp : 0) | (right ? input::kButtonDown : 0) | (up ? input::kButtonRight : 0) | (down ? input::kButtonLeft : 0);
     } else {
         state.buttons |= (left ? input::kButtonLeft : 0) | (right ? input::kButtonRight : 0) | (up ? input::kButtonUp : 0) | (down ? input::kButtonDown : 0);
+    }
+    attraction::Mode mode = attraction::mode();
+    if (mode == attraction::Mode::Aim) {
+        if (now < g_fire_until) {
+            state.buttons |= input::kButtonA;
+        }
+        state.pointer_valid = g_pointer_set;
+        state.pointer_x = g_pointer_x;
+        state.pointer_y = g_pointer_y;
+        state.width = g_width;
+        state.height = g_height;
+    } else {
+        g_pointer_set = false;
+    }
+    if (mode == attraction::Mode::Shake && (state.buttons & input::kButtonA)) {
+        state.buttons = (state.buttons & ~input::kButtonA) | input::kMotionShakeLeft;
     }
     return state;
 }
@@ -305,7 +466,14 @@ bool take(uint64_t& version, options::Image& image, bool& visible, int width, in
         g_height = height;
         g_version++;
     }
-    bool show = g_enabled && !g_hidden && width > 0 && height > 0;
+    int size = g_size();
+    int opacity = g_opacity();
+    if (size != g_drawn_size || opacity != g_drawn_opacity) {
+        g_drawn_size = size;
+        g_drawn_opacity = opacity;
+        g_version++;
+    }
+    bool show = active() && !g_hidden && width > 0 && height > 0;
     if (version == g_version && visible == show) {
         return false;
     }

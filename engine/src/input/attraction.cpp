@@ -7,6 +7,7 @@
 #include "wp/input.h"
 #include "wp/keymap.h"
 #include "wp/padmap.h"
+#include "wp/touch.h"
 
 namespace wp::attraction {
 
@@ -44,6 +45,14 @@ bool dance_playing() {
 Label move_label(uint32_t move) {
     Label label;
     Arrow arrow = move == kMoveLeft ? Arrow::Left : move == kMoveUp ? Arrow::Up : move == kMoveDown ? Arrow::Down : move == kMoveRight ? Arrow::Right : Arrow::None;
+    if (touch::in_use()) {
+        if (arrow != Arrow::None) {
+            label.arrow = arrow;
+        } else {
+            label.text = move == kMoveKick ? "A" : "2";
+        }
+        return label;
+    }
     if (input::gamepad_in_use()) {
         if (arrow != Arrow::None) {
             label.arrow = arrow;

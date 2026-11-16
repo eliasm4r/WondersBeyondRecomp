@@ -11,6 +11,7 @@
 #include "wp/control_names.h"
 #include "wp/gamepad.h"
 #include "wp/input.h"
+#include "wp/touch.h"
 #include "wp/ui_text.h"
 
 namespace wp::options {
@@ -185,7 +186,8 @@ std::vector<Hint> hints_for(bool pad, bool accepts) {
 void draw_hints(Canvas& canvas, const Rect& area, int unit, bool accepts) {
     Face cap_face = canvas::make_face(FontId::Body, unit * 3 / 4);
     Face word_face = canvas::make_face(FontId::Body, unit * 17 / 20, kRowSpacing);
-    const std::vector<Hint> hints = hints_for(input::gamepad_in_use(), accepts);
+    const std::vector<Hint> hints = touch::in_use() ? std::vector<Hint>{{{}, "hint.tap"}, {{ui::label("hint.back")}, "hint.close"}}
+                                                    : hints_for(input::gamepad_in_use(), accepts);
     int cap_height = unit * 6 / 5;
     int inner = std::max(2, unit / 5);
     int after_caps = unit / 3;

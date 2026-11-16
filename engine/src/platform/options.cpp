@@ -37,6 +37,7 @@ constexpr const char* kLiveKeys[] = {
     "camera.free",          "camera.mouse_speed",   "camera.stick_speed",    "camera.invert_y",    "video.bug_recorder",
     "system.check_updates", "system.update",        "video.aspect",          "game.text_speed",
     "game.skip_movies",     "game.button_icons",    "video.hd_textures",   "game.save_photos",     "cheats.berries",       "cheats.prices",        "cheats.chase_speed",   "cheats.damage_dealt",  "cheats.damage_taken",  "cheats.run_speed",     "cheats.jump",
+    "input.touch",          "input.touch_size",     "input.touch_opacity",   "input.phone_shake",  "camera.touch_speed",
 };
 
 struct Language {
@@ -64,6 +65,9 @@ constexpr Slider kSliders[] = {{"audio.volume", 0, 300, 5},
                                {"input.stick_deadzone", 10, 90, 5},
                                {"camera.mouse_speed", 10, 300, 10},
                                {"camera.stick_speed", 10, 300, 10},
+                               {"camera.touch_speed", 10, 300, 10},
+                               {"input.touch_size", 50, 200, 10},
+                               {"input.touch_opacity", 10, 100, 10},
                                {color::kBrightness.key, color::kBrightness.low, color::kBrightness.high, 5},
                                {color::kContrast.key, color::kContrast.low, color::kContrast.high, 5},
                                {color::kSaturation.key, color::kSaturation.low, color::kSaturation.high, 5},
@@ -73,7 +77,13 @@ constexpr const char* kTabLabels[kTabCount] = {"tab.screen", "tab.game", "tab.so
 
 constexpr const char* kDevice = "controls.device";
 constexpr const char* kPlayTime = "stats.play_time";
+#ifdef __ANDROID__
+constexpr bool kPhone = true;
+constexpr const char* kDeviceNames[] = {"touch", "gamepad"};
+#else
+constexpr bool kPhone = false;
 constexpr const char* kDeviceNames[] = {"keyboard", "gamepad"};
+#endif
 
 constexpr const char* kResetKeys = "keys.reset";
 constexpr const char* kResetPad = "pad.reset";
@@ -179,14 +189,27 @@ const char* tab_label(size_t tab) {
 
 std::vector<std::string> tab_keys(size_t tab, Device device) {
     switch (tab) {
-    case 0:
-        return {"video.scale",      "video.fullscreen", "video.aspect", "system.widescreen", "video.fps", "video.vsync", "video.smooth", "video.anisotropy",
-                color::kBrightness.key, color::kContrast.key, color::kSaturation.key, color::kGamma.key, kResetColors};
-    case 1:
-        return {"game.text_speed", "game.skip_movies", "game.button_icons", "game.save_photos", "saves.backups", "system.discord", kPlayTime};
+    case 0: {
+        std::vector<std::string> keys = {"video.scale",      "video.fullscreen", "video.aspect", "system.widescreen", "video.fps", "video.vsync", "video.smooth", "video.anisotropy",
+                                         color::kBrightness.key, color::kContrast.key, color::kSaturation.key, color::kGamma.key, kResetColors};
+        if (kPhone) {
+            keys.erase(std::find(keys.begin(), keys.end(), "video.fullscreen"));
+        }
+        return keys;
+    }
+    case 1: {
+        std::vector<std::string> keys = {"game.text_speed", "game.skip_movies", "game.button_icons", "game.save_photos", "saves.backups", "system.discord", kPlayTime};
+        if (kPhone) {
+            keys.erase(std::find(keys.begin(), keys.end(), "system.discord"));
+        }
+        return keys;
+    }
     case 2:
         return {"audio.volume", "audio.mute", "audio.wiimote_speaker"};
     case 3: {
+        if (device == Device::Keyboard && kPhone) {
+            return {kDevice, "input.touch", "input.touch_size", "input.touch_opacity", "input.phone_shake", "camera.free", "camera.touch_speed", "camera.invert_y"};
+        }
         if (device == Device::Keyboard) {
             std::vector<std::string> keys = {kDevice, "camera.free", "camera.mouse_speed", "camera.invert_y", "input.hide_cursor"};
             for (size_t i = 0; i < keymap::kActionCount; i++) {
@@ -209,7 +232,10 @@ std::vector<std::string> tab_keys(size_t tab, Device device) {
         if (hd_textures::available()) {
             keys.push_back(kHdTextures);
         }
-        keys.insert(keys.end(), {"video.dump_textures", "video.bug_recorder"});
+        keys.push_back("video.dump_textures");
+        if (!kPhone) {
+            keys.push_back("video.bug_recorder");
+        }
         if (update::available()) {
             keys.push_back("system.check_updates");
         }

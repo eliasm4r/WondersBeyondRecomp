@@ -16,6 +16,7 @@
 #include "wp/padmap.h"
 #include "wp/real_wiimote.h"
 #include "wp/settings.h"
+#include "wp/touch.h"
 
 namespace wp::game {
 
@@ -690,7 +691,7 @@ void update_prompts() {
     g_pictures.erase(std::remove_if(g_pictures.begin(), g_pictures.end(), [](const Picture& picture) { return !picture_here(picture); }), g_pictures.end());
     std::array<Prompt, kButtons> prompts;
     static const settings::LiveFlag icons("game.button_icons", "WP_BUTTON_ICONS");
-    bool original = real_wiimote::present(0) || !icons();
+    bool original = real_wiimote::present(0) || !icons() || touch::in_use();
     bool pad = input::gamepad_in_use();
     std::string key = original ? "wii" : pad ? "pad" : "keys";
     for (int i = 0; i < kButtons && !original; i++) {
