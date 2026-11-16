@@ -85,6 +85,8 @@ Font load_system(bool bold) {
         "/usr/share/fonts/dejavu/DejaVuSans.ttf",            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
         "/usr/share/fonts/noto/NotoSans-Regular.ttf",        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
         "/System/Library/Fonts/Supplemental/Arial.ttf",      "/Library/Fonts/Arial.ttf",
+        "/system/fonts/RobotoStatic-Regular.ttf",            "/system/fonts/Roboto-Regular.ttf",
+        "/system/fonts/NotoSans-Regular.ttf",                "/system/fonts/DroidSans.ttf",
     };
     candidates.insert(candidates.end(), std::begin(fallbacks), std::end(fallbacks));
     if (std::getenv("WINDIR")) {
@@ -112,7 +114,7 @@ Font load_embedded(const char* name) {
 Font load_mono() {
     std::vector<std::string> candidates = {windows_font("consolab.ttf"), windows_font("consola.ttf"), matched_font("monospace:weight=200"),
                                            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", "/usr/share/fonts/TTF/DejaVuSansMono-Bold.ttf",
-                                           "/System/Library/Fonts/Menlo.ttc"};
+                                           "/System/Library/Fonts/Menlo.ttc", "/system/fonts/DroidSansMono.ttf", "/system/fonts/CutiveMono.ttf"};
     return load_file(candidates);
 }
 
