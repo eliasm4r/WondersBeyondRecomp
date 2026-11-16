@@ -22,6 +22,7 @@
 #include "wp/disc.h"
 #include "wp/dol.h"
 #include "wp/game.h"
+#include "wp/host_stacks.h"
 #include "wp/gx.h"
 #include "wp/input.h"
 #include "wp/log.h"
@@ -151,14 +152,16 @@ void move_old_game_folder() {
 }
 
 void use_default_log() {
-#ifdef _WIN32
     if (std::getenv("WP_LOG_FILE") || std::getenv("WP_HEADLESS")) {
         return;
     }
     std::error_code error;
     std::filesystem::create_directories("logs", error);
     std::filesystem::rename("logs/pokepark2.log", "logs/pokepark2.previous.log", error);
+#ifdef _WIN32
     _putenv_s("WP_LOG_FILE", "logs/pokepark2.log");
+#else
+    setenv("WP_LOG_FILE", "logs/pokepark2.log", 1);
 #endif
 }
 
@@ -239,6 +242,7 @@ int run(int argc, char** argv) {
                 wp::log::write("hang", "the game has drawn no frame for %d seconds", static_cast<int>(kStall.count()));
                 wp::print_guest_threads();
                 wp::ipc::report();
+                wp::host_stacks::print();
             }
         }
     }).detach();
@@ -273,15 +277,24 @@ int main(int argc, char** argv) {
     SetUnhandledExceptionFilter(report_crash);
     timeBeginPeriod(1);
     std::signal(SIGABRT, report_crash);
+#ifdef WP_OPENGL
+    wp::start_with_stack(size_t{512} << 20, [argc, argv] { std::exit(run(argc, argv)); });
+    wp::video::serve_main_thread();
+    return 0;
+#else
     return run(argc, argv);
+#endif
 #else
     std::signal(SIGSEGV, report_crash);
     std::signal(SIGBUS, report_crash);
     std::signal(SIGILL, report_crash);
     std::signal(SIGFPE, report_crash);
     std::signal(SIGABRT, report_crash);
-    int result = 0;
-    wp::run_with_stack(size_t{512} << 20, [&] { result = run(argc, argv); });
-    return result;
+    wp::start_with_stack(size_t{512} << 20, [argc, argv] {
+        wp::host_stacks::watch_current_thread("game");
+        std::exit(run(argc, argv));
+    });
+    wp::video::serve_main_thread();
+    return 0;
 #endif
 }

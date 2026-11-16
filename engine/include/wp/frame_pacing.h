@@ -4,6 +4,12 @@
 
 namespace wp::pacing {
 
+#if defined(_WIN32) && !defined(WP_OPENGL)
+constexpr bool kInBetweenImages = true;
+#else
+constexpr bool kInBetweenImages = false;
+#endif
+
 struct FramePlan {
     uint32_t images = 0;
     float fractions[3] = {};

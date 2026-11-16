@@ -3,10 +3,19 @@
 #include "wp/gx.h"
 #include "wp/log.h"
 
+#include <chrono>
+#include <thread>
+
 namespace wp::video {
 
 void start() {
     log::write("video", "build %s without a window", WP_BUILD);
+}
+
+void serve_main_thread() {
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::hours(1));
+    }
 }
 
 void present() {
