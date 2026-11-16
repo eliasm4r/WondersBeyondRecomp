@@ -272,7 +272,12 @@ void poll_interrupts(Cpu& c) {
             return;
         }
         static const settings::LiveFlag sleeps("system.idle_sleep", "WP_IDLE_SLEEP");
-        if (resting && sleeps()) {
+#ifdef __ANDROID__
+        constexpr bool kSleepsWhenIdle = false;
+#else
+        constexpr bool kSleepsWhenIdle = true;
+#endif
+        if (resting && kSleepsWhenIdle && sleeps()) {
             constexpr std::chrono::microseconds kSpin(250);
             constexpr std::chrono::microseconds kLongestSleep(1000);
             auto wait = std::min({std::chrono::duration_cast<std::chrono::microseconds>(g_next_retrace - now), decrementer_wait(), dsp::idle_wait(), ipc::idle_wait(), kLongestSleep + kSpin}) - kSpin;
