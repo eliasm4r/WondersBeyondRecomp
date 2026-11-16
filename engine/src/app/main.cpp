@@ -310,7 +310,9 @@ bool enter_android_folder() {
     std::filesystem::create_directories(data, error);
     std::string message = "The game files are missing. Connect the phone to the computer with a USB cable and copy the folder game/extracted "
                           "of the computer's installation into:\n\n" +
-                          std::string(folder ? folder : "?") + "/game/\n\nThen open the game again.";
+                          std::string(folder ? folder : "?") +
+                          "/game/\n\nThen open the game again. With USB debugging on, the computer can also do it: "
+                          "python tools/android_tools.py --install";
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "PokePark 2: Wonders Beyond", message.c_str(), nullptr);
     return false;
 }
