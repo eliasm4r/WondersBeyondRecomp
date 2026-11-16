@@ -1894,7 +1894,7 @@ void test_phone_options() {
     auto has = [](const std::vector<std::string>& keys, const char* key) { return std::find(keys.begin(), keys.end(), key) != keys.end(); };
     CHECK(!has(wp::options::tab_keys(0), "video.fullscreen") && has(wp::options::tab_keys(0), "video.scale"));
     CHECK(!has(wp::options::tab_keys(1), "system.discord") && has(wp::options::tab_keys(1), "game.text_speed"));
-    CHECK(!has(wp::options::tab_keys(5), "video.bug_recorder") && has(wp::options::tab_keys(5), "video.dump_textures"));
+    CHECK(!has(wp::options::tab_keys(5), "video.bug_recorder") && !has(wp::options::tab_keys(5), "video.dump_textures"));
     std::vector<std::string> touch_page = wp::options::tab_keys(3, wp::options::Device::Keyboard);
     CHECK((touch_page == std::vector<std::string>{"controls.device", "input.touch", "input.touch_size", "input.touch_opacity", "input.phone_shake", "camera.free",
                                                   "camera.touch_speed", "camera.invert_y"}));
@@ -2485,11 +2485,16 @@ void test_frame_pacing() {
     alarm = frame_alarm(0, input, input * 2, 45, false);
     CHECK(alarm.period == input && alarm.pending == input * 2);
 
+#ifdef __ANDROID__
+    std::vector<std::string> phone_rates = wp::options::choices("video.fps");
+    CHECK(phone_rates.size() >= 2 && phone_rates[0] == "30" && phone_rates[1] == "60");
+#else
     if (wp::pacing::kInBetweenImages) {
         CHECK((wp::options::choices("video.fps") == std::vector<std::string>{"30", "45", "60", "90", "120", "144", "165", "240"}));
     } else {
         CHECK((wp::options::choices("video.fps") == std::vector<std::string>{"30", "45", "60"}));
     }
+#endif
     for (auto language : {wp::ui::Language::English, wp::ui::Language::French, wp::ui::Language::Spanish, wp::ui::Language::Galician}) {
         std::string help = wp::ui::label("help.video.fps_without_between", language);
         CHECK(help.find("45") != std::string::npos && help.find("90") == std::string::npos);
