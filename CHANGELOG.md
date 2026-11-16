@@ -20,6 +20,8 @@ Every change to WondersBeyondRecomp, newest first.
 - The attractions on a phone: in Cake Contraption a tap aims and shoots (or aim with a finger and press A), in Power Bash A strikes and shaking the phone strikes too, Dance Inferno shows the touch buttons on its moves, and Flight of Fancy steers with the stick.
 - A **Touch screen** page in Options > Controls on phones: touch controls on or off, button size and opacity, shaking the phone, camera speed. Tap a row to change it, drag to scroll, tap outside the menu or press Back to close it.
 - On phones the game pauses in the background, avoids the screen's notch, vibrates when the Wii Remote would, and uses 2x as its automatic internal resolution.
+- **Picture shape** now works with OpenGL and on phones: "Automatic" (the new default on phones) fills the whole screen of a wide phone instead of showing black bars, and 21:9 works too.
+- Touch buttons keep their distance from one another on every screen, whatever the button size and the space the phone keeps for its own bars, and in Cake Contraption a tap on the left of the screen aims instead of grabbing the stick.
 
 ## v0.3.1-alpha · 2026-11-16
 

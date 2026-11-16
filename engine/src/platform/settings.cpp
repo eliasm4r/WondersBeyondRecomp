@@ -76,7 +76,11 @@ const Option kBaseOptions[] = {
     {"system.language", "auto"},
     {"system.pal60", "1"},
     {"system.widescreen", "1"},
+#ifdef __ANDROID__
+    {"video.aspect", "auto"},
+#else
     {"video.aspect", "16:9"},
+#endif
     {"game.text_speed", "1"},
     {"game.skip_movies", "1"},
     {"game.button_icons", "1"},
