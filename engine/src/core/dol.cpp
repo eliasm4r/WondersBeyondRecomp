@@ -40,7 +40,7 @@ bool load_dol(const std::string& path, uint32_t& entry) {
         if (size == 0) {
             continue;
         }
-        if (offset + size > data.size()) {
+        if (static_cast<uint64_t>(offset) + size > data.size()) {
             return false;
         }
         std::memcpy(host(address), data.data() + offset, size);
