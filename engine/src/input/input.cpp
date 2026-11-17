@@ -307,7 +307,8 @@ Sample device_sample(uint32_t channel) {
         return scripted(script, elapsed);
     }
     Sample result;
-    if (const char* forced = std::getenv("WP_INPUT_BUTTONS")) {
+    static const char* const forced_buttons = std::getenv("WP_INPUT_BUTTONS");
+    if (const char* forced = forced_buttons) {
         static int frames = 0;
         if (frames++ > 150) {
             result.buttons = static_cast<uint32_t>(std::strtoul(forced, nullptr, 16));

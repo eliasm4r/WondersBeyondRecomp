@@ -286,7 +286,8 @@ void output_thread() {
         if (FAILED(render->GetBuffer(available, &data))) {
             continue;
         }
-        std::vector<Frame> mixed(available);
+        static thread_local std::vector<Frame> mixed;
+        mixed.assign(available, Frame{});
         mixer.fill(mixed.data(), available);
         for (UINT32 i = 0; i < available; i++) {
             float left = mixed[i].left;
@@ -310,7 +311,8 @@ void SDLCALL feed(void* data, SDL_AudioStream* stream, int additional, int) {
     if (frames == 0) {
         return;
     }
-    std::vector<Frame> mixed(frames);
+    static thread_local std::vector<Frame> mixed;
+    mixed.assign(frames, Frame{});
     mixer.fill(mixed.data(), frames);
     SDL_PutAudioStreamData(stream, mixed.data(), static_cast<int>(frames * sizeof(Frame)));
 }
