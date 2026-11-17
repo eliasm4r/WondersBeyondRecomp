@@ -1165,7 +1165,7 @@ void* texture_for(uint32_t map) {
         note_texture(map, address, width, height, format, "EFB copy");
         return (__bridge void*)copied->second.converted.texture;
     }
-    if (copied != g_device.copies.end()) {
+    if (g_texture_notes && copied != g_device.copies.end()) {
         char reason[160];
         std::snprintf(reason, sizeof reason, "EFB copy rejected (copy %ux%u, hash %s), read from RAM", copied->second.logical_width, copied->second.logical_height,
                       copied->second.guest_hash == sample_hash(source, copied->second.bytes) ? "same" : "changed");
