@@ -1193,7 +1193,11 @@ constexpr uint32_t kRunLimit = 512;
 constexpr uint32_t kParallelRun = 16;
 constexpr uint32_t kRunChunk = 4;
 constexpr uint32_t kRunHelpers = 3;
+#ifdef __ANDROID__
+constexpr uint32_t kIdleSpins = 64;
+#else
 constexpr uint32_t kIdleSpins = 4000;
+#endif
 
 struct RunPool {
     std::atomic<uint64_t> state{0};

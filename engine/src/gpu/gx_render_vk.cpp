@@ -397,7 +397,12 @@ uint32_t g_batch_vertices = 0;
 double g_batch_seconds = 0.0;
 uint32_t g_write_backs = 0;
 double g_write_back_seconds = 0.0;
-uint64_t g_frame_serials[2] = {};
+#ifdef __ANDROID__
+constexpr uint32_t kFramesInFlight = 3;
+#else
+constexpr uint32_t kFramesInFlight = 2;
+#endif
+uint64_t g_frame_serials[kFramesInFlight] = {};
 uint32_t g_efb_passes = 0;
 uint32_t g_cleared_passes = 0;
 uint32_t g_submits = 0;
@@ -423,6 +428,7 @@ int g_anisotropy = 1;
 bool g_recording = false;
 bool g_record_broken = false;
 bool g_efb_before_valid = false;
+bool g_efb_before_cleared = false;
 std::vector<std::function<void()>> g_held_retired;
 
 std::vector<std::unique_ptr<Submission>> g_submissions;
@@ -953,6 +959,78 @@ void end_pass() {
     g_bound_maps = VK_NULL_HANDLE;
 }
 
+struct PresentJob {
+    VkSwapchainKHR swapchain;
+    VkSemaphore semaphore;
+    uint32_t index;
+};
+
+struct Presenter {
+    std::mutex queue_lock;
+    std::mutex lock;
+    std::condition_variable changed;
+    std::deque<PresentJob> jobs;
+    bool started = false;
+    std::atomic<int> result{VK_SUCCESS};
+};
+
+Presenter g_presenter;
+
+void present_loop() {
+    for (;;) {
+        std::unique_lock<std::mutex> lock(g_presenter.lock);
+        g_presenter.changed.wait(lock, [] { return !g_presenter.jobs.empty(); });
+        PresentJob job = g_presenter.jobs.front();
+        lock.unlock();
+        VkPresentInfoKHR present{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
+        present.waitSemaphoreCount = 1;
+        present.pWaitSemaphores = &job.semaphore;
+        present.swapchainCount = 1;
+        present.pSwapchains = &job.swapchain;
+        present.pImageIndices = &job.index;
+        VkResult shown;
+        {
+            std::lock_guard<std::mutex> queue(g_presenter.queue_lock);
+            shown = vkQueuePresentKHR(g_vk.queue, &present);
+        }
+        if (shown != VK_SUCCESS) {
+            g_presenter.result.store(shown);
+        }
+        lock.lock();
+        g_presenter.jobs.pop_front();
+        g_presenter.changed.notify_all();
+    }
+}
+
+void drain_presents() {
+    std::unique_lock<std::mutex> lock(g_presenter.lock);
+    g_presenter.changed.wait(lock, [] { return g_presenter.jobs.empty(); });
+}
+
+void queue_present(VkSwapchainKHR swapchain, VkSemaphore semaphore, uint32_t index) {
+    std::unique_lock<std::mutex> lock(g_presenter.lock);
+    if (!g_presenter.started) {
+        g_presenter.started = true;
+        std::thread(present_loop).detach();
+    }
+    g_presenter.changed.wait(lock, [] { return g_presenter.jobs.size() < 2; });
+    g_presenter.jobs.push_back({swapchain, semaphore, index});
+    g_presenter.changed.notify_all();
+}
+
+VkResult acquire_image(VkSwapchainKHR swapchain, VkSemaphore semaphore, uint32_t& index) {
+    for (;;) {
+        VkResult result;
+        {
+            std::lock_guard<std::mutex> queue(g_presenter.queue_lock);
+            result = vkAcquireNextImageKHR(device(), swapchain, 1000000, semaphore, VK_NULL_HANDLE, &index);
+        }
+        if (result != VK_TIMEOUT && result != VK_NOT_READY) {
+            return result;
+        }
+    }
+}
+
 void submit(VkSemaphore wait = VK_NULL_HANDLE, VkSemaphore signal = VK_NULL_HANDLE) {
     if (!g_current) {
         return;
@@ -983,6 +1061,7 @@ void submit(VkSemaphore wait = VK_NULL_HANDLE, VkSemaphore signal = VK_NULL_HAND
         info.signalSemaphoreCount = 1;
         info.pSignalSemaphores = &signal;
     }
+    std::unique_lock<std::mutex> queue(g_presenter.queue_lock);
     VkResult result = vkQueueSubmit(g_vk.queue, 1, &info, submission.fence);
     if (result != VK_SUCCESS) {
         log::write("video", "Vulkan refused a submission (%d)", static_cast<int>(result));
@@ -4151,7 +4230,9 @@ bool replay_between(const std::vector<std::pair<uint32_t, uint32_t>>& matches, f
         std::chrono::steady_clock::time_point from;
         ~Sending() { g_time_sending += std::chrono::duration<double>(std::chrono::steady_clock::now() - from).count(); }
     } sending{filled};
-    load_efb(g_efb_before);
+    if (!g_efb_before_cleared) {
+        load_efb(g_efb_before);
+    }
     static std::vector<std::pair<const RecordedTarget*, ReplayTarget*>> twins;
     twins.clear();
     for (const RecordedTarget& recorded : g_record.targets) {
@@ -4399,7 +4480,7 @@ bool present_image(SDL_Window* window, double aspect, Image* image) {
     VkSemaphore acquired = chain.acquired[chain.next_acquire];
     uint32_t index = 0;
     auto acquire_start = std::chrono::steady_clock::now();
-    VkResult result = vkAcquireNextImageKHR(device(), chain.swapchain, UINT64_MAX, acquired, VK_NULL_HANDLE, &index);
+    VkResult result = acquire_image(chain.swapchain, acquired, index);
     g_present_wait += seconds_since(acquire_start);
     if (result == VK_ERROR_OUT_OF_DATE_KHR) {
         chain.stale = true;
@@ -4456,15 +4537,10 @@ bool present_image(SDL_Window* window, double aspect, Image* image) {
     }
     draw_overlay(client_width, client_height, bar);
     submit(acquired, chain.rendered[index]);
-    VkPresentInfoKHR present{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
-    present.waitSemaphoreCount = 1;
-    present.pWaitSemaphores = &chain.rendered[index];
-    present.swapchainCount = 1;
-    present.pSwapchains = &chain.swapchain;
-    present.pImageIndices = &index;
     auto present_start = std::chrono::steady_clock::now();
-    VkResult shown = vkQueuePresentKHR(g_vk.queue, &present);
+    queue_present(chain.swapchain, chain.rendered[index], index);
     g_present_wait += seconds_since(present_start);
+    VkResult shown = static_cast<VkResult>(g_presenter.result.exchange(VK_SUCCESS));
     if (shown == VK_ERROR_OUT_OF_DATE_KHR) {
         chain.stale = true;
     } else if (shown == VK_ERROR_SURFACE_LOST_KHR) {
@@ -4495,7 +4571,7 @@ void service_deferred() {
 bool copy_frame(int& x, int& y, int& width, int& height, bool depth, const CopyFilter& filter) {
     flush_pending();
     complete_write_backs(false);
-    uint32_t slot = static_cast<uint32_t>(g_frame % 2);
+    uint32_t slot = static_cast<uint32_t>(g_frame % kFramesInFlight);
     uint64_t finished = current_serial();
     submit();
     auto frame_start = std::chrono::steady_clock::now();
@@ -4544,16 +4620,23 @@ void finish_frame() {
     static const settings::LiveNumber fps("video.fps", "WP_FPS");
     constexpr size_t kBehindBytes = 256 << 10;
     bool late = gx::take_frame_held();
-    bool saved = end.copied && g_recording && save_efb(g_efb_after);
+    const ClearCommand& clear = end.clear;
+    bool cleared = end.copied && g_recording && end.has_clear && clear.color && clear.alpha && clear.depth && clear.x <= 0 && clear.y <= 0 &&
+                   clear.x + clear.width >= canvas_width() && clear.y + clear.height >= canvas_height();
+    bool saved = cleared || (end.copied && g_recording && save_efb(g_efb_after));
     auto started = std::chrono::steady_clock::now();
     pacing::FramePlan plan;
     if (saved) {
         plan = pacing::plan_frame(g_phase, g_period, pacing::output_rate(static_cast<int>(fps())), kMaxBetween);
         if (!late && gx::gpu_backlog() < kBehindBytes) {
             g_interpolated_ready = run_interpolated(end.x, end.y, end.width, end.height, end.depth, end.filter, plan);
-            load_efb(g_efb_after);
+            if (!cleared) {
+                load_efb(g_efb_after);
+            }
         }
-        std::swap(g_efb_before, g_efb_after);
+        if (!cleared) {
+            std::swap(g_efb_before, g_efb_after);
+        }
     }
     bool complete = plan.images > 0 && g_interpolated_ready == plan.images;
     g_show_real = plan.show_real || !complete;
@@ -4591,6 +4674,7 @@ void finish_frame() {
         }
     }
     g_efb_before_valid = saved;
+    g_efb_before_cleared = cleared;
     end_record();
     if (end.has_clear) {
         apply_clear(end.clear);
