@@ -24,6 +24,14 @@ Every change to WondersBeyondRecomp, newest first.
 - **Picture shape** now works with OpenGL and on phones: "Automatic" (the new default on phones) fills the whole screen of a wide phone instead of showing black bars, and 21:9 works too.
 - Touch buttons keep their distance from one another on every screen, whatever the button size and the space the phone keeps for its own bars, and in Cake Contraption a tap on the left of the screen aims instead of grabbing the stick.
 
+### Fixed
+- A settings file cut short by a crash or a full disk no longer resets every option: settings are written to a temporary file first.
+- The setup no longer deletes the extracted game when another program holds its boot file open during an update; it stops with the reason instead.
+- Android: unpacking a new disc image keeps the old game files until the new ones are in place, and the updater only reacts to its own install results.
+- The Pad shows saved photos in HD with OpenGL and Vulkan too, not only with Direct3D.
+- Direct3D: switching the in-between images on or off while playing can no longer draw a frame with broken shapes.
+- A damaged or crafted disc image can no longer make the game read outside its files, and the game can no longer delete or move the whole save folder by mistake.
+
 ## v0.3.1-alpha · 2026-11-16
 
 > **Cheats and a fly camera.** A Cheats tab (speed, jump, damage, berries, prices), a camera that flies around the map, sharper photos, an automatic resolution, smoother 240 fps and a freeze fixed. [Download it here.](https://github.com/eliasm4r/WondersBeyondRecomp/releases/tag/v0.3.1-alpha)
