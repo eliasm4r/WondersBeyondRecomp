@@ -40,14 +40,9 @@ bool use_vulkan() {
 }
 
 bool choose_vulkan() {
-    std::string wanted = settings::text("video.renderer", "WP_RENDERER");
-    if (wanted == "opengl") {
-        log::write("video", "OpenGL ES chosen in the settings");
-        return false;
-    }
     bool usable = vulkan::probe();
     if (!usable) {
-        log::write("video", "Vulkan cannot draw the game on this phone, OpenGL ES draws it");
+        log::write("video", "no Vulkan 1.3 on this phone, OpenGL ES draws the game");
     }
     return usable;
 }

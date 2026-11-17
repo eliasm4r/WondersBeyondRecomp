@@ -3672,6 +3672,10 @@ bool probe() {
         return false;
     }
     vkGetPhysicalDeviceProperties(g_vk.physical, &g_vk.properties);
+    if (g_vk.properties.apiVersion < VK_API_VERSION_1_3) {
+        log::write("video", "Vulkan %u.%u is older than 1.3", VK_API_VERSION_MAJOR(g_vk.properties.apiVersion), VK_API_VERSION_MINOR(g_vk.properties.apiVersion));
+        return false;
+    }
     vkGetPhysicalDeviceMemoryProperties(g_vk.physical, &g_vk.memory);
     VkPhysicalDeviceFeatures features{};
     vkGetPhysicalDeviceFeatures(g_vk.physical, &features);
