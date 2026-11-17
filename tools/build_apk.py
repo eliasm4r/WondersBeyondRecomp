@@ -2,6 +2,7 @@ import argparse
 import hashlib
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -13,7 +14,6 @@ ROOT = Path(__file__).resolve().parent.parent
 PACKAGE = "io.github.eliasm4r.wondersbeyondrecomp"
 MIN_SDK = 26
 KEY_ALIAS = "wondersbeyond"
-KEY_PASSWORD = "wondersbeyond"
 WINDOWS = sys.platform == "win32"
 OUTPUTS = {"pokepark2": "apk", "android_smoke": "smoke"}
 NODTOOL = {
@@ -145,13 +145,20 @@ def link_resources(options, work, android_jar):
 
 def ensure_key(options):
     keystore = Path(options.keystore)
+    secret = Path(f"{keystore}.password")
+    password = os.environ.get("WP_KEY_PASSWORD") or (secret.read_text(encoding="utf-8").strip() if secret.is_file() else None)
     if keystore.is_file():
-        return keystore
+        if not password:
+            sys.exit(f"{keystore} needs its password in WP_KEY_PASSWORD or {secret}")
+        return keystore, password
     keystore.parent.mkdir(parents=True, exist_ok=True)
+    password = password or secrets.token_urlsafe(24)
+    secret.write_text(password, encoding="utf-8")
     keytool = tool(Path(options.java) / "bin", "keytool")
-    run([keytool, "-genkeypair", "-keystore", keystore, "-storepass", KEY_PASSWORD, "-keypass", KEY_PASSWORD, "-alias", KEY_ALIAS, "-keyalg", "RSA",
-         "-keysize", "2048", "-validity", "36500", "-dname", "CN=PokePark 2 Wonders Beyond Recomp"])
-    return keystore
+    options.environment["WP_KEY_PASSWORD"] = password
+    run([keytool, "-genkeypair", "-keystore", keystore, "-storepass:env", "WP_KEY_PASSWORD", "-keypass:env", "WP_KEY_PASSWORD", "-alias", KEY_ALIAS, "-keyalg", "RSA",
+         "-keysize", "2048", "-validity", "36500", "-dname", "CN=PokePark 2 Wonders Beyond Recomp"], env=options.environment)
+    return keystore, password
 
 
 def main():
@@ -196,10 +203,11 @@ def main():
         archive.write(nodtool, f"lib/{options.abi}/libnodtool.so")
     aligned = work / "aligned.apk"
     run([zipalign, "-p", "-f", "4", unaligned, aligned])
-    keystore = ensure_key(options)
+    keystore, password = ensure_key(options)
+    options.environment["WP_KEY_PASSWORD"] = password
     output = Path(options.output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    run([apksigner, "sign", "--ks", keystore, "--ks-pass", f"pass:{KEY_PASSWORD}", "--ks-key-alias", KEY_ALIAS, "--key-pass", f"pass:{KEY_PASSWORD}",
+    run([apksigner, "sign", "--ks", keystore, "--ks-pass", "env:WP_KEY_PASSWORD", "--ks-key-alias", KEY_ALIAS, "--key-pass", "env:WP_KEY_PASSWORD",
          "--out", output, aligned], env=options.environment)
     run([apksigner, "verify", output], env=options.environment)
     print(f"{output} {output.stat().st_size / (1 << 20):.1f} MB")
