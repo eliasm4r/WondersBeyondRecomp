@@ -9,6 +9,7 @@
 
 #include <atomic>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <map>
@@ -219,9 +220,19 @@ void write_file() {
         }
         out << key.substr(dot + 1) << '=' << g_values[key] << '\n';
     }
-    std::ofstream file(g_path, std::ios::binary | std::ios::trunc);
-    file << out.str();
-    g_snapshot = out.str();
+    std::filesystem::path temporary = std::filesystem::path(g_path).concat(".tmp");
+    {
+        std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+        file << out.str();
+        if (!file.flush()) {
+            return;
+        }
+    }
+    std::error_code error;
+    std::filesystem::rename(temporary, g_path, error);
+    if (!error) {
+        g_snapshot = out.str();
+    }
 }
 
 std::string file_text() {

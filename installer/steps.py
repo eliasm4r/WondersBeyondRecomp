@@ -450,8 +450,8 @@ class Install:
         try:
             with open(folder / "sys" / "boot.bin", "rb") as file:
                 found = file.read(6).decode("ascii", "replace")
-        except OSError:
-            found = "?"
+        except OSError as error:
+            raise Failure(str(error))
         if found != DISC_ID:
             shutil.rmtree(folder, ignore_errors=True)
             raise Failure(self.texts["disc_other"].format(found=found, wanted=DISC_ID))

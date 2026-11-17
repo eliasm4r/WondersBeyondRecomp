@@ -737,12 +737,20 @@ public class SetupActivity extends Activity {
                 return;
             }
             File target = new File(game, "extracted");
-            delete(target);
-            if (!staging.renameTo(target)) {
+            File old = new File(game, "extracted.old");
+            delete(old);
+            if (target.exists() && !target.renameTo(old)) {
                 delete(staging);
                 fail(t("failed"));
                 return;
             }
+            if (!staging.renameTo(target)) {
+                old.renameTo(target);
+                delete(staging);
+                fail(t("failed"));
+                return;
+            }
+            delete(old);
             main.post(new Runnable() {
                 @Override
                 public void run() {
