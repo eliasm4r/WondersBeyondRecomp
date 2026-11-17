@@ -2426,6 +2426,7 @@ void draw_trimmed(const ScreenVertex* vertices, size_t total) {
         if (g_trimmed_cursor + batch * stride > kVertexBytes) {
             mode = D3D11_MAP_WRITE_DISCARD;
             g_trimmed_cursor = 0;
+            g_vertex_cursor = kVertexCapacity;
         }
         D3D11_MAPPED_SUBRESOURCE mapped;
         if (FAILED(context->Map(g_device.vertex_buffer, 0, mode, 0, &mapped))) {
@@ -2460,6 +2461,7 @@ uint32_t draw_batch(const BatchState& pending, const ScreenVertex* vertices, siz
         if (g_vertex_cursor + batch > kVertexCapacity) {
             mode = D3D11_MAP_WRITE_DISCARD;
             g_vertex_cursor = 0;
+            g_trimmed_cursor = kVertexBytes;
         }
         auto clock = std::chrono::steady_clock::now();
         if (FAILED(context->Map(g_device.vertex_buffer, 0, mode, 0, &mapped))) {
