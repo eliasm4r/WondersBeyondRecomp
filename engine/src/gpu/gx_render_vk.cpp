@@ -2284,6 +2284,11 @@ Image* custom_texture(const std::string& key, bool mipmaps) {
         return found->second;
     }
     const std::filesystem::path* path = g_pack.index.find(key);
+    std::filesystem::path direct(key);
+    std::error_code error;
+    if (!path && std::filesystem::is_regular_file(direct, error)) {
+        path = &direct;
+    }
     std::vector<std::vector<uint32_t>> images(1);
     uint32_t width = 0;
     uint32_t height = 0;
