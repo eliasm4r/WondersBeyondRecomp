@@ -6,6 +6,7 @@
 /game/stats.ini
 /game/textures/
 /game/android.keystore
+/game/android.keystore.password
 /reference/
 *.iso
 *.wbfs
