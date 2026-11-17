@@ -26,6 +26,7 @@ final class Updater {
     static final String RELEASES = "https://api.github.com/repos/eliasm4r/WondersBeyondRecomp/releases/latest";
     private static final String PREFERENCES = "updates";
     private static final String ACTION = "io.github.eliasm4r.wondersbeyondrecomp.INSTALLED";
+    private static final String TOKEN = "token";
     private static final long CHECK_SPACING = 6L * 60 * 60 * 1000;
 
     static final class Release {
@@ -213,9 +214,13 @@ final class Updater {
                 }
                 session.fsync(output);
             }
+            final String token = java.util.UUID.randomUUID().toString();
             BroadcastReceiver receiver = new BroadcastReceiver() {
                 @Override
                 public void onReceive(Context received, Intent intent) {
+                    if (!token.equals(intent.getStringExtra(TOKEN))) {
+                        return;
+                    }
                     int status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE);
                     if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
                         Intent confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT);
@@ -244,7 +249,7 @@ final class Updater {
             } else {
                 context.registerReceiver(receiver, filter);
             }
-            Intent callback = new Intent(ACTION).setPackage(context.getPackageName());
+            Intent callback = new Intent(ACTION).setPackage(context.getPackageName()).putExtra(TOKEN, token);
             int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0);
             PendingIntent sender = PendingIntent.getBroadcast(context, id, callback, flags);
             session.commit(sender.getIntentSender());
