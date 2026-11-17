@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 
 #include "wp/log.h"
@@ -84,7 +85,15 @@ bool add_files(const std::vector<uint8_t>& fst) {
         size_t entry = index * kEntrySize;
         bool is_directory = fst[entry] != 0;
         uint32_t name_offset = be32(fst, entry) & 0x00FFFFFF;
-        std::string name(reinterpret_cast<const char*>(&fst[names + name_offset]));
+        size_t start = names + name_offset;
+        const void* end = start < fst.size() ? std::memchr(&fst[start], 0, fst.size() - start) : nullptr;
+        if (end == nullptr) {
+            return false;
+        }
+        std::string name(reinterpret_cast<const char*>(&fst[start]));
+        if (name.empty() || name == "." || name == ".." || name.find_first_of("/\\") != std::string::npos) {
+            return false;
+        }
         std::string parent;
         for (const auto& directory : directories) {
             parent += directory.first;

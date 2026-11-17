@@ -541,6 +541,9 @@ int32_t create_directory(const std::string& path) {
 }
 
 int32_t remove(const std::string& path) {
+    if (host_path(path) == g_root) {
+        return kInvalid;
+    }
     std::error_code error;
     return fs::remove_all(host_path(path), error) > 0 ? 0 : kNotFound;
 }
@@ -548,6 +551,9 @@ int32_t remove(const std::string& path) {
 int32_t rename(const std::string& from, const std::string& to) {
     std::error_code error;
     fs::path target = host_path(to);
+    if (host_path(from) == g_root || target == g_root) {
+        return kInvalid;
+    }
     fs::rename(host_path(from), target, error);
     if (error) {
         return kNotFound;

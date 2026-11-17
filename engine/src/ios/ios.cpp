@@ -287,7 +287,8 @@ int32_t fs_vector_command(uint32_t command, uint32_t input_count, uint32_t outpu
         uint32_t maximum = input_count > 1 ? rd32(rd32(vectors + kVectorSize)) : 0;
         uint32_t count = 0;
         std::error_code error;
-        for (const auto& entry : std::filesystem::directory_iterator(nand::host_directory(path), error)) {
+        for (std::filesystem::directory_iterator it(nand::host_directory(path), error), end; !error && it != end; it.increment(error)) {
+            const auto& entry = *it;
             if (names != 0 && (maximum == 0 || count < maximum)) {
                 std::string name = entry.path().filename().string();
                 name.resize(kFsNameSize - 1);
@@ -313,7 +314,8 @@ int32_t fs_vector_command(uint32_t command, uint32_t input_count, uint32_t outpu
         }
         uint32_t clusters = 0;
         uint32_t inodes = 1;
-        for (const auto& entry : std::filesystem::recursive_directory_iterator(directory, error)) {
+        for (std::filesystem::recursive_directory_iterator it(directory, error), end; !error && it != end; it.increment(error)) {
+            const auto& entry = *it;
             inodes++;
             if (entry.is_regular_file(error)) {
                 clusters += static_cast<uint32_t>((entry.file_size(error) + kFsClusterSize - 1) / kFsClusterSize);
