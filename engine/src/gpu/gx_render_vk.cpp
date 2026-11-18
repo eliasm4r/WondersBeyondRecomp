@@ -406,6 +406,18 @@ uint64_t g_frame_serials[kFramesInFlight] = {};
 uint32_t g_efb_passes = 0;
 uint32_t g_cleared_passes = 0;
 uint32_t g_submits = 0;
+uint32_t g_replays = 0;
+uint32_t g_snapshots = 0;
+double g_picture_cost = 0.0;
+
+uint32_t between_budget() {
+    constexpr double kGameFrame = 0.9 / 60.0;
+    if (g_picture_cost <= 0.0) {
+        return static_cast<uint32_t>(kMaxBetween);
+    }
+    double pictures = std::floor(kGameFrame / g_picture_cost);
+    return static_cast<uint32_t>(std::clamp(pictures - 1.0, 0.0, static_cast<double>(kMaxBetween)));
+}
 double g_fence_wait = 0.0;
 double g_frame_wait = 0.0;
 double g_ring_wait = 0.0;
@@ -3650,6 +3662,24 @@ void report_frame_figures() {
                g_submits / frames, g_scale);
     log::write("video", "Vulkan GPU busy %.0f ms a second: EFB %.0f ms in %u passes, copies %.0f ms in %u, screen %.0f ms in %u", g_gpu_time * 1000.0,
                g_pass_time[1] * 1000.0, g_pass_count[1], g_pass_time[2] * 1000.0, g_pass_count[2], g_pass_time[3] * 1000.0, g_pass_count[3]);
+    if (g_gpu_time > 0.0) {
+        g_picture_cost = g_gpu_time / (frames + g_replays);
+    }
+    log::write("video", "Vulkan: %.1f ms of GPU per picture, %u in-between pictures drawn, %u allowed per frame, %u whole-picture saves and restores", g_picture_cost * 1000.0, g_replays,
+               between_budget(), g_snapshots);
+    g_replays = 0;
+    g_snapshots = 0;
+    {
+        static const Ring* const rings[] = {&g_device.screen, &g_device.run_vertices, &g_device.run_indices, &g_device.run_rows, &g_device.moved, &g_device.uniforms};
+        static uint32_t seen[std::size(rings)] = {};
+        uint32_t turns[std::size(rings)];
+        for (size_t i = 0; i < std::size(rings); i++) {
+            turns[i] = rings[i]->switches - seen[i];
+            seen[i] = rings[i]->switches;
+        }
+        log::write("video", "Vulkan buffer turns a second: screen %u, models %u, indices %u, rows %u, moved %u, constants %u", turns[0], turns[1], turns[2], turns[3],
+                   turns[4], turns[5]);
+    }
     g_gpu_time = 0.0;
     for (int i = 0; i < 4; i++) {
         g_pass_time[i] = 0.0;
@@ -4031,6 +4061,7 @@ bool save_efb(EfbSnapshot& snapshot) {
     if (!same_size(*g_device.efb_color, snapshot.color) || !same_size(*g_device.efb_depth, snapshot.depth)) {
         return false;
     }
+    g_snapshots++;
     copy_image(*g_device.efb_color, *snapshot.color);
     copy_image(*g_device.efb_depth, *snapshot.depth);
     return true;
@@ -4041,6 +4072,7 @@ void load_efb(const EfbSnapshot& snapshot) {
     if (!snapshot.color || !snapshot.depth || !g_device.efb_color || !g_device.efb_depth) {
         return;
     }
+    g_snapshots++;
     copy_image(*snapshot.color, *g_device.efb_color);
     copy_image(*snapshot.depth, *g_device.efb_depth);
 }
@@ -4321,11 +4353,12 @@ bool rings_overrun() {
 }
 
 void hold_rings() {
-    for (Ring* ring : g_recorded_rings) {
-        for (uint32_t segment = 0; segment < kRingSegments; segment++) {
-            if (segment != ring->segment) {
-                ring->used_by[segment] = std::max(ring->used_by[segment], current_serial());
-            }
+    for (size_t i = 0; i < std::size(g_recorded_rings); i++) {
+        Ring* ring = g_recorded_rings[i];
+        uint32_t turned = std::min(ring->switches - g_ring_marks[i], kRingSegments - 1);
+        for (uint32_t back = 1; back <= turned; back++) {
+            uint32_t segment = (ring->segment + kRingSegments - back) % kRingSegments;
+            ring->used_by[segment] = std::max(ring->used_by[segment], current_serial());
         }
     }
 }
@@ -4353,6 +4386,7 @@ uint32_t run_interpolated(int x, int y, int width, int height, bool depth, const
     while (made < count && replay_between(g_matches, plan.fractions[made], g_device.interpolated[made], x, y, width, height, depth, filter)) {
         made++;
     }
+    g_replays += made;
     hold_rings();
     return made;
 }
@@ -4623,11 +4657,12 @@ void finish_frame() {
     const ClearCommand& clear = end.clear;
     bool cleared = end.copied && g_recording && end.has_clear && clear.color && clear.alpha && clear.depth && clear.x <= 0 && clear.y <= 0 &&
                    clear.x + clear.width >= canvas_width() && clear.y + clear.height >= canvas_height();
-    bool saved = cleared || (end.copied && g_recording && save_efb(g_efb_after));
+    uint32_t allowed = between_budget();
+    bool saved = allowed > 0 && (cleared || (end.copied && g_recording && save_efb(g_efb_after)));
     auto started = std::chrono::steady_clock::now();
     pacing::FramePlan plan;
     if (saved) {
-        plan = pacing::plan_frame(g_phase, g_period, pacing::output_rate(static_cast<int>(fps())), kMaxBetween);
+        plan = pacing::plan_frame(g_phase, g_period, pacing::output_rate(static_cast<int>(fps())), allowed);
         if (!late && gx::gpu_backlog() < kBehindBytes) {
             g_interpolated_ready = run_interpolated(end.x, end.y, end.width, end.height, end.depth, end.filter, plan);
             if (!cleared) {
@@ -4644,7 +4679,7 @@ void finish_frame() {
     if (!complete) {
         g_phase = 0.0;
     }
-    if (end.copied && g_recording && g_interpolated_ready == 0) {
+    if (end.copied && g_recording && allowed > 0 && g_interpolated_ready == 0) {
         g_late_frames++;
     }
     if (g_recording) {
