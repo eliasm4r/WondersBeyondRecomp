@@ -1722,8 +1722,9 @@ Measured on a POCO X6 (Adreno 710) with GPU timestamps around every render pass 
 
 - The game window must not ask for the renderer's name before it exists: `window_title` calls `api_name`, which waits for
   the window, so the window thread used the plain game name until the window is made (black screen with the FPS display on).
-- Android answers `VK_SUBOPTIMAL_KHR` on every present while the compositor rotates our identity swapchain in landscape.
-  Only `VK_ERROR_OUT_OF_DATE_KHR` rebuilds the swapchain (it was rebuilt 25 times a second, 13 fps).
+- Android answers `VK_SUBOPTIMAL_KHR` on every present while the compositor rotates an identity swapchain in landscape.
+  Rebuilding on it made 25 swapchains a second (13 fps). The swapchain is now pre-rotated (see the next section), and
+  `VK_SUBOPTIMAL_KHR` only makes the renderer compare the screen transform with the one the swapchain was made for.
 - The TEV pixel shader was the cost (EFB passes 35 ms a frame, 3.7x at 4x the pixels). A phone's GPU keeps arrays indexed
   per pixel in memory, and with specialization constants the stage loop stayed a loop, so the registers, konst colors,
   swap tables and the eight gradients stayed arrays. The shader now keeps them as separate values, unrolls the stages when
@@ -1734,6 +1735,46 @@ Measured on a POCO X6 (Adreno 710) with GPU timestamps around every render pass 
   whatever mode the game prefers, so in-between images never start.
 - `game/env.txt` (one `NAME=value` a line) sets environment variables at start on Android, for tests over adb
   (`WP_RENDERER`, `WP_SCALE`, `WP_FPS`, `WP_INPUT_SCRIPT`).
+
+## Vulkan objects flashing on older Adreno drivers (2026-11-19)
+
+On the POCO X6 (Adreno 710, driver 512.615, Vulkan 1.1.128, forced with `WP_VK_ANY_VERSION=1`), objects (ground,
+windows, trees) went black, vanished or jumped for one frame, even standing still at 30 fps. OpenGL ES on the same
+phone never did it.
+
+- Ruled out on the phone: the Khronos validation layer with synchronization checks (0 hazards; its only report, a
+  descriptor pool used past its size because `reset_submission` never reset the pool at `pool_used`, is fixed: pool 0
+  is reset on reuse and each pool counts its sets), a test mode with `vkQueueWaitIdle` after every submit and full
+  barriers around every pass (still flashing at 15 fps), in-between images (none drawn), CPU vertices, the generic
+  shader and kept models. The Vulkan renderer built for the PC (below) shows no flash in 600 still frames.
+  `WP_VK_VALIDATE=1` turns the Khronos validation layer on when its library is packed in the APK (`=2` leaves out the
+  synchronization checks); its messages go to the log.
+- Cause: the driver loses part of a frame when SurfaceFlinger's GPU work preempts the game. Godot issue #125576
+  and its test project (`fredruss/qualcomm-vulkan-driver-bug`) show the same flashes on an Adreno 730 with driver
+  512.615.98, only with Vulkan and only while Android composes the screen on the GPU; a high queue priority removed
+  them (0 of 2084 frames). Android composes our layer on the GPU at every frame because the swapchain was made in the
+  window's orientation (`VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR`) while the panel is portrait: the display hardware
+  cannot turn it. OpenGL ES drivers pre-rotate on their own from the transform hint, so they never hit it. Google
+  measured that pre-rotation stops SurfaceFlinger's preemption almost entirely and lowers the GPU clock by 40 %.
+- Fix: the swapchain is made in the panel's natural orientation with `preTransform = currentTransform`, and the
+  screen pass turns everything it draws: `fullscreen.vert` rotates its corners by a specialization constant (quarter
+  turns) and `turn_to_screen` maps the viewport and scissor rectangles (Google's pre-rotation formulas). The queue
+  asks for `VK_QUEUE_GLOBAL_PRIORITY_HIGH` through `VK_KHR_global_priority` or `VK_EXT_global_priority` and falls
+  back to the normal priority when the driver refuses (NVIDIA answers `VK_ERROR_NOT_PERMITTED`). Pending presents are
+  drained before the swapchain is destroyed (the present thread could still hold the old one).
+- Switches for tests: `WP_VK_PRE_ROTATE=0`, `WP_VK_HIGH_PRIORITY=0`. The log says `picture turned by N quarter turns`
+  and `queue priority high|normal`. `adb shell dumpsys SurfaceFlinger` shows whether our layer is composed by the
+  display hardware (`DEVICE`) or on the GPU (`CLIENT`).
+- `WP_VK_FLASH_METER=1` counts the flashes on the phone itself: every finished frame is shrunk to 64x36 on the GPU and
+  read back a few frames later, and a frame counts as a flash when at least 6 cells jump away from both neighbours that
+  agree with each other. The log gets one `flash meter` line a second. Standing still in the park it reads 0 on the PC
+  for minutes; animated menus and loading screens give false flashes, so compare runs standing still.
+- The Vulkan renderer builds for the PC for tests: configure a separate folder with `-DWP_OPENGL=ON
+  -DWP_DESKTOP_VULKAN=ON -DWP_GLSLC=<NDK shader-tools glslc> -DWP_VULKAN_INCLUDE=<folder with the NDK's vulkan and
+  vk_video headers> -DWP_VULKAN_LIBRARY=C:/Windows/System32/vulkan-1.dll`. `WP_VK_HIDDEN=1` keeps Vulkan in headless
+  runs (no window is shown, so nothing is presented) and `WP_DUMP_SEQUENCE=first,count[,step]` saves the frames.
+  Buffers fall back to plain host memory when the device-local host-visible heap (256 MB without resizable BAR) is
+  full.
 
 ## Native AX mixer
 

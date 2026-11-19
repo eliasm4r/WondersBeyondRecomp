@@ -524,7 +524,7 @@ void window_thread(bool visible) {
 #endif
     bool vulkan = false;
 #ifdef WP_VULKAN
-    vulkan = visible && gx::render::choose_vulkan();
+    vulkan = (visible || std::getenv("WP_VK_HIDDEN")) && gx::render::choose_vulkan();
 #endif
     {
         std::lock_guard<std::mutex> hold(g_state.lock);

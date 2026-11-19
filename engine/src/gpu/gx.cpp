@@ -2669,10 +2669,13 @@ struct GpuQueue {
 };
 
 GpuQueue g_gpu;
-const bool g_threaded = [] {
-    const char* setting = std::getenv("WP_GPU_THREAD");
-    return !setting || std::atoi(setting) != 0;
-}();
+bool threaded() {
+    static const bool value = [] {
+        const char* setting = std::getenv("WP_GPU_THREAD");
+        return !setting || std::atoi(setting) != 0;
+    }();
+    return value;
+}
 
 
 
@@ -2871,7 +2874,7 @@ void process() {
     if (g_fifo.empty()) {
         return;
     }
-    if (!g_threaded) {
+    if (!threaded()) {
         size_t used = parse(g_fifo.data(), g_fifo.size(), false);
         g_fifo.erase(g_fifo.begin(), g_fifo.begin() + static_cast<std::ptrdiff_t>(used));
         return;
@@ -2921,7 +2924,7 @@ double facing_area(const float a[3], const float b[3], const float c[3]) {
 
 void run_frame_task(std::function<void()> task) {
     process();
-    if (!g_threaded) {
+    if (!threaded()) {
         task();
         return;
     }
