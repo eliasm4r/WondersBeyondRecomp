@@ -356,18 +356,20 @@ void handle_event(SDL_Window* window, const SDL_Event& event) {
         std::_Exit(0);
     case SDL_EVENT_FINGER_DOWN:
     case SDL_EVENT_FINGER_MOTION:
-    case SDL_EVENT_FINGER_UP: {
+    case SDL_EVENT_FINGER_UP:
+    case SDL_EVENT_FINGER_CANCELED: {
         int width = 0;
         int height = 0;
         SDL_GetWindowSizeInPixels(window, &width, &height);
         float x = event.tfinger.x * static_cast<float>(width);
         float y = event.tfinger.y * static_cast<float>(height);
         if (options::menu_open()) {
+            touch::release_all();
             menu_finger(window, event, static_cast<int>(x), static_cast<int>(y), height);
             return;
         }
         g_menu_finger.down = false;
-        touch::Phase phase = event.type == SDL_EVENT_FINGER_DOWN ? touch::Phase::Down : event.type == SDL_EVENT_FINGER_UP ? touch::Phase::Up : touch::Phase::Move;
+        touch::Phase phase = event.type == SDL_EVENT_FINGER_DOWN ? touch::Phase::Down : event.type == SDL_EVENT_FINGER_MOTION ? touch::Phase::Move : touch::Phase::Up;
         touch::finger(static_cast<int64_t>(event.tfinger.fingerID), phase, x, y, width, height);
         if (touch::take_menu_press()) {
             options::toggle_menu(window);

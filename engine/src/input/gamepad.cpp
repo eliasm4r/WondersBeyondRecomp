@@ -692,7 +692,8 @@ State poll(uint32_t slot, bool sideways) {
     if (current.shaking) {
         b |= input::kMotionShake;
     }
-    if (b != 0) {
+    if (b != 0 || std::fabs(current.left_x) > stick_threshold() || std::fabs(current.left_y) > stick_threshold() ||
+        std::fabs(current.right_x) > stick_threshold() || std::fabs(current.right_y) > stick_threshold()) {
         touch::other_input();
     }
     bool left = held(SDL_GAMEPAD_BUTTON_DPAD_LEFT) || current.left_x < -stick_threshold();
