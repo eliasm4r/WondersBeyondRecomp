@@ -138,6 +138,7 @@ def link_resources(options, work, android_jar):
     (assets / "fonts").mkdir(parents=True)
     for name in ("Nunito-Black.ttf", "Nunito-ExtraBold.ttf", "OFL.txt"):
         shutil.copyfile(FONTS / name, assets / "fonts" / name)
+    shutil.copyfile(ROOT / "android" / "pipelines_seed_vk.bin", assets / "pipelines_seed_vk.bin")
     run([options.aapt2, "link", "-o", base, "-I", android_jar, "-A", assets, "--manifest", ROOT / "android" / "AndroidManifest.xml", "--min-sdk-version", str(MIN_SDK),
          "--target-sdk-version", str(options.target_sdk), "--version-code", str(version_code()), "--version-name", project_value("WP_VERSION"), compiled])
     return base
