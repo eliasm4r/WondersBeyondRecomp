@@ -31,6 +31,8 @@ Every change to WondersBeyondRecomp, newest first.
 - The Pad shows saved photos in HD with OpenGL and Vulkan too, not only with Direct3D.
 - Direct3D: switching the in-between images on or off while playing can no longer draw a frame with broken shapes.
 - A damaged or crafted disc image can no longer make the game read outside its files, and the game can no longer delete or move the whole save folder by mistake.
+- Phones with Vulkan at 90 Hz and above: busy places no longer drop the game to 30 frames a second. The in-between images never ask for more work when the game slows down, they pause on their own while the graphics card can't keep up, and they no longer make the processor wait for the graphics card to finish everything first.
+- In-between images: an object that jumps far from one frame to the next is shown where it is instead of flying across the picture, and colours are only blended with the same object.
 
 ## v0.3.1-alpha · 2026-11-16
 
