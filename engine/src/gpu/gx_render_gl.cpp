@@ -12,6 +12,10 @@
 #include <atomic>
 #include <array>
 #include <chrono>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
+#include <thread>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -58,7 +62,7 @@ namespace {
     X(GetShaderiv) X(GetString) X(GetStringi) X(GetUniformBlockIndex) X(GetUniformLocation) X(LinkProgram) X(PixelStorei) X(ReadPixels)             \
     X(SamplerParameterf) X(SamplerParameteri) X(Scissor) X(ShaderSource) X(TexImage2D) X(TexParameteri) X(TexSubImage2D) X(Uniform1i)              \
     X(Uniform1f) X(Uniform4f) X(UniformBlockBinding) X(UseProgram) X(VertexAttribPointer) X(Viewport) X(MapBufferRange) X(UnmapBuffer)    \
-    X(FenceSync) X(ClientWaitSync) X(DeleteSync) X(DeleteProgram) X(GetFloatv) X(DeleteSamplers)
+    X(FenceSync) X(ClientWaitSync) X(DeleteSync) X(DeleteProgram) X(GetFloatv) X(DeleteSamplers) X(Finish) X(Flush)
 
 #define WP_GL_RUN_FUNCTIONS(X)                                                                                                                              \
     X(CullFace) X(DeleteBuffers) X(DisableVertexAttribArray) X(DrawElementsBaseVertex) X(GetError) X(TexBuffer) X(VertexAttrib4f) X(VertexAttribI4ui)  \
@@ -1622,6 +1626,100 @@ void store_binary(GLuint id, int kind, const std::string& key) {
     cache.programs[name] = {format, std::move(binary)};
 }
 
+struct CompileWorker {
+    std::mutex lock;
+    std::condition_variable wake;
+    std::condition_variable finished;
+    std::deque<std::pair<GLuint, GLuint>> jobs;
+    std::unordered_set<GLuint> done;
+    std::unordered_set<GLuint> queued;
+    bool running = false;
+};
+
+CompileWorker g_worker;
+
+bool start_compile_worker() {
+#ifdef __ANDROID__
+    using GetContext = void* (*)();
+    using CreateContext = void* (*)(void*, void*, void*, const int32_t*);
+    using MakeCurrent = unsigned (*)(void*, void*, void*, void*);
+    using QueryString = const char* (*)(void*, int32_t);
+    auto get_context = reinterpret_cast<GetContext>(SDL_EGL_GetProcAddress("eglGetCurrentContext"));
+    auto create_context = reinterpret_cast<CreateContext>(SDL_EGL_GetProcAddress("eglCreateContext"));
+    auto make_current = reinterpret_cast<MakeCurrent>(SDL_EGL_GetProcAddress("eglMakeCurrent"));
+    auto query_string = reinterpret_cast<QueryString>(SDL_EGL_GetProcAddress("eglQueryString"));
+    void* display = SDL_EGL_GetCurrentDisplay();
+    void* config = SDL_EGL_GetCurrentConfig();
+    if (!get_context || !create_context || !make_current || !query_string || !display || !config) {
+        return false;
+    }
+    const char* extensions = query_string(display, 0x3055);
+    if (!extensions || !std::strstr(extensions, "EGL_KHR_surfaceless_context")) {
+        return false;
+    }
+    const int32_t attributes[] = {0x3098, 3, 0x3038};
+    void* context = create_context(display, config, get_context(), attributes);
+    if (!context) {
+        return false;
+    }
+    std::mutex started_lock;
+    std::condition_variable started_signal;
+    int started = 0;
+    std::thread([display, context, make_current, &started_lock, &started_signal, &started] {
+        bool current = make_current(display, nullptr, nullptr, context) != 0;
+        {
+            std::lock_guard<std::mutex> hold(started_lock);
+            started = current ? 1 : 2;
+            started_signal.notify_all();
+        }
+        if (!current) {
+            return;
+        }
+        for (;;) {
+            std::pair<GLuint, GLuint> job;
+            {
+                std::unique_lock<std::mutex> hold(g_worker.lock);
+                g_worker.wake.wait(hold, [] { return !g_worker.jobs.empty(); });
+                job = g_worker.jobs.front();
+                g_worker.jobs.pop_front();
+            }
+            gl.CompileShader(job.first);
+            gl.LinkProgram(job.second);
+            gl.DeleteShader(job.first);
+            gl.Finish();
+            {
+                std::lock_guard<std::mutex> hold(g_worker.lock);
+                g_worker.done.insert(job.second);
+            }
+            g_worker.finished.notify_all();
+        }
+    }).detach();
+    std::unique_lock<std::mutex> hold(started_lock);
+    started_signal.wait(hold, [&started] { return started != 0; });
+    g_worker.running = started == 1;
+    return g_worker.running;
+#else
+    return false;
+#endif
+}
+
+bool worker_done(GLuint program, bool wait) {
+    std::unique_lock<std::mutex> hold(g_worker.lock);
+    if (g_worker.queued.count(program) == 0) {
+        return true;
+    }
+    if (wait) {
+        g_worker.finished.wait(hold, [program] { return g_worker.done.count(program) != 0; });
+    }
+    auto found = g_worker.done.find(program);
+    if (found == g_worker.done.end()) {
+        return false;
+    }
+    g_worker.done.erase(found);
+    g_worker.queued.erase(program);
+    return true;
+}
+
 bool parallel_compile() {
     static const bool available = [] {
         using MaxThreads = void(APIENTRY*)(GLuint);
@@ -1633,6 +1731,11 @@ bool parallel_compile() {
                 log::write("video", "pixel shader variants compile in the background (%s)", extension.c_str());
                 return true;
             }
+        }
+        static const char* const worker_setting = std::getenv("WP_GL_COMPILE_THREAD");
+        if (g_es && !(worker_setting && std::atoi(worker_setting) == 0) && start_compile_worker()) {
+            log::write("video", "pixel shader variants compile in the background on a second OpenGL context");
+            return true;
         }
         log::write("video", "pixel shader variants compile one per image: this OpenGL cannot compile in the background");
         return false;
@@ -1683,18 +1786,31 @@ void start_variant(Variant& variant, int kind, const std::string& key) {
     const char* text = fragment.c_str();
     GLuint fs = gl.CreateShader(GL_FRAGMENT_SHADER);
     gl.ShaderSource(fs, 1, &text, nullptr);
-    gl.CompileShader(fs);
     GLuint id = gl.CreateProgram();
     gl.AttachShader(id, g_variant_vertex[kind]);
     gl.AttachShader(id, fs);
-    gl.LinkProgram(id);
-    gl.DeleteShader(fs);
+    if (g_worker.running) {
+        gl.Flush();
+        {
+            std::lock_guard<std::mutex> hold(g_worker.lock);
+            g_worker.jobs.emplace_back(fs, id);
+            g_worker.queued.insert(id);
+        }
+        g_worker.wake.notify_one();
+    } else {
+        gl.CompileShader(fs);
+        gl.LinkProgram(id);
+        gl.DeleteShader(fs);
+    }
     variant.linking = id;
     g_variants_linking++;
 }
 
 void finish_variant(Variant& variant, int kind, const std::string& key, bool fresh) {
     GLuint id = variant.linking;
+    if (g_worker.running) {
+        worker_done(id, true);
+    }
     variant.linking = 0;
     g_variants_linking--;
     variant.done = true;
@@ -1805,7 +1921,10 @@ const Program& tev_program(const Constants& constants, bool early_depth, int kin
         start_variant(variant, kind, key);
     }
     GLint complete = 1;
-    if (parallel) {
+    if (parallel && g_worker.running) {
+        std::lock_guard<std::mutex> hold(g_worker.lock);
+        complete = (g_worker.done.count(variant.linking) != 0 || g_worker.queued.count(variant.linking) == 0) ? 1 : 0;
+    } else if (parallel) {
         gl.GetProgramiv(variant.linking, kCompletionStatus, &complete);
     }
     if (complete) {
