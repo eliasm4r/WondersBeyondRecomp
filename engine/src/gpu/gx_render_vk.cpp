@@ -419,6 +419,7 @@ double g_picture_cost = 0.0;
 bool g_between_paused = false;
 double g_between_backoff = 2.0;
 uint32_t g_between_steady = 0;
+uint32_t g_between_slow = 0;
 std::chrono::steady_clock::time_point g_between_retry;
 
 uint32_t between_budget() {
@@ -430,7 +431,7 @@ uint32_t between_budget() {
     return static_cast<uint32_t>(std::clamp(needed, 0, static_cast<int>(kMaxBetween)));
 }
 
-void steer_between(double rate, double waits, std::chrono::steady_clock::time_point now) {
+void steer_between(double rate, double waits, double busy, std::chrono::steady_clock::time_point now) {
     if (g_between_paused) {
         if (now >= g_between_retry) {
             g_between_paused = false;
@@ -441,14 +442,21 @@ void steer_between(double rate, double waits, std::chrono::steady_clock::time_po
     if (g_replays == 0) {
         return;
     }
-    if (rate < 57.0 && waits >= 0.1) {
+    bool full = busy <= 0.0 || busy >= 0.9;
+    if (rate < 57.0 && waits >= 0.1 && full) {
+        g_between_slow++;
+    } else {
+        g_between_slow = 0;
+    }
+    if (g_between_slow >= 2) {
+        g_between_slow = 0;
         g_between_paused = true;
         g_between_retry = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(g_between_backoff));
         log::write("video", "in-between pictures paused for %.0f s: %.0f frames a second, %.0f ms waiting for the graphics card", g_between_backoff, rate, waits * 1000.0);
-        g_between_backoff = std::min(g_between_backoff * 2.0, 32.0);
+        g_between_backoff = std::min(g_between_backoff * 2.0, 8.0);
         return;
     }
-    if (++g_between_steady >= 20) {
+    if (++g_between_steady >= 10) {
         g_between_backoff = 2.0;
     }
 }
@@ -3958,7 +3966,7 @@ void report_frame_figures() {
         g_picture_cost = g_gpu_time / (frames + g_replays);
     }
     double elapsed = std::chrono::duration<double>(now - logged).count();
-    steer_between(static_cast<double>(g_frame - logged_frame) / elapsed, g_frame_wait + g_ring_wait, now);
+    steer_between(static_cast<double>(g_frame - logged_frame) / elapsed, g_frame_wait + g_ring_wait, g_gpu_time / elapsed, now);
     log::write("video", "Vulkan: %.1f ms of GPU per picture, %u in-between pictures drawn, up to %u per frame%s, %u whole-picture saves and restores", g_picture_cost * 1000.0,
                g_replays, between_budget(), g_between_paused ? " (paused)" : "", g_snapshots);
     g_replays = 0;
