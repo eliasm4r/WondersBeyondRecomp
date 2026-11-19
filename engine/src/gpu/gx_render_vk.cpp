@@ -532,6 +532,7 @@ Canvas g_canvas;
 int g_canvas_kind = kInPicture;
 std::atomic<uint32_t> g_shared_margins{0};
 bool g_world_drawn = false;
+uint32_t g_kinds_since_clear = 0;
 bool g_world_shown = false;
 int g_world_change_frames = 0;
 constexpr int kSteadyFrames = 8;
@@ -4334,6 +4335,7 @@ Canvas shared_canvas() {
 void set_canvas_kind(int kind) {
     g_canvas_kind = kind;
     g_world_drawn |= kind == kWorld;
+    g_kinds_since_clear |= 1u << kind;
 }
 
 bool canvas_copy(uint32_t address) {
@@ -5315,7 +5317,8 @@ void copy_to_texture(uint32_t address, uint32_t stride, int x, int y, int width,
     int canvas_y = y;
     int canvas_w = width;
     int canvas_h = height;
-    place_on_canvas(canvas_x, canvas_y, canvas_w, canvas_h);
+    bool picture_only = g_kinds_since_clear == (1u << kInPicture);
+    place_on_canvas(canvas_x, canvas_y, canvas_w, canvas_h, !picture_only);
     CopiedTexture& entry = g_device.copies[address];
     constexpr uint32_t kRecurringFrames = 2;
     uint32_t w = static_cast<uint32_t>(width);
@@ -5504,6 +5507,7 @@ bool read_frame(std::vector<uint32_t>& pixels, uint32_t& width, uint32_t& height
 }
 
 void clear(int x, int y, int width, int height) {
+    g_kinds_since_clear = 0;
     if (!initialize()) {
         return;
     }
