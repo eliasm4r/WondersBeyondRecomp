@@ -1776,6 +1776,17 @@ phone never did it.
   Buffers fall back to plain host memory when the device-local host-visible heap (256 MB without resizable BAR) is
   full.
 
+## Screen pass savings on phones (2026-11-19)
+
+- A Redmi Pad Pro (same Adreno 710, 1600x2560) with Vulkan forced runs at 21.6 ms of GPU a picture in the park, so it holds 30 fps and
+  drops below when effects add work. EFB passes cover 89% of the picture on average (`Vulkan EFB passes draw in` log line), so
+  shrinking their render area would gain nothing: the cost is the drawing itself.
+- At 30 fps the screen was redrawn at every display refresh (about 2.7 ms of GPU each at 2560 lines). Vulkan now presents a
+  repeated frame only when an overlay, the touch controls, the window or the swapchain changed (`WP_VK_REPEAT_PRESENTS=1` brings
+  back the old behaviour).
+- The touch controls image covers the whole screen but is mostly transparent: both renderers now draw it only in the cells of a
+  24x12 grid that hold visible pixels.
+
 ## Native AX mixer
 
 - `hle_audio::wanted()` is on for Android and macOS: the interpreted DSP microcode could not keep up there and the sound stuttered. Windows and Linux keep the emulated DSP unless `WP_HLE_AUDIO` is set; `WP_DSP_EMULATED` forces the emulated DSP everywhere.
