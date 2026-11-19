@@ -530,6 +530,18 @@ void finger(int64_t id, Phase phase, float x, float y, int width, int height) {
     update_held(all);
 }
 
+void release_all() {
+    std::lock_guard<std::mutex> hold(g_lock);
+    if (g_fingers.empty()) {
+        return;
+    }
+    g_fingers.clear();
+    g_stick_active = false;
+    g_stick_x = 0.0f;
+    g_stick_y = 0.0f;
+    g_held = 0;
+}
+
 void other_input() {
     std::lock_guard<std::mutex> hold(g_lock);
     if (active() && !g_hidden && g_fingers.empty()) {
