@@ -42,7 +42,7 @@ bool use_vulkan() {
 bool choose_vulkan() {
     bool usable = vulkan::probe();
     if (!usable) {
-        log::write("video", "no Vulkan 1.3 on this phone, OpenGL ES draws the game");
+        log::write("video", "no usable Vulkan on this phone, OpenGL ES draws the game");
     }
     return usable;
 }

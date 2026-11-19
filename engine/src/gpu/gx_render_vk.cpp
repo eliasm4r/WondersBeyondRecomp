@@ -4138,7 +4138,8 @@ bool probe() {
         return false;
     }
     vkGetPhysicalDeviceProperties(g_vk.physical, &g_vk.properties);
-    if (g_vk.properties.apiVersion < VK_API_VERSION_1_3 && !std::getenv("WP_VK_ANY_VERSION")) {
+    bool adreno = g_vk.properties.vendorID == 0x5143 && g_vk.properties.apiVersion >= VK_API_VERSION_1_1;
+    if (g_vk.properties.apiVersion < VK_API_VERSION_1_3 && !adreno && !std::getenv("WP_VK_ANY_VERSION")) {
         log::write("video", "Vulkan %u.%u is older than 1.3", VK_API_VERSION_MAJOR(g_vk.properties.apiVersion), VK_API_VERSION_MINOR(g_vk.properties.apiVersion));
         return false;
     }
