@@ -1043,6 +1043,10 @@ the pause menu and the crash in the texture-object init `f_80070fc0`.
   16:10, 21:9 and 32:9 with `dash.txt` and `photo1.txt`.
 - Copies of the whole picture take the margins; others, and what is written back to memory (photos), are the
   picture's part. Clears too. Range fog moves its center by the side margin.
+- A copy of the whole picture takes the margins only when something since the last clear was drawn across the canvas
+  (`g_kinds_since_clear`, any kind but `kInPicture`). The ground shadow texture (copy `901507a0`, format 8, 640x456) is
+  drawn only in the picture; taking the margins squeezed it toward the middle, so on phones (2.17:1, 71 pixels a side)
+  shadows sat off their objects (cousin report 2026-11-19, found with `WP_ASPECT=2608:1200` on Direct3D 11).
 - The game picks what to draw with a frustum made for 16:9 (`FrustumForCamera` 0x8001A390, same address as the US
   game, builds it with 0x8027DCD0: fovy in degrees, aspect, near, far). `CullingFrustum` widens it for cameras that
   see past 2000 by the canvas's shape: 21:9 at 240 fps x3 drew 21.9 million vertices a second instead of 21.3, still
