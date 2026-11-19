@@ -408,15 +408,43 @@ uint32_t g_cleared_passes = 0;
 uint32_t g_submits = 0;
 uint32_t g_replays = 0;
 uint32_t g_snapshots = 0;
+uint32_t g_dropped[5] = {};
 double g_picture_cost = 0.0;
+bool g_between_paused = false;
+double g_between_backoff = 2.0;
+uint32_t g_between_steady = 0;
+std::chrono::steady_clock::time_point g_between_retry;
 
 uint32_t between_budget() {
-    constexpr double kGameFrame = 0.9 / 60.0;
-    if (g_picture_cost <= 0.0) {
-        return static_cast<uint32_t>(kMaxBetween);
+    if (g_between_paused) {
+        return 0;
     }
-    double pictures = std::floor(kGameFrame / g_picture_cost);
-    return static_cast<uint32_t>(std::clamp(pictures - 1.0, 0.0, static_cast<double>(kMaxBetween)));
+    static const settings::LiveNumber fps("video.fps", "WP_FPS");
+    int needed = static_cast<int>(std::ceil(pacing::output_rate(static_cast<int>(fps())) / 60.0)) - 1;
+    return static_cast<uint32_t>(std::clamp(needed, 0, static_cast<int>(kMaxBetween)));
+}
+
+void steer_between(double rate, double waits, std::chrono::steady_clock::time_point now) {
+    if (g_between_paused) {
+        if (now >= g_between_retry) {
+            g_between_paused = false;
+            g_between_steady = 0;
+        }
+        return;
+    }
+    if (g_replays == 0) {
+        return;
+    }
+    if (rate < 57.0 && waits >= 0.1) {
+        g_between_paused = true;
+        g_between_retry = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(g_between_backoff));
+        log::write("video", "in-between pictures paused for %.0f s: %.0f frames a second, %.0f ms waiting for the graphics card", g_between_backoff, rate, waits * 1000.0);
+        g_between_backoff = std::min(g_between_backoff * 2.0, 32.0);
+        return;
+    }
+    if (++g_between_steady >= 20) {
+        g_between_backoff = 2.0;
+    }
 }
 double g_fence_wait = 0.0;
 double g_frame_wait = 0.0;
@@ -2420,6 +2448,7 @@ Image* texture_for(uint32_t map) {
         std::fprintf(stderr, "unsupported texture format %u\n", request.format);
     }
     if (!request.valid) {
+        g_dropped[4]++;
         return nullptr;
     }
     uint32_t address = request.address;
@@ -2521,6 +2550,9 @@ Image* texture_for(uint32_t map) {
     }
     pixels.resize(levels);
     entry.texture = upload_levels(pixels, width, height, false);
+    if (!entry.texture) {
+        g_dropped[3]++;
+    }
     return finish();
 }
 
@@ -2811,6 +2843,7 @@ bool set_batch_state(const BatchState& pending, uint32_t uniform, int source) {
     begin_efb((pending.depth & 1) != 0);
     VkDescriptorSet maps = maps_set(pending);
     if (!maps) {
+        g_dropped[0]++;
         return false;
     }
     vkCmdSetScissor(g_current->draw, 0, 1, &rect);
@@ -2848,6 +2881,7 @@ void issue_runs(const RunDraw* draws, size_t count, uint32_t vertex_start, uint3
         if (bound_cull != draw.cull) {
             VkPipeline pipeline = tev_pipeline(state, 1, draw.cull);
             if (!pipeline) {
+                g_dropped[1]++;
                 continue;
             }
             bind_pipeline(pipeline);
@@ -2898,6 +2932,9 @@ void draw_runs() {
               upload(g_device.run_vertices, g_run_vertex_bytes.data(), g_run_vertex_used, 16, vertex_start) &&
               upload(g_device.run_indices, g_run_index_words.data(), g_run_index_used * sizeof(uint16_t), 16, index_start) && upload_constants(g_pending, uniform);
     uint32_t first_index_word = index_start / static_cast<uint32_t>(sizeof(uint16_t));
+    if (!ok) {
+        g_dropped[2]++;
+    }
     if (ok && set_batch_state(g_pending, uniform, 1)) {
         issue_runs(g_run_draws.data(), g_run_draws.size(), vertex_start, first_index_word, row_start / static_cast<uint32_t>(sizeof(float[4])), uniform, g_pending);
     }
@@ -3665,10 +3702,17 @@ void report_frame_figures() {
     if (g_gpu_time > 0.0) {
         g_picture_cost = g_gpu_time / (frames + g_replays);
     }
-    log::write("video", "Vulkan: %.1f ms of GPU per picture, %u in-between pictures drawn, %u allowed per frame, %u whole-picture saves and restores", g_picture_cost * 1000.0, g_replays,
-               between_budget(), g_snapshots);
+    double elapsed = std::chrono::duration<double>(now - logged).count();
+    steer_between(static_cast<double>(g_frame - logged_frame) / elapsed, g_frame_wait + g_ring_wait, now);
+    log::write("video", "Vulkan: %.1f ms of GPU per picture, %u in-between pictures drawn, up to %u per frame%s, %u whole-picture saves and restores", g_picture_cost * 1000.0,
+               g_replays, between_budget(), g_between_paused ? " (paused)" : "", g_snapshots);
     g_replays = 0;
     g_snapshots = 0;
+    if (g_dropped[0] + g_dropped[1] + g_dropped[2] + g_dropped[3] + g_dropped[4] != 0) {
+        log::write("video", "Vulkan skipped: %u batches without texture slots, %u model draws without a pipeline, %u model batches without buffer room, %u textures not uploaded, %u textures unreadable",
+                   g_dropped[0], g_dropped[1], g_dropped[2], g_dropped[3], g_dropped[4]);
+        std::fill(std::begin(g_dropped), std::end(g_dropped), 0u);
+    }
     {
         static const Ring* const rings[] = {&g_device.screen, &g_device.run_vertices, &g_device.run_indices, &g_device.run_rows, &g_device.moved, &g_device.uniforms};
         static uint32_t seen[std::size(rings)] = {};
@@ -3781,7 +3825,7 @@ bool probe() {
         return false;
     }
     vkGetPhysicalDeviceProperties(g_vk.physical, &g_vk.properties);
-    if (g_vk.properties.apiVersion < VK_API_VERSION_1_3) {
+    if (g_vk.properties.apiVersion < VK_API_VERSION_1_3 && !std::getenv("WP_VK_ANY_VERSION")) {
         log::write("video", "Vulkan %u.%u is older than 1.3", VK_API_VERSION_MAJOR(g_vk.properties.apiVersion), VK_API_VERSION_MINOR(g_vk.properties.apiVersion));
         return false;
     }
@@ -4430,7 +4474,7 @@ void end_record() {
     }
     g_frame_vertices = 0;
     static const settings::LiveNumber fps("video.fps", "WP_FPS");
-    g_recording = g_vk.depth_copies && pacing::interpolation_wanted(static_cast<int>(fps()), g_display_hz);
+    g_recording = g_vk.depth_copies && pacing::interpolation_wanted(static_cast<int>(fps()), g_display_hz) && !g_between_paused;
     g_record_broken = false;
     release_held();
     for (size_t i = 0; i < 3; i++) {

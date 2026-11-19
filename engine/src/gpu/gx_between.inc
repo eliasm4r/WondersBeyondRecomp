@@ -895,7 +895,7 @@ void parallel_for(size_t count, const Body& body) {
     pool->done.wait(lock, [&] { return pool->working == 0; });
 }
 
-void match_by(uint64_t RecordedDraw::*key, bool trusted, std::vector<uint32_t>& partner, std::vector<uint8_t>& taken, std::vector<uint8_t>& kind,
+void match_by(uint64_t RecordedDraw::*key, std::vector<uint32_t>& partner, std::vector<uint8_t>& taken, std::vector<uint8_t>& kind,
               uint32_t& moved_too_far) {
     static std::vector<std::pair<uint32_t, uint32_t>> candidates;
     static std::vector<uint8_t> close;
@@ -954,7 +954,6 @@ void match_by(uint64_t RecordedDraw::*key, bool trusted, std::vector<uint32_t>& 
             continue;
         }
         candidates.emplace_back(static_cast<uint32_t>(d), p);
-        g_color_partner[d] = p;
     }
     close.assign(candidates.size(), 0);
     parallel_for(candidates.size(), [](size_t i) {
@@ -964,13 +963,14 @@ void match_by(uint64_t RecordedDraw::*key, bool trusted, std::vector<uint32_t>& 
         auto [d, p] = candidates[i];
         if (!close[i]) {
             moved_too_far++;
-            if (!trusted) {
-                partner[d] = kRejected;
-                continue;
-            }
+            partner[d] = kRejected;
+            continue;
         }
         partner[d] = p;
         taken[p] = 1;
+        if (kind[d] != kCountChanged) {
+            g_color_partner[d] = p;
+        }
     }
 }
 
@@ -1188,8 +1188,8 @@ void pair_frame() {
     uint32_t moved_too_far = 0;
     static std::vector<uint8_t> kind;
     kind.assign(g_record.draws.size(), kNoPair);
-    match_by(&RecordedDraw::exact, true, partner, taken, kind, moved_too_far);
-    match_by(&RecordedDraw::key, false, partner, taken, kind, moved_too_far);
+    match_by(&RecordedDraw::exact, partner, taken, kind, moved_too_far);
+    match_by(&RecordedDraw::key, partner, taken, kind, moved_too_far);
     find_cameras(partner, kind);
     adopt_run_camera();
     static bool forward[kMaxCameras];
