@@ -492,6 +492,25 @@ std::deque<Retired> g_retired;
 enum class Pass { None, Efb, Target, Screen };
 Pass g_pass = Pass::None;
 bool g_pass_depth = false;
+VkRect2D g_pass_box{};
+bool g_pass_whole = false;
+double g_efb_pixels = 0.0;
+double g_efb_touched = 0.0;
+
+void note_area(const VkRect2D& rect) {
+    if (rect.extent.width == 0 || rect.extent.height == 0) {
+        return;
+    }
+    if (g_pass_box.extent.width == 0) {
+        g_pass_box = rect;
+        return;
+    }
+    int32_t left = std::min(g_pass_box.offset.x, rect.offset.x);
+    int32_t top = std::min(g_pass_box.offset.y, rect.offset.y);
+    int32_t right = std::max(g_pass_box.offset.x + static_cast<int32_t>(g_pass_box.extent.width), rect.offset.x + static_cast<int32_t>(rect.extent.width));
+    int32_t bottom = std::max(g_pass_box.offset.y + static_cast<int32_t>(g_pass_box.extent.height), rect.offset.y + static_cast<int32_t>(rect.extent.height));
+    g_pass_box = {{left, top}, {static_cast<uint32_t>(right - left), static_cast<uint32_t>(bottom - top)}};
+}
 bool g_clear_color_pending = false;
 bool g_clear_depth_pending = false;
 VkClearColorValue g_clear_color{};
@@ -998,6 +1017,11 @@ uint64_t current_serial() {
 }
 
 void end_pass() {
+    if (g_pass == Pass::Efb) {
+        double whole = static_cast<double>(scaled(canvas_width())) * scaled(canvas_height());
+        g_efb_pixels += whole;
+        g_efb_touched += g_pass_whole ? whole : static_cast<double>(g_pass_box.extent.width) * g_pass_box.extent.height;
+    }
     if (g_pass != Pass::None) {
         vkCmdEndRenderPass(g_current->draw);
         if (g_current->timed && g_current->next_query + 2 <= kTimeQueries) {
@@ -2009,6 +2033,8 @@ void begin_efb(bool depth_used) {
                       static_cast<uint32_t>(scaled(canvas_height())), 2, values);
     g_pass = Pass::Efb;
     g_pass_depth = depth != 2;
+    g_pass_box = {};
+    g_pass_whole = g_clear_color_pending || g_clear_depth_pending;
     g_efb_passes++;
     if (g_clear_color_pending || g_clear_depth_pending) {
         g_cleared_passes++;
@@ -2917,6 +2943,7 @@ bool set_batch_state(const BatchState& pending, uint32_t uniform, int source) {
         return false;
     }
     vkCmdSetScissor(g_current->draw, 0, 1, &rect);
+    note_area(rect);
     VkDescriptorSet draw_set = g_device.draw_sets[source];
     if (g_bound_draw_set != draw_set || g_bound_uniform != uniform) {
         vkCmdBindDescriptorSets(g_current->draw, VK_PIPELINE_BIND_POINT_GRAPHICS, g_device.tev_layout, 0, 1, &draw_set, 1, &uniform);
@@ -3498,6 +3525,83 @@ void draw_image(const Image* image, const options::Rect& placed, bool blend) {
     vkCmdDraw(g_current->draw, 3, 1, 0, 0);
 }
 
+struct TouchCells {
+    static constexpr uint32_t kColumns = 24;
+    static constexpr uint32_t kRows = 12;
+    std::vector<options::Rect> spans;
+    uint32_t width = 0;
+    uint32_t height = 0;
+};
+
+TouchCells g_touch_cells;
+
+void find_touch_cells(const options::Image& image) {
+    TouchCells& cells = g_touch_cells;
+    cells.spans.clear();
+    cells.width = image.width;
+    cells.height = image.height;
+    if (image.width == 0 || image.height == 0) {
+        return;
+    }
+    for (uint32_t row = 0; row < TouchCells::kRows; row++) {
+        uint32_t top = image.height * row / TouchCells::kRows;
+        uint32_t bottom = image.height * (row + 1) / TouchCells::kRows;
+        int start = -1;
+        for (uint32_t column = 0; column <= TouchCells::kColumns; column++) {
+            bool used = false;
+            if (column < TouchCells::kColumns) {
+                uint32_t left = image.width * column / TouchCells::kColumns;
+                uint32_t right = image.width * (column + 1) / TouchCells::kColumns;
+                for (uint32_t y = top; y < bottom && !used; y++) {
+                    const uint32_t* line = image.pixels.data() + static_cast<size_t>(y) * image.width;
+                    for (uint32_t x = left; x < right; x++) {
+                        if ((line[x] >> 24) != 0) {
+                            used = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (used && start < 0) {
+                start = static_cast<int>(column);
+            } else if (!used && start >= 0) {
+                int left = static_cast<int>(image.width * static_cast<uint32_t>(start) / TouchCells::kColumns);
+                int right = static_cast<int>(image.width * column / TouchCells::kColumns);
+                cells.spans.push_back(options::Rect{left, static_cast<int>(top), right - left, static_cast<int>(bottom - top)});
+                start = -1;
+            }
+        }
+    }
+}
+
+void draw_touch_image(int client_width, int client_height) {
+    const Image* image = g_device.touch_image.image;
+    const TouchCells& cells = g_touch_cells;
+    if (!image || cells.width == 0 || cells.height == 0) {
+        return;
+    }
+    if (cells.spans.empty()) {
+        return;
+    }
+    VkDescriptorSet set = single_set(*image, g_device.linear);
+    VkPipeline pipeline = screen_pipeline(2, true);
+    if (!set || !pipeline) {
+        return;
+    }
+    set_viewport(0.0f, 0.0f, static_cast<float>(client_width), static_cast<float>(client_height));
+    bind_pipeline(pipeline);
+    vkCmdBindDescriptorSets(g_current->draw, VK_PIPELINE_BIND_POINT_GRAPHICS, g_device.single_pipeline_layout, 0, 1, &set, 0, nullptr);
+    for (const options::Rect& span : cells.spans) {
+        int left = static_cast<int>(static_cast<int64_t>(span.x) * client_width / cells.width);
+        int top = static_cast<int>(static_cast<int64_t>(span.y) * client_height / cells.height);
+        int right = static_cast<int>((static_cast<int64_t>(span.x + span.width) * client_width + cells.width - 1) / cells.width);
+        int bottom = static_cast<int>((static_cast<int64_t>(span.y + span.height) * client_height + cells.height - 1) / cells.height);
+        set_scissor(left, top, right - left, bottom - top);
+        vkCmdDraw(g_current->draw, 3, 1, 0, 0);
+    }
+    set_scissor(0, 0, client_width, client_height);
+}
+
 void take_overlays(int client_width, int client_height) {
     options::Image image;
     if (perf::take(g_device.hud_version, image, g_device.hud_visible, g_device.hud_corner) && !image.pixels.empty()) {
@@ -3513,6 +3617,7 @@ void take_overlays(int client_width, int client_height) {
     if (touch::take(g_device.touch_version, image, knob, g_device.touch_visible, client_width, client_height) && g_device.touch_visible && !image.pixels.empty()) {
         upload_overlay(g_device.touch_image, image);
         upload_overlay(g_device.knob_image, knob);
+        find_touch_cells(image);
     }
     if (g_device.touch_visible) {
         options::Image pressed;
@@ -3525,6 +3630,44 @@ void take_overlays(int client_width, int client_height) {
     if (titlebar::take(g_device.bar_version, image)) {
         upload_overlay(g_device.bar_image, image);
     }
+}
+
+uint64_t g_shown_signature = 0;
+
+uint64_t overlay_signature(int client_width, int client_height) {
+    uint64_t hash = 1469598103934665603ull;
+    auto mix = [&hash](uint64_t value) { hash = (hash ^ value) * 1099511628211ull; };
+    mix(g_device.hud_version);
+    mix(g_device.overlay_version);
+    mix(g_device.hint_version);
+    mix(g_device.touch_version);
+    mix(g_device.extras_version);
+    mix(g_device.bar_version);
+    mix((g_device.hud_visible ? 1u : 0u) | (g_device.overlay_visible ? 2u : 0u) | (g_device.hint_visible ? 4u : 0u) | (g_device.touch_visible ? 8u : 0u) |
+        (g_device.chain.stale ? 16u : 0u));
+    mix(reinterpret_cast<uint64_t>(g_device.chain.swapchain));
+    mix(static_cast<uint64_t>(client_width) << 32 | static_cast<uint32_t>(client_height));
+    if (g_device.touch_visible) {
+        options::Rect knob = touch::knob_rect(client_height);
+        mix(static_cast<uint64_t>(static_cast<uint32_t>(knob.x)) << 32 | static_cast<uint32_t>(knob.y));
+        static std::vector<options::Rect> pressed;
+        touch::pressed_rects(pressed);
+        for (const options::Rect& rect : pressed) {
+            mix(static_cast<uint64_t>(static_cast<uint32_t>(rect.x)) << 32 | static_cast<uint32_t>(rect.y));
+            mix(static_cast<uint64_t>(static_cast<uint32_t>(rect.width)) << 32 | static_cast<uint32_t>(rect.height));
+        }
+    }
+    return hash;
+}
+
+bool overlays_unchanged(SDL_Window* window) {
+    int client_width = 0;
+    int client_height = 0;
+    if (!SDL_GetWindowSizeInPixels(window, &client_width, &client_height) || client_width <= 0 || client_height <= 0) {
+        return false;
+    }
+    take_overlays(client_width, client_height);
+    return g_shown_signature != 0 && overlay_signature(client_width, client_height) == g_shown_signature;
 }
 
 void draw_overlay(int client_width, int client_height, int bar) {
@@ -3540,7 +3683,7 @@ void draw_overlay(int client_width, int client_height, int bar) {
         draw_image(g_device.hint_image.image, placed, true);
     }
     if (g_device.touch_visible && !g_device.overlay_visible) {
-        draw_image(g_device.touch_image.image, options::Rect{0, 0, client_width, client_height}, true);
+        draw_touch_image(client_width, client_height);
         draw_image(g_device.base_image.image, touch::base_rect(client_height), true);
         static std::vector<options::Rect> pressed_rects;
         touch::pressed_rects(pressed_rects);
@@ -3804,6 +3947,11 @@ void report_frame_figures() {
     }
     log::write("video", "Vulkan: %.1f EFB passes per frame, %.1f started by a clear, %.1f submissions, scale %d", g_efb_passes / frames, g_cleared_passes / frames,
                g_submits / frames, g_scale);
+    if (g_efb_pixels > 0.0) {
+        log::write("video", "Vulkan EFB passes draw in %.0f%% of the picture they load and store", 100.0 * g_efb_touched / g_efb_pixels);
+    }
+    g_efb_pixels = 0.0;
+    g_efb_touched = 0.0;
     log::write("video", "Vulkan GPU busy %.0f ms a second: EFB %.0f ms in %u passes, copies %.0f ms in %u, screen %.0f ms in %u", g_gpu_time * 1000.0,
                g_pass_time[1] * 1000.0, g_pass_count[1], g_pass_time[2] * 1000.0, g_pass_count[2], g_pass_time[3] * 1000.0, g_pass_count[3]);
     if (g_gpu_time > 0.0) {
@@ -4429,6 +4577,7 @@ void run_clear(const ClearCommand& command) {
     VkClearRect rect{};
     rect.rect = {{scaled(x), scaled(y)}, {static_cast<uint32_t>(scaled(x + width) - scaled(x)), static_cast<uint32_t>(scaled(y + height) - scaled(y))}};
     rect.layerCount = 1;
+    note_area(rect.rect);
     if (color_enable == alpha_enable) {
         VkClearAttachment attachments[2]{};
         uint32_t count = 0;
@@ -4820,6 +4969,7 @@ bool present_image(SDL_Window* window, double aspect, Image* image) {
         vkCmdDraw(g_current->draw, 3, 1, 0, 0);
     }
     draw_overlay(client_width, client_height, bar);
+    g_shown_signature = overlay_signature(client_width, client_height);
     submit(acquired, chain.rendered[index]);
     auto present_start = std::chrono::steady_clock::now();
     queue_present(chain.swapchain, chain.rendered[index], index);
@@ -5256,7 +5406,9 @@ bool present_frame(void* window_handle, double aspect) {
     queued_frame = g_frame;
     bool presented = true;
     if (g_interpolated_ready == 0 && g_show_queue.empty()) {
-        if (fresh || !g_recording || gx::veil_moving()) {
+        static const char* const repeat_setting = std::getenv("WP_VK_REPEAT_PRESENTS");
+        static const bool repeat = repeat_setting && std::atoi(repeat_setting) != 0;
+        if (fresh || gx::veil_moving() || (!g_recording && (repeat || !overlays_unchanged(window)))) {
             presented = present_image(window, aspect, g_device.frame.image);
             g_last_shown = std::chrono::steady_clock::now();
         }

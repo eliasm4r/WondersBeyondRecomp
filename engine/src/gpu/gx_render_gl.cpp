@@ -3288,6 +3288,72 @@ void draw_image(GLuint texture, const options::Rect& placed, int client_height) 
     gl.Disable(GL_BLEND);
 }
 
+struct TouchCells {
+    static constexpr uint32_t kColumns = 24;
+    static constexpr uint32_t kRows = 12;
+    std::vector<options::Rect> spans;
+    uint32_t width = 0;
+    uint32_t height = 0;
+};
+
+TouchCells g_touch_cells;
+
+void find_touch_cells(const options::Image& image) {
+    TouchCells& cells = g_touch_cells;
+    cells.spans.clear();
+    cells.width = image.width;
+    cells.height = image.height;
+    if (image.width == 0 || image.height == 0) {
+        return;
+    }
+    for (uint32_t row = 0; row < TouchCells::kRows; row++) {
+        uint32_t top = image.height * row / TouchCells::kRows;
+        uint32_t bottom = image.height * (row + 1) / TouchCells::kRows;
+        int start = -1;
+        for (uint32_t column = 0; column <= TouchCells::kColumns; column++) {
+            bool used = false;
+            if (column < TouchCells::kColumns) {
+                uint32_t left = image.width * column / TouchCells::kColumns;
+                uint32_t right = image.width * (column + 1) / TouchCells::kColumns;
+                for (uint32_t y = top; y < bottom && !used; y++) {
+                    const uint32_t* line = image.pixels.data() + static_cast<size_t>(y) * image.width;
+                    for (uint32_t x = left; x < right; x++) {
+                        if ((line[x] >> 24) != 0) {
+                            used = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (used && start < 0) {
+                start = static_cast<int>(column);
+            } else if (!used && start >= 0) {
+                int left = static_cast<int>(image.width * static_cast<uint32_t>(start) / TouchCells::kColumns);
+                int right = static_cast<int>(image.width * column / TouchCells::kColumns);
+                cells.spans.push_back(options::Rect{left, static_cast<int>(top), right - left, static_cast<int>(bottom - top)});
+                start = -1;
+            }
+        }
+    }
+}
+
+void draw_touch_image(int client_width, int client_height) {
+    const TouchCells& cells = g_touch_cells;
+    if (!g_device.touch_texture || cells.width == 0 || cells.height == 0 || cells.spans.empty()) {
+        return;
+    }
+    gl.Enable(GL_SCISSOR_TEST);
+    for (const options::Rect& span : cells.spans) {
+        int left = static_cast<int>(static_cast<int64_t>(span.x) * client_width / cells.width);
+        int top = static_cast<int>(static_cast<int64_t>(span.y) * client_height / cells.height);
+        int right = static_cast<int>((static_cast<int64_t>(span.x + span.width) * client_width + cells.width - 1) / cells.width);
+        int bottom = static_cast<int>((static_cast<int64_t>(span.y + span.height) * client_height + cells.height - 1) / cells.height);
+        gl.Scissor(left, client_height - bottom, right - left, bottom - top);
+        draw_image(g_device.touch_texture, options::Rect{0, 0, client_width, client_height}, client_height);
+    }
+    gl.Disable(GL_SCISSOR_TEST);
+}
+
 void draw_overlay(int client_width, int client_height, int bar) {
     options::Image image;
     if (perf::take(g_device.hud_version, image, g_device.hud_visible, g_device.hud_corner) && !image.pixels.empty()) {
@@ -3313,6 +3379,7 @@ void draw_overlay(int client_width, int client_height, int bar) {
     if (touch::take(g_device.touch_version, image, knob, g_device.touch_visible, client_width, client_height) && g_device.touch_visible && !image.pixels.empty()) {
         upload_image(g_device.touch_texture, g_device.touch_width, g_device.touch_height, image);
         upload_image(g_device.knob_texture, g_device.knob_width, g_device.knob_height, knob);
+        find_touch_cells(image);
     }
     if (g_device.touch_visible && !g_device.overlay_visible) {
         options::Image pressed;
@@ -3321,7 +3388,7 @@ void draw_overlay(int client_width, int client_height, int bar) {
             upload_image(g_device.pressed_texture, g_device.pressed_width, g_device.pressed_height, pressed);
             upload_image(g_device.base_texture, g_device.base_width, g_device.base_height, base);
         }
-        draw_image(g_device.touch_texture, options::Rect{0, 0, client_width, client_height}, client_height);
+        draw_touch_image(client_width, client_height);
         draw_image(g_device.base_texture, touch::base_rect(client_height), client_height);
         static std::vector<options::Rect> pressed_rects;
         touch::pressed_rects(pressed_rects);
