@@ -141,6 +141,7 @@ struct Context {
     bool load_none = false;
     bool anisotropy = false;
     bool depth_copies = false;
+    bool high_priority = false;
     VkDeviceSize uniform_alignment = 256;
     VkDeviceSize storage_alignment = 256;
 };
@@ -265,6 +266,7 @@ struct Submission {
     bool uploads = false;
     std::vector<VkDescriptorPool> pools;
     size_t pool_used = 0;
+    uint32_t pool_sets = 0;
     std::unordered_map<uint64_t, VkDescriptorSet> map_sets;
 };
 
@@ -284,6 +286,10 @@ struct Swapchain {
     uint32_t next_acquire = 0;
     bool stale = false;
     bool vsync = false;
+    uint32_t turns = 0;
+    uint32_t logical_width = 0;
+    uint32_t logical_height = 0;
+    VkSurfaceTransformFlagBitsKHR seen_transform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
 };
 
 struct Device {
@@ -678,8 +684,15 @@ bool make_buffer(Buffer& buffer, VkDeviceSize size, VkBufferUsageFlags usage, bo
     allocate.allocationSize = needs.size;
     allocate.memoryTypeIndex = static_cast<uint32_t>(type);
     void* mapped = nullptr;
-    if (vkAllocateMemory(device(), &allocate, nullptr, &buffer.memory) != VK_SUCCESS ||
-        vkBindBufferMemory(device(), buffer.buffer, buffer.memory, 0) != VK_SUCCESS ||
+    if (vkAllocateMemory(device(), &allocate, nullptr, &buffer.memory) != VK_SUCCESS) {
+        buffer.memory = VK_NULL_HANDLE;
+        int plain = memory_type(needs.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 0);
+        allocate.memoryTypeIndex = static_cast<uint32_t>(plain);
+        if (plain < 0 || plain == type || vkAllocateMemory(device(), &allocate, nullptr, &buffer.memory) != VK_SUCCESS) {
+            buffer.memory = VK_NULL_HANDLE;
+        }
+    }
+    if (!buffer.memory || vkBindBufferMemory(device(), buffer.buffer, buffer.memory, 0) != VK_SUCCESS ||
         vkMapMemory(device(), buffer.memory, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS) {
         if (buffer.memory) {
             vkFreeMemory(device(), buffer.memory, nullptr);
@@ -837,10 +850,11 @@ void transition(VkCommandBuffer command, Image& image, VkImageLayout to) {
 
 void reset_submission(Submission& submission) {
     vkResetCommandPool(device(), submission.pool, 0);
-    for (size_t i = 0; i < submission.pool_used && i < submission.pools.size(); i++) {
-        vkResetDescriptorPool(device(), submission.pools[i], 0);
+    if (!submission.pools.empty()) {
+        vkResetDescriptorPool(device(), submission.pools[0], 0);
     }
     submission.pool_used = 0;
+    submission.pool_sets = 0;
     submission.map_sets.clear();
     submission.uploads = false;
 }
@@ -1175,6 +1189,13 @@ VkDescriptorSet allocate_set(VkDescriptorSetLayout layout) {
     ensure_command();
     Submission& submission = *g_current;
     while (true) {
+        if (submission.pool_sets >= kSetsPerPool) {
+            submission.pool_used++;
+            submission.pool_sets = 0;
+            if (submission.pool_used < submission.pools.size()) {
+                vkResetDescriptorPool(device(), submission.pools[submission.pool_used], 0);
+            }
+        }
         if (submission.pool_used == submission.pools.size()) {
             VkDescriptorPool pool = make_descriptor_pool(kSetsPerPool, false);
             if (!pool) {
@@ -1189,15 +1210,13 @@ VkDescriptorSet allocate_set(VkDescriptorSetLayout layout) {
         VkDescriptorSet set = VK_NULL_HANDLE;
         VkResult result = vkAllocateDescriptorSets(device(), &info, &set);
         if (result == VK_SUCCESS) {
+            submission.pool_sets++;
             return set;
         }
         if (result != VK_ERROR_OUT_OF_POOL_MEMORY && result != VK_ERROR_FRAGMENTED_POOL) {
             return VK_NULL_HANDLE;
         }
-        submission.pool_used++;
-        if (submission.pool_used < submission.pools.size()) {
-            vkResetDescriptorPool(device(), submission.pools[submission.pool_used], 0);
-        }
+        submission.pool_sets = kSetsPerPool;
     }
 }
 
@@ -1454,6 +1473,7 @@ struct PipelineShape {
     VkShaderModule vertex = VK_NULL_HANDLE;
     VkShaderModule fragment = VK_NULL_HANDLE;
     const VkSpecializationInfo* specialization = nullptr;
+    const VkSpecializationInfo* vertex_specialization = nullptr;
     VkPipelineLayout layout = VK_NULL_HANDLE;
     VkRenderPass pass = VK_NULL_HANDLE;
     VkPipelineColorBlendAttachmentState blend{};
@@ -1470,6 +1490,7 @@ VkPipeline build_pipeline(const PipelineShape& shape) {
     stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
     stages[0].module = shape.vertex;
     stages[0].pName = "main";
+    stages[0].pSpecializationInfo = shape.vertex_specialization;
     stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
     stages[1].module = shape.fragment;
@@ -1860,13 +1881,17 @@ VkPipeline clear_pipeline(bool color, bool alpha, bool depth) {
 }
 
 VkPipeline screen_pipeline(int which, bool blend) {
-    uint64_t key = (static_cast<uint64_t>(which) << 1) | (blend ? 1u : 0u) | (static_cast<uint64_t>(g_device.chain.format) << 8);
+    uint32_t turns = g_device.chain.turns;
+    uint64_t key = (static_cast<uint64_t>(which) << 1) | (blend ? 1u : 0u) | (static_cast<uint64_t>(turns) << 4) | (static_cast<uint64_t>(g_device.chain.format) << 8);
     auto found = g_device.screen_pipelines.find(key);
     if (found != g_device.screen_pipelines.end()) {
         return found->second;
     }
+    VkSpecializationMapEntry turn_entry{0, 0, sizeof(uint32_t)};
+    VkSpecializationInfo turned{1, &turn_entry, sizeof(uint32_t), &turns};
     PipelineShape shape;
     shape.vertex = g_device.fullscreen_vertex;
+    shape.vertex_specialization = &turned;
     shape.fragment = which == 0 ? g_device.present_fragment : (which == 1 ? g_device.present_smooth_fragment : g_device.overlay_fragment);
     shape.layout = g_device.single_pipeline_layout;
     shape.pass = g_device.chain.pass;
@@ -1903,12 +1928,45 @@ void begin_render_pass(VkRenderPass pass, VkFramebuffer framebuffer, uint32_t wi
     vkCmdBeginRenderPass(g_current->draw, &begin, VK_SUBPASS_CONTENTS_INLINE);
 }
 
+void turn_to_screen(float& x, float& y, float& width, float& height) {
+    const Swapchain& chain = g_device.chain;
+    if (g_pass != Pass::Screen || chain.turns == 0) {
+        return;
+    }
+    float across = static_cast<float>(chain.width);
+    float down = static_cast<float>(chain.height);
+    float turned_x = y;
+    float turned_y = down - width - x;
+    if (chain.turns == 1) {
+        turned_x = across - height - y;
+        turned_y = x;
+    } else if (chain.turns == 2) {
+        turned_x = across - width - x;
+        turned_y = down - height - y;
+    }
+    if (chain.turns != 2) {
+        std::swap(width, height);
+    }
+    x = turned_x;
+    y = turned_y;
+}
+
 void set_viewport(float x, float y, float width, float height) {
+    turn_to_screen(x, y, width, height);
     VkViewport viewport{x, y, width, height, 0.0f, 1.0f};
     vkCmdSetViewport(g_current->draw, 0, 1, &viewport);
 }
 
 void set_scissor(int x, int y, int width, int height) {
+    float turned_x = static_cast<float>(x);
+    float turned_y = static_cast<float>(y);
+    float turned_width = static_cast<float>(width);
+    float turned_height = static_cast<float>(height);
+    turn_to_screen(turned_x, turned_y, turned_width, turned_height);
+    x = static_cast<int>(turned_x);
+    y = static_cast<int>(turned_y);
+    width = static_cast<int>(turned_width);
+    height = static_cast<int>(turned_height);
     VkRect2D rect{{std::max(x, 0), std::max(y, 0)}, {static_cast<uint32_t>(std::max(width, 0)), static_cast<uint32_t>(std::max(height, 0))}};
     vkCmdSetScissor(g_current->draw, 0, 1, &rect);
 }
@@ -2261,10 +2319,10 @@ bool initialize() {
         return false;
     }
     std::fprintf(stderr, "Vulkan renderer: %s\n", g_vk.properties.deviceName);
-    log::write("video", "Vulkan renderer: %s, Vulkan %u.%u.%u, driver %u, depth format %d, dual-source blending %s, depth clamp %s, load/store none %s, in-between images %s",
+    log::write("video", "Vulkan renderer: %s, Vulkan %u.%u.%u, driver %u, depth format %d, dual-source blending %s, depth clamp %s, load/store none %s, in-between images %s, queue priority %s",
                g_vk.properties.deviceName, VK_VERSION_MAJOR(g_vk.properties.apiVersion), VK_VERSION_MINOR(g_vk.properties.apiVersion),
                VK_VERSION_PATCH(g_vk.properties.apiVersion), g_vk.properties.driverVersion, static_cast<int>(g_vk.depth_format), g_vk.dual_source ? "yes" : "no",
-               g_vk.depth_clamp ? "yes" : "no", g_vk.load_none ? "yes" : "no", g_vk.depth_copies ? "yes" : "no");
+               g_vk.depth_clamp ? "yes" : "no", g_vk.load_none ? "yes" : "no", g_vk.depth_copies ? "yes" : "no", g_vk.high_priority ? "high" : "normal");
     log::write("video", "the graphics card places the vertices");
     prepare_texture_pack();
     start_workers();
@@ -3514,6 +3572,7 @@ void drop_surface() {
     if (!chain.surface && !chain.swapchain) {
         return;
     }
+    drain_presents();
     wait_idle();
     vkDeviceWaitIdle(device());
     drop_swapchain_images();
@@ -3527,6 +3586,8 @@ void drop_surface() {
     }
     chain.width = 0;
     chain.height = 0;
+    chain.logical_width = 0;
+    chain.logical_height = 0;
 }
 
 VkPresentModeKHR wanted_present_mode(bool vsync) {
@@ -3551,7 +3612,8 @@ bool ensure_swapchain(SDL_Window* window, int width, int height) {
     Swapchain& chain = g_device.chain;
     static const settings::LiveFlag vsync("video.vsync", "WP_VSYNC");
     bool synced = vsync();
-    if (chain.swapchain && !chain.stale && chain.width == static_cast<uint32_t>(width) && chain.height == static_cast<uint32_t>(height) && chain.vsync == synced) {
+    if (chain.swapchain && !chain.stale && chain.logical_width == static_cast<uint32_t>(width) && chain.logical_height == static_cast<uint32_t>(height) &&
+        chain.vsync == synced) {
         return true;
     }
     if (!chain.surface) {
@@ -3567,6 +3629,7 @@ bool ensure_swapchain(SDL_Window* window, int width, int height) {
             return false;
         }
     }
+    drain_presents();
     wait_idle();
     vkDeviceWaitIdle(device());
     VkSurfaceCapabilitiesKHR caps{};
@@ -3596,9 +3659,37 @@ bool ensure_swapchain(SDL_Window* window, int width, int height) {
     info.minImageCount = count;
     info.imageFormat = chosen.format;
     info.imageColorSpace = chosen.colorSpace;
+    uint32_t turns = 0;
 #ifdef __ANDROID__
-    info.imageExtent = {static_cast<uint32_t>(width), static_cast<uint32_t>(height)};
     info.preTransform = (caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) ? VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR : caps.currentTransform;
+    static const char* const turn_setting = std::getenv("WP_VK_PRE_ROTATE");
+    bool pre_rotate = !turn_setting || std::atoi(turn_setting) != 0;
+    if (pre_rotate && (caps.supportedTransforms & caps.currentTransform)) {
+        switch (caps.currentTransform) {
+        case VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR:
+            info.preTransform = caps.currentTransform;
+            break;
+        case VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR:
+            info.preTransform = caps.currentTransform;
+            turns = 1;
+            break;
+        case VK_SURFACE_TRANSFORM_ROTATE_180_BIT_KHR:
+            info.preTransform = caps.currentTransform;
+            turns = 2;
+            break;
+        case VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR:
+            info.preTransform = caps.currentTransform;
+            turns = 3;
+            break;
+        default:
+            break;
+        }
+    }
+    if (turns % 2 == 1) {
+        info.imageExtent = {static_cast<uint32_t>(height), static_cast<uint32_t>(width)};
+    } else {
+        info.imageExtent = {static_cast<uint32_t>(width), static_cast<uint32_t>(height)};
+    }
 #else
     info.imageExtent = caps.currentExtent.width != 0xFFFFFFFFu ? caps.currentExtent : VkExtent2D{static_cast<uint32_t>(width), static_cast<uint32_t>(height)};
     info.preTransform = caps.currentTransform;
@@ -3674,11 +3765,15 @@ bool ensure_swapchain(SDL_Window* window, int width, int height) {
     chain.next_acquire = 0;
     chain.width = info.imageExtent.width;
     chain.height = info.imageExtent.height;
+    chain.logical_width = static_cast<uint32_t>(width);
+    chain.logical_height = static_cast<uint32_t>(height);
+    chain.turns = turns;
+    chain.seen_transform = caps.currentTransform;
     chain.mode = info.presentMode;
     chain.vsync = synced;
     chain.stale = false;
-    log::write("video", "Vulkan swapchain %ux%u, %u images, present mode %d, transform %u", chain.width, chain.height, image_count,
-               static_cast<int>(chain.mode), static_cast<unsigned>(caps.currentTransform));
+    log::write("video", "Vulkan swapchain %ux%u, %u images, present mode %d, screen transform %u, picture turned by %u quarter turns", chain.width, chain.height,
+               image_count, static_cast<int>(chain.mode), static_cast<unsigned>(caps.currentTransform), turns);
     return true;
 }
 
@@ -3771,6 +3866,36 @@ bool interpolating() {
     return g_recording;
 }
 
+VKAPI_ATTR VkBool32 VKAPI_CALL report_check(VkDebugUtilsMessageSeverityFlagBitsEXT, VkDebugUtilsMessageTypeFlagsEXT, const VkDebugUtilsMessengerCallbackDataEXT* data,
+                                           void*) {
+    static std::mutex lock;
+    static std::unordered_map<int32_t, uint32_t> seen;
+    std::lock_guard<std::mutex> hold(lock);
+    uint32_t count = ++seen[data->messageIdNumber];
+    if (count > 3 && (count & (count - 1)) != 0) {
+        return VK_FALSE;
+    }
+    std::string text = data->pMessage ? data->pMessage : "";
+    log::write("video", "Vulkan check %s seen %u times", data->pMessageIdName ? data->pMessageIdName : "?", count);
+    for (size_t at = 0; at < text.size() && at < 4000; at += 480) {
+        log::write("video", "  %s", text.substr(at, 480).c_str());
+    }
+    return VK_FALSE;
+}
+
+bool has_layer(const char* name) {
+    uint32_t count = 0;
+    vkEnumerateInstanceLayerProperties(&count, nullptr);
+    std::vector<VkLayerProperties> layers(count);
+    vkEnumerateInstanceLayerProperties(&count, layers.data());
+    for (const VkLayerProperties& layer : layers) {
+        if (std::strcmp(layer.layerName, name) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool probe() {
     if (g_vk.probed) {
         return g_vk.usable;
@@ -3792,12 +3917,40 @@ bool probe() {
     application.apiVersion = VK_API_VERSION_1_0;
     VkInstanceCreateInfo instance{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     instance.pApplicationInfo = &application;
-    instance.enabledExtensionCount = extension_count;
-    instance.ppEnabledExtensionNames = extensions;
+    std::vector<const char*> instance_extensions(extensions, extensions + extension_count);
+    const char* checker = "VK_LAYER_KHRONOS_validation";
+    VkValidationFeatureEnableEXT checks[] = {VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT};
+    VkValidationFeaturesEXT check_features{VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT};
+    const char* validate = std::getenv("WP_VK_VALIDATE");
+    bool checking = validate && has_layer(checker);
+    if (checking) {
+        instance.enabledLayerCount = 1;
+        instance.ppEnabledLayerNames = &checker;
+        instance_extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+        if (std::atoi(validate) != 2) {
+            check_features.enabledValidationFeatureCount = 1;
+            check_features.pEnabledValidationFeatures = checks;
+            instance.pNext = &check_features;
+        }
+    } else if (validate) {
+        log::write("video", "Vulkan checks asked for but the checking layer is missing");
+    }
+    instance.enabledExtensionCount = static_cast<uint32_t>(instance_extensions.size());
+    instance.ppEnabledExtensionNames = instance_extensions.data();
     VkResult result = vkCreateInstance(&instance, nullptr, &g_vk.instance);
     if (result != VK_SUCCESS) {
         log::write("video", "Vulkan refused to start (%d)", static_cast<int>(result));
         return false;
+    }
+    if (checking) {
+        auto create = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(vkGetInstanceProcAddr(g_vk.instance, "vkCreateDebugUtilsMessengerEXT"));
+        VkDebugUtilsMessengerCreateInfoEXT messenger{VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
+        messenger.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+        messenger.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT;
+        messenger.pfnUserCallback = report_check;
+        VkDebugUtilsMessengerEXT handle = VK_NULL_HANDLE;
+        bool made = create && create(g_vk.instance, &messenger, nullptr, &handle) == VK_SUCCESS;
+        log::write("video", "Vulkan checks %s%s", made ? "on" : "could not start", std::atoi(validate) != 2 ? ", with synchronization" : "");
     }
     uint32_t count = 0;
     vkEnumeratePhysicalDevices(g_vk.instance, &count, nullptr);
@@ -3880,6 +4033,21 @@ bool probe() {
     queue.queueFamilyIndex = g_vk.family;
     queue.queueCount = 1;
     queue.pQueuePriorities = &priority;
+    VkDeviceQueueGlobalPriorityCreateInfoEXT raised{VK_STRUCTURE_TYPE_DEVICE_QUEUE_GLOBAL_PRIORITY_CREATE_INFO_EXT};
+    raised.globalPriority = VK_QUEUE_GLOBAL_PRIORITY_HIGH_EXT;
+    static const char* const priority_setting = std::getenv("WP_VK_HIGH_PRIORITY");
+    const char* priority_extension = nullptr;
+    if (!priority_setting || std::atoi(priority_setting) != 0) {
+        if (has_extension(device_extensions, "VK_KHR_global_priority")) {
+            priority_extension = "VK_KHR_global_priority";
+        } else if (has_extension(device_extensions, VK_EXT_GLOBAL_PRIORITY_EXTENSION_NAME)) {
+            priority_extension = VK_EXT_GLOBAL_PRIORITY_EXTENSION_NAME;
+        }
+    }
+    if (priority_extension) {
+        enabled.push_back(priority_extension);
+        queue.pNext = &raised;
+    }
     VkDeviceCreateInfo info{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     info.queueCreateInfoCount = 1;
     info.pQueueCreateInfos = &queue;
@@ -3887,6 +4055,15 @@ bool probe() {
     info.ppEnabledExtensionNames = enabled.data();
     info.pEnabledFeatures = &wanted;
     result = vkCreateDevice(g_vk.physical, &info, nullptr, &g_vk.device);
+    if (result != VK_SUCCESS && priority_extension) {
+        log::write("video", "Vulkan refused the high queue priority (%d), the normal one is used", static_cast<int>(result));
+        enabled.pop_back();
+        queue.pNext = nullptr;
+        priority_extension = nullptr;
+        info.enabledExtensionCount = static_cast<uint32_t>(enabled.size());
+        result = vkCreateDevice(g_vk.physical, &info, nullptr, &g_vk.device);
+    }
+    g_vk.high_priority = priority_extension != nullptr;
     if (result != VK_SUCCESS) {
         log::write("video", "the Vulkan graphics card refused to start (%d)", static_cast<int>(result));
         return false;
@@ -4536,6 +4713,20 @@ bool queue_image(const Target& source, std::chrono::steady_clock::time_point due
     return true;
 }
 
+void check_turn(bool suboptimal) {
+    Swapchain& chain = g_device.chain;
+    static auto checked = std::chrono::steady_clock::time_point{};
+    auto now = std::chrono::steady_clock::now();
+    if (!chain.swapchain || chain.stale || now - checked < std::chrono::milliseconds(suboptimal ? 250 : 1000)) {
+        return;
+    }
+    checked = now;
+    VkSurfaceCapabilitiesKHR caps{};
+    if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(g_vk.physical, chain.surface, &caps) == VK_SUCCESS && caps.currentTransform != chain.seen_transform) {
+        chain.stale = true;
+    }
+}
+
 bool present_image(SDL_Window* window, double aspect, Image* image) {
     int client_width = 0;
     int client_height = 0;
@@ -4571,13 +4762,16 @@ bool present_image(SDL_Window* window, double aspect, Image* image) {
     if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
         return false;
     }
+#ifdef __ANDROID__
+    check_turn(result == VK_SUBOPTIMAL_KHR);
+#endif
     chain.next_acquire = (chain.next_acquire + 1) % static_cast<uint32_t>(chain.acquired.size());
     ensure_command();
     VkClearValue black{};
     black.color = {{0.0f, 0.0f, 0.0f, 1.0f}};
     begin_render_pass(chain.pass, chain.framebuffers[index], chain.width, chain.height, 1, &black);
     g_pass = Pass::Screen;
-    set_scissor(0, 0, static_cast<int>(chain.width), static_cast<int>(chain.height));
+    set_scissor(0, 0, client_width, client_height);
     int bar = titlebar::height(window);
     int area = std::max(1, client_height - bar);
     g_picture_aspect = aspect;
@@ -4624,6 +4818,11 @@ bool present_image(SDL_Window* window, double aspect, Image* image) {
     } else if (shown == VK_ERROR_SURFACE_LOST_KHR) {
         drop_surface();
     }
+#ifdef __ANDROID__
+    if (shown == VK_SUBOPTIMAL_KHR) {
+        check_turn(true);
+    }
+#endif
     return shown == VK_SUCCESS || shown == VK_SUBOPTIMAL_KHR;
 }
 
@@ -4644,6 +4843,117 @@ void service_deferred() {
     }
     g_last_shown = now - image.due < std::chrono::duration<double>(g_slot) ? image.due : now;
     g_show_queue.erase(g_show_queue.begin(), g_show_queue.begin() + static_cast<std::ptrdiff_t>(ready));
+}
+
+struct FlashMeter {
+    static constexpr uint32_t kColumns = 64;
+    static constexpr uint32_t kRows = 36;
+    static constexpr uint32_t kSlots = 4;
+    struct Slot {
+        Buffer buffer;
+        uint64_t serial = 0;
+    };
+    Image* small = nullptr;
+    Slot slots[kSlots];
+    uint32_t oldest = 0;
+    uint32_t busy = 0;
+    bool gap = true;
+    uint32_t filled = 0;
+    std::vector<int> history[3];
+    uint32_t measured = 0;
+    uint32_t flashes = 0;
+    uint32_t darker = 0;
+    uint32_t largest = 0;
+    std::chrono::steady_clock::time_point logged = std::chrono::steady_clock::now();
+};
+
+FlashMeter g_meter;
+
+void collect_flashes() {
+    FlashMeter& meter = g_meter;
+    while (meter.busy > 0 && serial_done(meter.slots[meter.oldest].serial)) {
+        const uint8_t* pixels = meter.slots[meter.oldest].buffer.mapped;
+        std::vector<int> luma(FlashMeter::kColumns * FlashMeter::kRows);
+        for (size_t i = 0; i < luma.size(); i++) {
+            luma[i] = (pixels[i * 4] * 54 + pixels[i * 4 + 1] * 183 + pixels[i * 4 + 2] * 19) >> 8;
+        }
+        meter.oldest = (meter.oldest + 1) % FlashMeter::kSlots;
+        meter.busy--;
+        if (meter.gap) {
+            meter.filled = 0;
+            meter.gap = false;
+        }
+        meter.history[0].swap(meter.history[1]);
+        meter.history[1].swap(meter.history[2]);
+        meter.history[2] = std::move(luma);
+        meter.filled = std::min(meter.filled + 1, 3u);
+        meter.measured++;
+        if (meter.filled < 3) {
+            continue;
+        }
+        uint32_t spikes = 0;
+        uint32_t dark = 0;
+        for (size_t i = 0; i < meter.history[1].size(); i++) {
+            int before = meter.history[0][i];
+            int middle = meter.history[1][i];
+            int after = meter.history[2][i];
+            if (std::abs(middle - before) > 40 && std::abs(middle - after) > 40 && std::abs(before - after) < 20) {
+                spikes++;
+                dark += middle < before ? 1 : 0;
+            }
+        }
+        if (spikes >= 6) {
+            meter.flashes++;
+            meter.darker += dark * 2 > spikes ? 1 : 0;
+            meter.largest = std::max(meter.largest, spikes);
+        }
+    }
+    auto now = std::chrono::steady_clock::now();
+    if (now - meter.logged >= std::chrono::seconds(1) && meter.measured > 0) {
+        log::write("video", "flash meter: %u frames, %u with a one-frame flash (%u darker), largest %u of %u cells", meter.measured, meter.flashes, meter.darker,
+                   meter.largest, FlashMeter::kColumns * FlashMeter::kRows);
+        meter.measured = 0;
+        meter.flashes = 0;
+        meter.darker = 0;
+        meter.largest = 0;
+        meter.logged = now;
+    }
+}
+
+void measure_flashes(Image& frame, uint32_t width, uint32_t height) {
+    static const bool wanted = std::getenv("WP_VK_FLASH_METER") != nullptr;
+    if (!wanted) {
+        return;
+    }
+    FlashMeter& meter = g_meter;
+    collect_flashes();
+    if (meter.busy == FlashMeter::kSlots) {
+        meter.gap = true;
+        return;
+    }
+    if (!meter.small) {
+        meter.small = make_image(FlashMeter::kColumns, FlashMeter::kRows, 1, kColorFormat, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+        if (!meter.small) {
+            return;
+        }
+    }
+    FlashMeter::Slot& slot = meter.slots[(meter.oldest + meter.busy) % FlashMeter::kSlots];
+    if (!slot.buffer.buffer && !make_buffer(slot.buffer, FlashMeter::kColumns * FlashMeter::kRows * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true)) {
+        return;
+    }
+    end_pass();
+    VkCommandBuffer cb = command();
+    transition(cb, frame, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    transition(cb, *meter.small, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    VkImageBlit blit{};
+    blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    blit.srcOffsets[1] = {static_cast<int32_t>(width), static_cast<int32_t>(height), 1};
+    blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    blit.dstOffsets[1] = {static_cast<int32_t>(FlashMeter::kColumns), static_cast<int32_t>(FlashMeter::kRows), 1};
+    vkCmdBlitImage(cb, frame.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, meter.small->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+    read_back(*meter.small, FlashMeter::kColumns, FlashMeter::kRows, slot.buffer.buffer);
+    slot.serial = current_serial();
+    meter.busy++;
 }
 
 bool copy_frame(int& x, int& y, int& width, int& height, bool depth, const CopyFilter& filter) {
@@ -4684,7 +4994,26 @@ bool copy_frame(int& x, int& y, int& width, int& height, bool depth, const CopyF
             return false;
         }
     }
-    return run_copy(g_device.frame, physical_width, physical_height, x, y, width, height, kXfbFormat, false, false, depth, filter);
+    bool copied = run_copy(g_device.frame, physical_width, physical_height, x, y, width, height, kXfbFormat, false, false, depth, filter);
+    if (copied) {
+        measure_flashes(*g_device.frame.image, physical_width, physical_height);
+    }
+    static const char* const sequence = std::getenv("WP_DUMP_SEQUENCE");
+    if (copied && sequence) {
+        static const uint64_t first = std::strtoull(sequence, nullptr, 10);
+        static const uint64_t frames = std::strchr(sequence, ',') ? std::strtoull(std::strchr(sequence, ',') + 1, nullptr, 10) : 30;
+        static const char* const stepping = std::strrchr(sequence, ',') != std::strchr(sequence, ',') ? std::strrchr(sequence, ',') + 1 : nullptr;
+        static const uint64_t step = std::max<uint64_t>(1, stepping ? std::strtoull(stepping, nullptr, 10) : 1);
+        std::vector<uint32_t> pixels;
+        if (g_frame >= first && g_frame < first + frames && (g_frame - first) % step == 0 && read_target(g_device.frame.image, physical_width, physical_height, pixels)) {
+            std::error_code created;
+            std::filesystem::create_directories("captures/seq", created);
+            char name[64];
+            std::snprintf(name, sizeof name, "captures/seq/%06llu_f.png", static_cast<unsigned long long>(g_frame));
+            video::save_png(name, pixels, physical_width, physical_height);
+        }
+    }
+    return copied;
 }
 
 }
