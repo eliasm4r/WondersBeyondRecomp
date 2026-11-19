@@ -1668,8 +1668,7 @@ std::string records_identity() {
     }
     hash = (hash ^ sizeof kTevCode) * 1099511628211ull;
     char text[512];
-    std::snprintf(text, sizeof text, "WPVK1|%s|%u|%u|%llu\n", g_vk.properties.deviceName, g_vk.properties.vendorID, g_vk.properties.driverVersion,
-                  static_cast<unsigned long long>(hash));
+    std::snprintf(text, sizeof text, "WPVK2|%llu\n", static_cast<unsigned long long>(hash));
     return text;
 }
 
@@ -1686,6 +1685,19 @@ void open_records() {
         std::fclose(file);
     }
     if (bytes.compare(0, identity.size(), identity) != 0) {
+        size_t seed_size = 0;
+        void* seed = SDL_LoadFile("pipelines_seed_vk.bin", &seed_size);
+        bytes = seed ? std::string(static_cast<const char*>(seed), seed_size) : identity;
+        SDL_free(seed);
+        if (bytes.compare(0, identity.size(), identity) != 0) {
+            bytes = identity;
+        }
+        if (FILE* file = std::fopen(g_records.path.c_str(), "wb")) {
+            std::fwrite(bytes.data(), 1, bytes.size(), file);
+            std::fclose(file);
+        }
+    }
+    if (bytes.size() <= identity.size()) {
         if (FILE* file = std::fopen(g_records.path.c_str(), "wb")) {
             std::fwrite(identity.data(), 1, identity.size(), file);
             std::fclose(file);
