@@ -1,7 +1,9 @@
 package io.github.eliasm4r.wondersbeyondrecomp;
 
+import android.os.Build;
 import android.os.Bundle;
 import android.view.Display;
+import android.view.Surface;
 import android.view.WindowManager;
 
 import org.libsdl.app.SDLActivity;
@@ -36,7 +38,9 @@ public class GameActivity extends SDLActivity {
     }
 
     public int displayRate(final int wanted) {
-        if (wanted != askedRate) {
+        Display shown = getWindowManager().getDefaultDisplay();
+        boolean dropped = shown != null && wanted > 60 && shown.getRefreshRate() < Math.min(wanted, highestRate()) - 1;
+        if (wanted != askedRate || dropped) {
             askedRate = wanted;
             runOnUiThread(new Runnable() {
                 @Override
@@ -91,9 +95,19 @@ public class GameActivity extends SDLActivity {
             return;
         }
         WindowManager.LayoutParams params = getWindow().getAttributes();
-        if (params.preferredDisplayModeId != best.getModeId()) {
+        if (params.preferredDisplayModeId != best.getModeId() || params.preferredRefreshRate != best.getRefreshRate()) {
             params.preferredDisplayModeId = best.getModeId();
+            params.preferredRefreshRate = best.getRefreshRate();
             getWindow().setAttributes(params);
+        }
+        if (Build.VERSION.SDK_INT >= 31 && mSurface != null) {
+            Surface surface = mSurface.getHolder().getSurface();
+            if (surface != null && surface.isValid()) {
+                try {
+                    surface.setFrameRate(best.getRefreshRate(), Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE, Surface.CHANGE_FRAME_RATE_ALWAYS);
+                } catch (RuntimeException error) {
+                }
+            }
         }
     }
 }
