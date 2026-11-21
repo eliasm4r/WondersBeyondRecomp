@@ -558,6 +558,9 @@ void window_thread(bool visible) {
             client_height = static_cast<int>(client_width / g_aspect + 0.5);
         }
     }
+#ifdef __ANDROID__
+    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+#endif
     SDL_WindowFlags flags = (kMetal ? SDL_WINDOW_METAL : (vulkan ? SDL_WINDOW_VULKAN : SDL_WINDOW_OPENGL)) | SDL_WINDOW_RESIZABLE | SDL_WINDOW_BORDERLESS | (visible ? 0 : SDL_WINDOW_HIDDEN);
     SDL_Window* window = SDL_CreateWindow(game::description().app_name, client_width, client_height, flags);
 #ifdef WP_METAL
