@@ -102,8 +102,8 @@ constexpr uint32_t kRingSegments = 4;
 constexpr uint32_t kScreenRingBytes = 64u << 20;
 constexpr uint32_t kRunVertexBytes = 32u << 20;
 constexpr uint32_t kRunIndexBytes = 8u << 20;
-constexpr uint32_t kRunRowCapacity = 1u << 17;
-constexpr uint32_t kRunRowBatch = kRunRowCapacity / kRingSegments;
+constexpr uint32_t kRunRowCapacity = 1u << 20;
+constexpr uint32_t kRunRowBatch = 1u << 15;
 constexpr uint32_t kUniformRingBytes = 16u << 20;
 constexpr uint32_t kStagingRingBytes = 64u << 20;
 constexpr uint32_t kKeptVertexBytes = 64u << 20;
@@ -3278,8 +3278,14 @@ bool run_copy(const Target& target, uint32_t target_width, uint32_t target_heigh
     }
     settle_efb();
     VkCommandBuffer cb = command();
+    static const bool depth_always = [] {
+        const char* value = std::getenv("WP_VK_COPY_DEPTH");
+        return value && std::atoi(value) != 0;
+    }();
     transition(cb, *g_device.efb_color, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    transition(cb, *g_device.efb_depth, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+    if (depth || depth_always) {
+        transition(cb, *g_device.efb_depth, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+    }
     transition(cb, *target.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     begin_render_pass(g_device.target_pass, target.image->framebuffer, target.image->width, target.image->height, 0, nullptr);
     g_pass = Pass::Target;
@@ -4657,6 +4663,8 @@ bool replay_between(const std::vector<std::pair<uint32_t, uint32_t>>& matches, f
     } sending{filled};
     if (!g_efb_before_cleared) {
         load_efb(g_efb_before);
+    } else if (g_pass == Pass::Efb) {
+        end_pass();
     }
     static std::vector<std::pair<const RecordedTarget*, ReplayTarget*>> twins;
     twins.clear();
@@ -5202,7 +5210,7 @@ void finish_frame() {
     bool late = gx::take_frame_held();
     const ClearCommand& clear = end.clear;
     bool cleared = end.copied && g_recording && end.has_clear && clear.color && clear.alpha && clear.depth && clear.x <= 0 && clear.y <= 0 &&
-                   clear.x + clear.width >= canvas_width() && clear.y + clear.height >= canvas_height();
+                   clear.x + clear.width >= canvas_width() && clear.y + clear.height >= std::min(g_shown_height, canvas_height());
     uint32_t allowed = between_budget();
     bool saved = allowed > 0 && (cleared || (end.copied && g_recording && save_efb(g_efb_after)));
     auto started = std::chrono::steady_clock::now();
@@ -5258,6 +5266,9 @@ void finish_frame() {
     g_efb_before_cleared = cleared;
     end_record();
     if (end.has_clear) {
+        if (cleared && g_pass == Pass::Efb) {
+            end_pass();
+        }
         apply_clear(end.clear);
     }
 }
