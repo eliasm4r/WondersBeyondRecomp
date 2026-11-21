@@ -25,6 +25,8 @@ Every change to WondersBeyondRecomp, newest first.
 - Touch buttons keep their distance from one another on every screen, whatever the button size and the space the phone keeps for its own bars, and in Cake Contraption a tap on the left of the screen aims instead of grabbing the stick.
 
 ### Fixed
+- **Phones at 120 fps**: the in-between pictures no longer save and restore the whole picture three times per frame, and per-model data no longer waits for the graphics card, so a recent Snapdragon phone holds 120 fps at 3x where it ran at about 100.
+- The game always opens in landscape on phones, even when the phone lies flat or auto-rotate is on.
 - **Shadows on wide screens**: on phones and screens wider than 16:9, shadows no longer sit beside their objects.
 - Phones with Vulkan: objects no longer go black, vanish or jump for a frame on phones with older Snapdragon graphics drivers. The game now turns its picture to the screen itself, so Android no longer redraws every frame on the graphics card (which interrupted the game's own drawing), and the game's drawing gets a higher priority on the graphics card.
 - A settings file cut short by a crash or a full disk no longer resets every option: settings are written to a temporary file first.
