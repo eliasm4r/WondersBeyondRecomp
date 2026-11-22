@@ -82,7 +82,13 @@ With **RecompLauncher**, the game is built again by itself on the first start af
 - **Internet**: needed by the setup to download the build tools
 - **Game**: your own disc image of the **European** version (`S2LP01`)
 
-Other regions, Linux and macOS are planned.
+Other regions are planned.
+
+### Other systems
+
+- **Linux and Steam Deck**: download the Linux zip for your processor, unzip it and start `Setup.sh`. It brings its own compiler. On the Steam Deck, use "Add to Steam" on the new menu entry to play in gaming mode.
+- **macOS** (Apple Silicon): download the macOS zip, unzip it and start `Setup.command`. It needs Apple's Command Line Tools and offers to install them.
+- **Android** (64-bit): no ready-made app is published, since it would contain the translated game. Build it on a computer from your own disc image with `python tools/android_tools.py`, then install it over USB with `python tools/android_tools.py --install`.
 
 <br>
 

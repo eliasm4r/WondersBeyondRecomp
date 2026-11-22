@@ -60,3 +60,4 @@ __pycache__/
 /photos/
 /.superpowers/
 /game/photos.txt
+/game/android.keystore

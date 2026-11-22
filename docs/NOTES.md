@@ -483,7 +483,11 @@ between threads gained nothing, since the draws are too small. Measured: 59.9 to
 - A disc image that Redump does not list is accepted: WBFS and other trimmed copies never match, and nodtool marks
   that line with the same cross as a real checksum error. Only a cross on another line refuses the image.
 - The MinGW package is a self-extracting 7z archive. `tar.exe` of Windows unpacks it, so that unsigned program is
-  never run.
+  not run where Smart App Control could refuse it. The `tar.exe` of Windows 10 and of older Windows 11 builds has no
+  LZMA ("LZMA codec is unsupported", a Reddit report on v0.3.1): when `tar.exe` fails on an `.exe` archive, the setup
+  starts that archive with `-y -o<folder>` instead, which unpacks it silently (tested with a failing `tar.exe`).
+  Windows 11 22H2 has Smart App Control but not yet the LZMA `tar.exe` (23H2): with Smart App Control on, the
+  fallback can be refused there, and updating Windows is the way out.
 - The game reads its files relative to the working folder, so the executable is copied to the install folder itself
   and the shortcuts set that folder: a double click on it works too.
 - The window (`installer/setup.py`, tkinter) only installs: disc, folder, shortcut, progress, in English. The log is `logs/install.log` in the install folder.

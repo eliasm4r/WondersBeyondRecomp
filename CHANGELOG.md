@@ -10,9 +10,12 @@ Every change to WondersBeyondRecomp, newest first.
 
 <br>
 
-## Unreleased
+## v0.4.0-alpha · 2026-11-23
+
+> **Android, Linux, Steam Deck and macOS.** The game now runs on phones with touch controls, on Linux and the Steam Deck, and on Apple Silicon Macs. [Download it here.](https://github.com/eliasm4r/WondersBeyondRecomp/releases/tag/v0.4.0-alpha)
 
 ### Added
+- **macOS** (Apple Silicon): `Setup.command` installs the game from your disc image and makes an app with the game icon. The game draws with Metal.
 - **Linux and Steam Deck**: `Setup.sh` installs the game from your disc image like the Windows setup, with nothing to install on the system first (it brings its own compiler). It adds the game to the applications menu; on the Steam Deck, "Add to Steam" on it puts the game in gaming mode, where it opens on the whole screen.
 - **Android** (64-bit phones with OpenGL ES 3.2): the game is built on your computer from your own disc image with `python tools/android_tools.py`, then `python tools/android_tools.py --install` puts it on a phone connected by USB, with the game files (and your saves with `--saves`).
 - **Android setup screen**: on first launch the app asks for your disc image with the phone's file picker, wherever it is (Downloads, any folder, an SD card), and unpacks it with a progress bar. ISO, RVZ, WIA, WBFS, GCZ, CISO, TGC and GCM all work; no folder to create and no computer needed for the game files.
@@ -38,6 +41,13 @@ Every change to WondersBeyondRecomp, newest first.
 - A damaged or crafted disc image can no longer make the game read outside its files, and the game can no longer delete or move the whole save folder by mistake.
 - Phones with Vulkan at 90 Hz and above: busy places no longer drop the game to 30 frames a second. The in-between images never ask for more work when the game slows down, they pause on their own while the graphics card can't keep up, and they no longer make the processor wait for the graphics card to finish everything first.
 - In-between images: an object that jumps far from one frame to the next is shown where it is instead of flying across the picture, and colours are only blended with the same object.
+
+## v0.3.2-alpha · 2026-11-16
+
+> **Setup fix for Windows 10.** The setup no longer stops with "LZMA codec is unsupported". [Download it here.](https://github.com/eliasm4r/WondersBeyondRecomp/releases/tag/v0.3.2-alpha)
+
+### Fixed
+- The setup no longer stops with "tar.exe: LZMA codec is unsupported" on Windows 10 and older Windows 11 builds: their built-in tar cannot read the compiler's archive, so the setup now lets the archive unpack itself there.
 
 ## v0.3.1-alpha · 2026-11-16
 
