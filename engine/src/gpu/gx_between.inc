@@ -1110,6 +1110,8 @@ bool camera_moves_sanely(const RecordedDraw& draw, const CameraMotion& camera) {
     constexpr uint32_t kChecked = 9;
     constexpr float kLeast = 0.04f;
     constexpr float kParallax = 4.0f;
+    constexpr float kDepthSlack = 0.25f;
+    constexpr float kDepthFloor = 1e-5f;
     const float limit = std::min(kMaxStep, std::max(kLeast, kParallax * camera.reach));
     uint32_t step = std::max(1u, draw.positions / kChecked);
     for (uint32_t i = 0; i < draw.positions; i += step) {
@@ -1122,6 +1124,10 @@ bool camera_moves_sanely(const RecordedDraw& draw, const CameraMotion& camera) {
             p[r] = camera.back[r][0] * b[0] + camera.back[r][1] * b[1] + camera.back[r][2] * b[2] + camera.back[r][3] * b[3];
         }
         if (!(p[3] > 0.0f) || std::fabs(p[0] / p[3] - b[0] / b[3]) > limit || std::fabs(p[1] / p[3] - b[1] / b[3]) > limit) {
+            return false;
+        }
+        float gap = (1.0f - b[2] / b[3]) * b[3] / p[3];
+        if (gap > 0.0f && std::fabs(1.0f - p[2] / p[3] - gap) > kDepthSlack * gap + kDepthFloor) {
             return false;
         }
     }
@@ -1243,7 +1249,7 @@ void pair_frame() {
         }
         bool pair = partner[d] < kRejected;
         size_t camera = camera_of(draw.camera);
-        if (pair && camera < kMaxCameras && forward[camera]) {
+        if (pair && camera < kMaxCameras && forward[camera] && camera_moves_sanely(draw, g_cameras[camera])) {
             g_world_camera[d] = static_cast<uint8_t>(camera);
             g_world_moving[d] = moves_in_world(draw, g_previous.draws[partner[d]], g_cameras[camera]);
         }

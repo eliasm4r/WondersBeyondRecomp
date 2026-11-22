@@ -27,7 +27,7 @@ Every change to WondersBeyondRecomp, newest first.
 ### Fixed
 - **Phones at 120 fps**: the in-between pictures no longer save and restore the whole picture three times per frame, and per-model data no longer waits for the graphics card, so a recent Snapdragon phone holds 120 fps at 3x where it ran at about 100.
 - The game always opens in landscape on phones, even when the phone lies flat or auto-rotate is on.
-- **Effects above 60 fps**: water splashes and the glow of a charged attack no longer jump across the screen in the in-between pictures.
+- **Effects above 60 fps**: water splashes and the glow of a charged attack no longer jump across the screen or flash in front of everything in the in-between pictures, including when the attack is released.
 - **Shadows on wide screens**: on phones and screens wider than 16:9, shadows no longer sit beside their objects.
 - Phones with Vulkan: objects no longer go black, vanish or jump for a frame on phones with older Snapdragon graphics drivers. The game now turns its picture to the screen itself, so Android no longer redraws every frame on the graphics card (which interrupted the game's own drawing), and the game's drawing gets a higher priority on the graphics card.
 - A settings file cut short by a crash or a full disk no longer resets every option: settings are written to a temporary file first.
