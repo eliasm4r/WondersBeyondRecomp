@@ -393,11 +393,18 @@ void test_online_menu() {
     menu.select(1);
     menu.handle(wp::options::Action::Accept);
     CHECK(wp::options::code_entry_open() && wp::options::take_keyboard_request());
+    for (int i = 0; i < 12; i++) {
+        wp::options::code_entry_key(0x08);
+    }
     CHECK(wp::options::type_code("ab-1"));
     CHECK(wp::options::code_entry_key(0x0D) && !wp::options::code_entry_open());
     CHECK(wp::settings::text("online.name", nullptr) == "AB1");
     menu.select(2);
     menu.handle(wp::options::Action::Accept);
+    wp::options::code_entry_key(0x08);
+    for (int i = 0; i < 16; i++) {
+        wp::options::code_entry_key(0x08);
+    }
     wp::options::type_code("10.0.0");
     CHECK(wp::options::code_entry_key(0x0D) && wp::options::code_entry_open());
     CHECK(wp::options::code_entry_key(0xBE));
@@ -405,8 +412,9 @@ void test_online_menu() {
     CHECK(wp::options::code_entry_key(0x0D) && !wp::options::code_entry_open());
     CHECK(wp::settings::text("online.address", nullptr) == "10.0.0.7");
     wp::options::take_keyboard_request();
-    CHECK(wp::online::host("Host", 0));
-    CHECK(wp::online::running() && (wp::options::tab_keys(8) == std::vector<std::string>{"online.status", "online.leave"}));
+    CHECK(wp::online::clean_code("k7-pol") == "K7P01" && !wp::online::valid_code("K7P01") && wp::online::valid_code("K7P01Z"));
+    CHECK(wp::online::host("Host", 0, false));
+    CHECK(wp::online::running() && (wp::options::tab_keys(8) == std::vector<std::string>{"online.status", "online.local", "online.leave"}));
     wp::online::leave();
     CHECK(!wp::online::running() && wp::online::state() == wp::online::State::Off);
     CHECK(!wp::online::join("nope", "Guest", 1) && wp::online::state() == wp::online::State::Failed);

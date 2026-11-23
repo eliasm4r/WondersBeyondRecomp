@@ -38,6 +38,7 @@ namespace {
 namespace fs = std::filesystem;
 
 constexpr char kHost[] = "wondersbeyond-saves.save-sync.workers.dev";
+constexpr char kRoomsHost[] = "wondersbeyond-rooms.save-sync.workers.dev";
 constexpr char kLetters[] = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 constexpr size_t kLargestReply = 128 * 1024;
 constexpr int kAttempts = 3;
@@ -151,14 +152,14 @@ std::wstring widen(const std::string& text) {
     return std::wstring(text.begin(), text.end());
 }
 
-bool request(const char* method, const std::string& id, const Bytes* body, uint64_t revision, Reply& reply) {
-    std::wstring path = widen("/v1/saves/" + id);
+bool fetch(const char* host, const char* method, const std::string& address, const Bytes* body, uint64_t revision, Reply& reply) {
+    std::wstring path = widen(address);
     HINTERNET session = WinHttpOpen(widen(agent()).c_str(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) {
         return false;
     }
     WinHttpSetTimeouts(session, 3000, 3000, 4000, 4000);
-    HINTERNET connection = WinHttpConnect(session, widen(kHost).c_str(), INTERNET_DEFAULT_HTTPS_PORT, 0);
+    HINTERNET connection = WinHttpConnect(session, widen(host).c_str(), INTERNET_DEFAULT_HTTPS_PORT, 0);
     HINTERNET handle = connection ? WinHttpOpenRequest(connection, widen(method).c_str(), path.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
                                                        WINHTTP_FLAG_SECURE)
                                   : nullptr;
@@ -193,7 +194,7 @@ bool request(const char* method, const std::string& id, const Bytes* body, uint6
     return ok;
 }
 #elif defined(__ANDROID__)
-bool request(const char* method, const std::string& id, const Bytes* body, uint64_t revision, Reply& reply) {
+bool fetch(const char* host, const char* method, const std::string& address, const Bytes* body, uint64_t revision, Reply& reply) {
     JNIEnv* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
     jobject activity = static_cast<jobject>(SDL_GetAndroidActivity());
     if (!env || !activity) {
@@ -203,7 +204,7 @@ bool request(const char* method, const std::string& id, const Bytes* body, uint6
     jclass type = env->GetObjectClass(activity);
     jmethodID call = type ? env->GetMethodID(type, "cloudRequest", "(Ljava/lang/String;Ljava/lang/String;[BJ)[B") : nullptr;
     if (call) {
-        std::string url = std::string("https://") + kHost + "/v1/saves/" + id;
+        std::string url = std::string("https://") + host + address;
         jstring method_text = env->NewStringUTF(method);
         jstring url_text = env->NewStringUTF(url.c_str());
         jbyteArray data = nullptr;
@@ -262,7 +263,7 @@ std::string shell_quoted(const std::string& text) {
     return out + "'";
 }
 
-bool request(const char* method, const std::string& id, const Bytes* body, uint64_t revision, Reply& reply) {
+bool fetch(const char* host, const char* method, const std::string& address, const Bytes* body, uint64_t revision, Reply& reply) {
     std::error_code error;
     std::string stem = (fs::temp_directory_path(error) / ("wbr-sync-" + new_code())).string();
     std::string headers_path = stem + ".head";
@@ -278,7 +279,7 @@ bool request(const char* method, const std::string& id, const Bytes* body, uint6
         }
         command += " --data-binary @" + shell_quoted(input_path);
     }
-    command += " " + shell_quoted(std::string("https://") + kHost + "/v1/saves/" + id) + " 2>/dev/null";
+    command += " " + shell_quoted(std::string("https://") + host + address) + " 2>/dev/null";
     bool ok = false;
     if (FILE* pipe = popen(command.c_str(), "r")) {
         char text[16] = {};
@@ -308,6 +309,10 @@ bool request(const char* method, const std::string& id, const Bytes* body, uint6
     return ok;
 }
 #endif
+
+bool request(const char* method, const std::string& id, const Bytes* body, uint64_t revision, Reply& reply) {
+    return fetch(kHost, method, "/v1/saves/" + id, body, revision, reply);
+}
 
 bool read_stable(const fs::path& folder, Snapshot& snapshot) {
     Snapshot second;
@@ -672,6 +677,16 @@ std::string other_device() {
 
 const char* code_letters() {
     return kLetters;
+}
+
+
+bool room_request(const char* method, const std::string& path, const std::string& body, int& status, std::string& reply) {
+    Bytes data(body.begin(), body.end());
+    Reply answer;
+    bool ok = fetch(kRoomsHost, method, path, body.empty() ? nullptr : &data, 0, answer);
+    status = answer.status;
+    reply.assign(answer.body.begin(), answer.body.end());
+    return ok;
 }
 
 }

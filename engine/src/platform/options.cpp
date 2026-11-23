@@ -233,6 +233,8 @@ bool cloud_action(const std::string& key, Action action) {
 constexpr const char* kOnlineStatus = "online.status";
 constexpr const char* kOnlineName = "online.name";
 constexpr const char* kOnlineAddress = "online.address";
+constexpr const char* kOnlineCode = "online.code";
+constexpr const char* kOnlineLocal = "online.local";
 constexpr const char* kOnlineHost = "online.host";
 constexpr const char* kOnlineJoin = "online.join";
 constexpr const char* kOnlineLeave = "online.leave";
@@ -249,7 +251,7 @@ size_t g_field_letter = 0;
 bool g_field_picking = false;
 
 const char* field_letters() {
-    return g_field == kOnlineAddress ? "0123456789." : "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    return g_field == kOnlineAddress ? "0123456789ABCDEFGHJKMNPQRSTVWXYZ." : "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 }
 
 size_t field_limit() {
@@ -261,7 +263,15 @@ std::vector<std::string> online_keys() {
         return {kOnlineText, kOnlineErase, kOnlineDone, kOnlineCancel};
     }
     if (online::running()) {
-        return {kOnlineStatus, kOnlineLeave};
+        std::vector<std::string> keys = {kOnlineStatus};
+        if (online::state() != online::State::Joined && !online::room_code().empty()) {
+            keys.push_back(kOnlineCode);
+        }
+        if (online::state() == online::State::Hosting) {
+            keys.push_back(kOnlineLocal);
+        }
+        keys.push_back(kOnlineLeave);
+        return keys;
     }
     return {kOnlineStatus, kOnlineName, kOnlineAddress, kOnlineHost, kOnlineJoin};
 }
@@ -271,11 +281,24 @@ std::string online_status_text() {
     switch (online::state()) {
     case online::State::Off:
         return ui::label("online.state.off");
+    case online::State::Connecting:
+        return ui::label("online.state.connecting");
     case online::State::Failed:
-        return ui::label("online.state.failed");
+        switch (online::problem()) {
+        case online::Problem::NoInternet:
+            return ui::label("online.state.no_internet");
+        case online::Problem::NoRoom:
+            return ui::label("online.state.no_room");
+        case online::Problem::Full:
+            return ui::label("online.state.full");
+        case online::Problem::Blocked:
+            return ui::label("online.state.blocked");
+        default:
+            return ui::label("online.state.failed");
+        }
     case online::State::Hosting:
         if (others == 0) {
-            return ui::label("online.state.waiting");
+            return ui::label(online::room_code().empty() ? "online.state.local_only" : "online.state.waiting");
         }
         break;
     case online::State::Joined:
@@ -308,7 +331,7 @@ void add_field_character(char character) {
 }
 
 void commit_field() {
-    if (g_field == kOnlineAddress && !online::valid_address(g_field_text)) {
+    if (g_field == kOnlineAddress && !online::valid_address(g_field_text) && !online::valid_code(online::clean_code(g_field_text))) {
         return;
     }
     if (!g_field_text.empty()) {
@@ -346,12 +369,20 @@ bool online_action(const std::string& key, Action action) {
     } else if (key == kOnlineName || key == kOnlineAddress) {
         close_field();
         g_field = key == kOnlineName ? kOnlineName : kOnlineAddress;
+        g_field_text = settings::text(g_field, nullptr);
         g_field_letter = 0;
         g_keyboard_wanted = true;
     } else if (key == kOnlineHost) {
         online::host(settings::text(kOnlineName, nullptr));
     } else if (key == kOnlineJoin) {
-        online::join(settings::text(kOnlineAddress, nullptr), settings::text(kOnlineName, nullptr));
+        std::string target = settings::text(kOnlineAddress, nullptr);
+        if (target.empty()) {
+            g_field = kOnlineAddress;
+            g_field_letter = 0;
+            g_keyboard_wanted = true;
+        } else {
+            online::join(target, settings::text(kOnlineName, nullptr));
+        }
     } else if (key == kOnlineLeave) {
         online::leave();
     } else {
@@ -542,7 +573,7 @@ Kind kind(const std::string& key) {
         key == kOnlineAddress || key == kOnlineHost || key == kOnlineJoin || key == kOnlineLeave || key == kOnlineErase || key == kOnlineDone || key == kOnlineCancel) {
         return Kind::Button;
     }
-    if (key == kPlayTime || key == kUpdate || key == kCloudStatus || key == kOnlineStatus) {
+    if (key == kPlayTime || key == kUpdate || key == kCloudStatus || key == kOnlineStatus || key == kOnlineCode || key == kOnlineLocal) {
         return Kind::Info;
     }
     if (key == kCloudCode || key == kOnlineText) {
@@ -862,6 +893,10 @@ std::vector<Row> Menu::rows() const {
             row.value = update_text();
         } else if (key == kOnlineStatus) {
             row.value = online_status_text();
+        } else if (key == kOnlineCode) {
+            row.value = online::room_code();
+        } else if (key == kOnlineLocal) {
+            row.value = online::local_address();
         } else if (key == kOnlineText) {
             row.value = field_text();
         } else if (key == kOnlineName || key == kOnlineAddress) {
@@ -986,9 +1021,10 @@ std::string Menu::handle(Action action) {
         update::open_page();
         return "";
     }
+    bool field_was_open = g_field != nullptr;
     if (changes_value && ((starts_with(key, "saves.cloud_") && cloud_action(key, action)) || (starts_with(key, "online.") && online_action(key, action)))) {
         std::vector<std::string> updated = this->keys();
-        selection_ = std::min(selection_, updated.size() - 1);
+        selection_ = !field_was_open && g_field ? 0 : std::min(selection_, updated.size() - 1);
         keep_visible();
         return "";
     }
@@ -1069,7 +1105,11 @@ bool type_code(const char* text) {
     if (g_field && text) {
         for (; *text; text++) {
             char character = static_cast<char>(std::toupper(static_cast<unsigned char>(*text)));
+            if (g_field == kOnlineAddress) {
+                character = character == 'O' ? '0' : (character == 'I' || character == 'L') ? '1' : character;
+            }
             if (character != 0 && std::strchr(field_letters(), character)) {
+                g_field_picking = false;
                 add_field_character(character);
             }
         }
@@ -1086,6 +1126,10 @@ bool type_code(const char* text) {
         }
     }
     return true;
+}
+
+bool text_field_open() {
+    return g_field != nullptr;
 }
 
 bool code_entry_open() {
@@ -1116,7 +1160,7 @@ bool code_entry_key(unsigned key) {
         } else if ((key >= '0' && key <= '9') || (key >= 'A' && key <= 'Z')) {
             const char letter[2] = {static_cast<char>(key), 0};
             type_code(letter);
-        } else if (key != 0x20) {
+        } else if (key != 0x20 && key != 0x25 && key != 0x27) {
             return false;
         }
         return true;

@@ -51,6 +51,7 @@ std::string step_value(const std::string& key, const std::string& value, int ste
 bool code_entry_key(unsigned key);
 bool type_code(const char* text);
 bool code_entry_open();
+bool text_field_open();
 bool take_keyboard_request();
 
 class Menu {

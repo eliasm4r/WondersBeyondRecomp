@@ -25,6 +25,13 @@ public:
 
     bool host(uint16_t port, const std::string& name);
     bool join(const std::string& address, uint16_t port, const std::string& name);
+    bool open_room(bool hosting, uint16_t port, const std::string& name);
+    void add_target(const std::string& endpoint, double seconds);
+    void ask_stun(const std::vector<std::string>& servers);
+    std::string mapped() const;
+    bool symmetric() const;
+    std::string local() const;
+    static std::vector<std::string> stun_servers();
     void send(const std::array<float, 3>& position, uint32_t zone = 0);
     void pump(double now);
     const std::vector<Peer>& peers() const { return m_peers; }

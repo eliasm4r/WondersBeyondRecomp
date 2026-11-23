@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <random>
+#include <string>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -33,6 +35,10 @@ constexpr size_t kMaxOthers = 3;
 constexpr double kPeerTimeout = 5.0;
 constexpr float kLargestCoordinate = 1e6f;
 constexpr int kMaxPacketsPerPump = 64;
+constexpr size_t kLargestDatagram = 512;
+constexpr uint32_t kStunCookie = 0x2112A442;
+constexpr size_t kStunHeader = 20;
+constexpr int kStunServers = 2;
 
 void put32(uint8_t* out, uint32_t value) {
     for (int i = 0; i < 4; i++) {
@@ -117,6 +123,36 @@ struct Client {
     double seen = 0.0;
 };
 
+struct Target {
+    sockaddr_storage address{};
+    double until = 0.0;
+};
+
+uint32_t big32(const uint8_t* in) {
+    return static_cast<uint32_t>(in[0]) << 24 | static_cast<uint32_t>(in[1]) << 16 | static_cast<uint32_t>(in[2]) << 8 | in[3];
+}
+
+uint16_t big16(const uint8_t* in) {
+    return static_cast<uint16_t>(in[0] << 8 | in[1]);
+}
+
+bool parse_endpoint(const std::string& text, sockaddr_storage& out) {
+    size_t colon = text.rfind(':');
+    if (colon == std::string::npos) {
+        return false;
+    }
+    int port = std::atoi(text.c_str() + colon + 1);
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_port = htons(static_cast<uint16_t>(port));
+    if (port <= 0 || port > 65535 || inet_pton(AF_INET, text.substr(0, colon).c_str(), &address.sin_addr) != 1) {
+        return false;
+    }
+    out = sockaddr_storage{};
+    std::memcpy(&out, &address, sizeof address);
+    return true;
+}
+
 }
 
 struct Link::Impl {
@@ -126,7 +162,35 @@ struct Link::Impl {
     uint32_t sequence = 0;
     char name[kNameBytes] = {};
     sockaddr_storage server{};
+    bool has_server = false;
     std::vector<Client> clients;
+    std::vector<Target> targets;
+    double now = 0.0;
+    uint8_t stun_id[11] = {};
+    std::string mapped[kStunServers];
+
+    bool read_stun(const uint8_t* data, size_t size) {
+        if (size < kStunHeader || big16(data) != 0x0101 || big32(data + 4) != kStunCookie || data[8] >= kStunServers || std::memcmp(data + 9, stun_id, sizeof stun_id) != 0) {
+            return false;
+        }
+        size_t at = kStunHeader;
+        size_t end = std::min(size, kStunHeader + big16(data + 2));
+        while (at + 4 <= end) {
+            uint16_t type = big16(data + at);
+            size_t length = big16(data + at + 2);
+            if (at + 4 + length > end) {
+                break;
+            }
+            if (type == 0x0020 && length == 8 && data[at + 5] == 1) {
+                uint32_t ip = big32(data + at + 8) ^ kStunCookie;
+                uint16_t port = big16(data + at + 6) ^ static_cast<uint16_t>(kStunCookie >> 16);
+                mapped[data[8]] = std::to_string(ip >> 24) + "." + std::to_string((ip >> 16) & 255) + "." + std::to_string((ip >> 8) & 255) + "." + std::to_string(ip & 255) + ":" + std::to_string(port);
+                break;
+            }
+            at += 4 + ((length + 3) & ~size_t{3});
+        }
+        return true;
+    }
 
     void transmit(const uint8_t* data, const sockaddr_storage& to) const {
         sendto(socket, reinterpret_cast<const char*>(data), static_cast<int>(kPacketBytes), 0, reinterpret_cast<const sockaddr*>(&to), address_size(to));
@@ -191,9 +255,118 @@ bool Link::join(const std::string& where, uint16_t port, const std::string& name
         return false;
     }
     std::memcpy(&m_impl->server, found->ai_addr, found->ai_addrlen);
+    m_impl->has_server = true;
     freeaddrinfo(found);
     m_impl->prepare(name);
     return true;
+}
+
+bool Link::open_room(bool hosting, uint16_t port, const std::string& name) {
+    if (m_impl->socket != kNoSocket) {
+        close_socket(m_impl->socket);
+        m_impl->socket = kNoSocket;
+    }
+    if (!m_impl->open(AF_INET)) {
+        return false;
+    }
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_ANY);
+    address.sin_port = htons(port);
+    if (bind(m_impl->socket, reinterpret_cast<const sockaddr*>(&address), sizeof address) != 0) {
+        return false;
+    }
+    m_impl->hosting = hosting;
+    m_impl->has_server = false;
+    m_impl->prepare(name);
+    std::random_device random;
+    for (uint8_t& byte : m_impl->stun_id) {
+        byte = static_cast<uint8_t>(random());
+    }
+    return true;
+}
+
+void Link::add_target(const std::string& endpoint, double seconds) {
+    sockaddr_storage address{};
+    if (!parse_endpoint(endpoint, address)) {
+        return;
+    }
+    double until = m_impl->now + seconds;
+    for (Target& target : m_impl->targets) {
+        if (same_address(target.address, address)) {
+            target.until = until;
+            return;
+        }
+    }
+    if (m_impl->targets.size() < 16) {
+        m_impl->targets.push_back({address, until});
+    }
+}
+
+std::vector<std::string> Link::stun_servers() {
+    std::vector<std::string> found;
+    for (const char* name : {"stun.cloudflare.com", "stun.l.google.com"}) {
+        addrinfo hints{};
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_DGRAM;
+        addrinfo* result = nullptr;
+        std::string text;
+        const char* port = std::strcmp(name, "stun.cloudflare.com") == 0 ? "3478" : "19302";
+        if (getaddrinfo(name, port, &hints, &result) == 0 && result) {
+            char ip[INET_ADDRSTRLEN] = {};
+            const auto* address = reinterpret_cast<const sockaddr_in*>(result->ai_addr);
+            if (inet_ntop(AF_INET, &address->sin_addr, ip, sizeof ip)) {
+                text = std::string(ip) + ":" + port;
+            }
+            freeaddrinfo(result);
+        }
+        found.push_back(text);
+    }
+    return found;
+}
+
+void Link::ask_stun(const std::vector<std::string>& servers) {
+    if (m_impl->socket == kNoSocket) {
+        return;
+    }
+    for (size_t i = 0; i < servers.size() && i < kStunServers; i++) {
+        sockaddr_storage to{};
+        if (!parse_endpoint(servers[i], to)) {
+            continue;
+        }
+        uint8_t request[kStunHeader] = {0x00, 0x01, 0x00, 0x00, 0x21, 0x12, 0xA4, 0x42};
+        request[8] = static_cast<uint8_t>(i);
+        std::memcpy(request + 9, m_impl->stun_id, sizeof m_impl->stun_id);
+        sendto(m_impl->socket, reinterpret_cast<const char*>(request), static_cast<int>(sizeof request), 0, reinterpret_cast<const sockaddr*>(&to), address_size(to));
+    }
+}
+
+std::string Link::mapped() const {
+    return m_impl->mapped[0].empty() ? m_impl->mapped[1] : m_impl->mapped[0];
+}
+
+bool Link::symmetric() const {
+    return !m_impl->mapped[0].empty() && !m_impl->mapped[1].empty() && m_impl->mapped[0] != m_impl->mapped[1];
+}
+
+std::string Link::local() const {
+    std::string ip = "127.0.0.1";
+    Socket probe = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (probe != kNoSocket) {
+        sockaddr_in outside{};
+        outside.sin_family = AF_INET;
+        outside.sin_port = htons(53);
+        inet_pton(AF_INET, "1.1.1.1", &outside.sin_addr);
+        sockaddr_in own{};
+        socklen_t size = sizeof own;
+        char text[INET_ADDRSTRLEN] = {};
+        if (connect(probe, reinterpret_cast<const sockaddr*>(&outside), sizeof outside) == 0 && getsockname(probe, reinterpret_cast<sockaddr*>(&own), &size) == 0 &&
+            inet_ntop(AF_INET, &own.sin_addr, text, sizeof text)) {
+            ip = text;
+        }
+        close_socket(probe);
+    }
+    return ip + ":" + std::to_string(port());
 }
 
 uint16_t Link::port() const {
@@ -224,8 +397,16 @@ void Link::send(const std::array<float, 3>& position, uint32_t zone) {
         for (const Client& client : m_impl->clients) {
             m_impl->transmit(packet, client.address);
         }
-    } else {
+    } else if (m_impl->has_server) {
         m_impl->transmit(packet, m_impl->server);
+    }
+    if (m_impl->hosting || !m_impl->has_server) {
+        for (const Target& target : m_impl->targets) {
+            bool known = std::any_of(m_impl->clients.begin(), m_impl->clients.end(), [&](const Client& c) { return same_address(c.address, target.address); });
+            if (!known && target.until > m_impl->now) {
+                m_impl->transmit(packet, target.address);
+            }
+        }
     }
 }
 
@@ -233,7 +414,8 @@ void Link::pump(double now) {
     if (m_impl->socket == kNoSocket) {
         return;
     }
-    uint8_t data[kPacketBytes + 1];
+    m_impl->now = now;
+    uint8_t data[kLargestDatagram];
     for (int i = 0; i < kMaxPacketsPerPump; i++) {
         sockaddr_storage from{};
         socklen_t from_size = sizeof from;
@@ -245,6 +427,9 @@ void Link::pump(double now) {
             }
 #endif
             break;
+        }
+        if (m_impl->read_stun(data, static_cast<size_t>(got))) {
+            continue;
         }
         Peer incoming;
         if (!decode(data, static_cast<size_t>(got), incoming) || incoming.id == m_impl->id) {
@@ -262,6 +447,14 @@ void Link::pump(double now) {
                 continue;
             }
             client->seen = now;
+        } else if (!m_impl->has_server) {
+            bool expected = std::any_of(m_impl->targets.begin(), m_impl->targets.end(), [&](const Target& target) { return same_address(target.address, from); });
+            if (!expected) {
+                continue;
+            }
+            m_impl->server = from;
+            m_impl->has_server = true;
+            m_impl->targets.clear();
         } else if (!same_address(m_impl->server, from)) {
             continue;
         }

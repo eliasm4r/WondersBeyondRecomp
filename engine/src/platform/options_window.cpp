@@ -159,7 +159,7 @@ std::string menu_key(void* window, unsigned key, bool repeat) {
         }
         return capture(window, name);
     }
-    if (key != kKeyUp && key != kKeyDown && key != kKeyLeft && key != kKeyRight && code_entry_key(key)) {
+    if (key != kKeyUp && key != kKeyDown && ((key != kKeyLeft && key != kKeyRight) || text_field_open()) && code_entry_key(key)) {
         sync(window);
         return "";
     }
