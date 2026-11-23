@@ -76,7 +76,6 @@ struct Puppet {
     uint32_t species = 0;
     uint32_t motion = 0;
     uint32_t serial = 0;
-    uint32_t position_address = 0;
     uint32_t last_event = 0;
     bool heard = false;
     bool ready = false;
@@ -212,7 +211,6 @@ void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) 
     uint32_t posture = method(c, accessor, kPostureSlot);
     uint32_t position = method(c, posture, kPositionSlot);
     uint32_t rotation = method(c, posture, kRotationSlot);
-    puppet.position_address = position;
     float distance = 0.0f;
     for (int i = 0; i < 3; i++) {
         float gap = peer.position[i] - puppet.position[i];
@@ -296,18 +294,6 @@ void step(Cpu& c, bool active, uint32_t frame) {
     }
 }
 
-}
-
-bool hold_puppet(uint32_t object) {
-    for (const Puppet& puppet : g_puppets) {
-        if (puppet.object == object && puppet.position_address && alive(puppet)) {
-            for (uint32_t i = 0; i < 3; i++) {
-                wrf32(puppet.position_address + 4 * i, puppet.position[i]);
-            }
-            return true;
-        }
-    }
-    return false;
 }
 
 void puppets_frame(Cpu& c, bool park, bool active) {
