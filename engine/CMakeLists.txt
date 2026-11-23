@@ -44,6 +44,7 @@ add_library(wp_engine STATIC
     src/platform/performance_hints.cpp
     src/platform/png.cpp
     src/platform/save_backup.cpp
+    src/platform/save_sync.cpp
     src/platform/screenshot.cpp
     src/platform/settings.cpp
     src/platform/play_time.cpp

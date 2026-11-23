@@ -39,6 +39,7 @@
 #include "wp/options.h"
 #include "wp/options_window.h"
 #include "wp/save_backup.h"
+#include "wp/save_sync.h"
 #include "wp/padmap.h"
 #include "wp/frame_pacing.h"
 #include "wp/free_camera.h"
@@ -300,6 +301,55 @@ void write_file(const std::filesystem::path& path, const std::string& contents) 
 std::string read_file(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary);
     return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+}
+
+void test_save_sync() {
+    namespace fs = std::filesystem;
+    using wp::saves::SyncResult;
+    std::error_code error;
+    fs::path root = fs::temp_directory_path(error) / "wp_save_sync_tests";
+    fs::remove_all(root, error);
+    fs::path relative = wp::saves::save_relative(0x53555045);
+    fs::path shared = root / "shared";
+    fs::create_directories(shared, error);
+    fs::path first = root / "first" / "nand";
+    fs::path second = root / "second" / "nand";
+    fs::create_directories(first / relative, error);
+    fs::create_directories(second / relative, error);
+    auto put = [&](const fs::path& nand, const char* text) {
+        std::ofstream file(nand / relative / "GD0", std::ios::binary | std::ios::trunc);
+        file << text;
+    };
+    std::time_t now = 1790000000;
+    auto run = [&](const fs::path& nand, bool may_pull) {
+        return wp::saves::sync(nand, relative, wp::saves::backups_beside(nand), shared, may_pull, 5, now++).result;
+    };
+    CHECK(run(first, true) == SyncResult::Same);
+    put(first, "one");
+    CHECK(run(first, false) == SyncResult::Pushed);
+    CHECK(run(second, false) == SyncResult::Waiting);
+    CHECK(read_file(second / relative / "GD0").empty());
+    CHECK(run(second, true) == SyncResult::Pulled);
+    CHECK(read_file(second / relative / "GD0") == "one");
+    put(second, "two");
+    CHECK(run(second, false) == SyncResult::Pushed);
+    CHECK(run(first, false) == SyncResult::Waiting);
+    CHECK(read_file(first / relative / "GD0") == "one");
+    CHECK(run(first, true) == SyncResult::Pulled);
+    CHECK(read_file(first / relative / "GD0") == "two");
+    put(first, "three");
+    put(second, "four");
+    CHECK(run(first, false) == SyncResult::Pushed);
+    CHECK(run(second, true) == SyncResult::Conflict);
+    CHECK(read_file(second / relative / "GD0") == "four");
+    CHECK(read_file(shared / "53555045" / relative / "GD0") == "three");
+    {
+        std::ofstream file(shared / "53555045" / relative / "GD0", std::ios::binary | std::ios::trunc);
+        file << "half";
+    }
+    CHECK(run(first, true) == SyncResult::Waiting);
+    CHECK(read_file(first / relative / "GD0") == "three");
+    fs::remove_all(root, error);
 }
 
 void test_save_backups() {
@@ -2882,6 +2932,7 @@ int main() {
     test_quantization();
     test_disc_drive();
     test_save_backups();
+    test_save_sync();
     test_adopt_root_files();
     test_title_data_directory();
     test_read_directory_forms();

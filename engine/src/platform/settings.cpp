@@ -102,6 +102,7 @@ const Option kBaseOptions[] = {
     {"audio.volume", "100"},
     {"audio.wiimote_speaker", "1"},
     {"saves.backups", "5"},
+    {"saves.sync_folder", ""},
     {"overlay.show", "0"},
     {"overlay.level", "full"},
     {"overlay.corner", "top_left"},
