@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "wp/cloud_sync.h"
 #include "wp/game.h"
 #include "wp/gamepad.h"
 #include "wp/hd_textures.h"
@@ -157,6 +158,10 @@ std::string menu_key(void* window, unsigned key, bool repeat) {
         }
         return capture(window, name);
     }
+    if (key != kKeyUp && key != kKeyDown && key != kKeyLeft && key != kKeyRight && code_entry_key(key)) {
+        sync(window);
+        return "";
+    }
     switch (key) {
     case kKeyUp:
         return act(window, Action::Up);
@@ -279,6 +284,11 @@ void menu_hover(void* window, int x, int y) {
 std::string poll_gamepads(void* window) {
     static Repeat repeat(kRepeating, kRepeatDelay, kRepeatInterval);
     static hd_textures::Progress shown;
+    static uint64_t cloud_shown = 0;
+    if (g_menu.open() && cloud::version() != cloud_shown) {
+        cloud_shown = cloud::version();
+        sync(window);
+    }
     hd_textures::Progress job = hd_textures::progress();
     if (g_menu.open() && (job.version != shown.version || job.seconds_left / 60 != shown.seconds_left / 60)) {
         shown = job;

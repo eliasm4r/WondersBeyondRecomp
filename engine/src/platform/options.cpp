@@ -8,6 +8,7 @@
 #include <mutex>
 #include <utility>
 
+#include "wp/cloud_sync.h"
 #include "wp/color.h"
 #include "wp/control_names.h"
 #include "wp/frame_pacing.h"
@@ -19,6 +20,7 @@
 #include "wp/keymap.h"
 #include "wp/padmap.h"
 #include "wp/play_time.h"
+#include "wp/save_cloud.h"
 #include "wp/settings.h"
 #include "wp/ui_text.h"
 #include "wp/update_check.h"
@@ -95,6 +97,130 @@ constexpr const char* kResetPad = "pad.reset";
 constexpr const char* kResetColors = "video.colors_reset";
 constexpr const char* kFlyCamera = "cheats.fly_camera";
 constexpr const char* kUpdate = "system.update";
+
+constexpr const char* kCloudStatus = "saves.cloud_status";
+constexpr const char* kCloudCreate = "saves.cloud_create";
+constexpr const char* kCloudEnter = "saves.cloud_enter";
+constexpr const char* kCloudCode = "saves.cloud_code";
+constexpr const char* kCloudAdd = "saves.cloud_add";
+constexpr const char* kCloudErase = "saves.cloud_erase";
+constexpr const char* kCloudCancel = "saves.cloud_cancel";
+constexpr const char* kCloudKeepHere = "saves.cloud_keep_here";
+constexpr const char* kCloudKeepOther = "saves.cloud_keep_other";
+constexpr const char* kCloudOff = "saves.cloud_off";
+constexpr size_t kCloudCodeLength = 10;
+
+bool g_code_entry = false;
+std::string g_code_typed;
+size_t g_code_letter = 0;
+
+std::vector<std::string> cloud_keys() {
+    if (g_code_entry) {
+        return {kCloudCode, kCloudAdd, kCloudErase, kCloudCancel};
+    }
+    if (cloud::code().empty()) {
+        return {kCloudStatus, kCloudCreate, kCloudEnter};
+    }
+    if (cloud::status() == cloud::Status::Conflict) {
+        return {kCloudStatus, kCloudKeepHere, kCloudKeepOther, kCloudOff};
+    }
+    return {kCloudStatus, kCloudOff};
+}
+
+std::string cloud_status_text() {
+    const char* state = "saves.cloud.off";
+    switch (cloud::status()) {
+    case cloud::Status::Off:
+        break;
+    case cloud::Status::Working:
+        state = "saves.cloud.working";
+        break;
+    case cloud::Status::Synced:
+        state = "saves.cloud.synced";
+        break;
+    case cloud::Status::Offline:
+        state = "saves.cloud.offline";
+        break;
+    case cloud::Status::Restart:
+        state = "saves.cloud.restart";
+        break;
+    case cloud::Status::Conflict:
+        state = "saves.cloud.conflict";
+        break;
+    case cloud::Status::Unknown:
+        state = "saves.cloud.unknown";
+        break;
+    case cloud::Status::Error:
+        state = "saves.cloud.error";
+        break;
+    }
+    std::string code = cloud::code();
+    return code.empty() ? ui::label(state) : cloud::shown_code(code) + " - " + ui::label(state);
+}
+
+std::string code_entry_text() {
+    std::string shown = g_code_typed;
+    if (shown.size() < kCloudCodeLength) {
+        shown.push_back(cloud::code_letters()[g_code_letter]);
+    }
+    shown.append(kCloudCodeLength - shown.size(), '_');
+    return cloud::shown_code(shown);
+}
+
+void submit_code() {
+    if (g_code_typed.size() == kCloudCodeLength) {
+        cloud::link(g_code_typed);
+        g_code_entry = false;
+        g_code_typed.clear();
+    }
+}
+
+bool cloud_action(const std::string& key, Action action) {
+    if (key == kCloudCode) {
+        size_t letters = std::strlen(cloud::code_letters());
+        if (action == Action::Previous) {
+            g_code_letter = (g_code_letter + letters - 1) % letters;
+            return true;
+        }
+        if (action == Action::Next) {
+            g_code_letter = (g_code_letter + 1) % letters;
+            return true;
+        }
+    }
+    if (action != Action::Accept) {
+        return false;
+    }
+    if (key == kCloudCode || key == kCloudAdd) {
+        if (g_code_typed.size() < kCloudCodeLength) {
+            g_code_typed.push_back(cloud::code_letters()[g_code_letter]);
+        } else {
+            submit_code();
+        }
+    } else if (key == kCloudErase) {
+        if (!g_code_typed.empty()) {
+            g_code_typed.pop_back();
+        }
+    } else if (key == kCloudCancel) {
+        g_code_entry = false;
+        g_code_typed.clear();
+    } else if (key == kCloudEnter) {
+        g_code_entry = true;
+        g_code_typed.clear();
+        g_code_letter = 0;
+    } else if (key == kCloudCreate) {
+        cloud::create();
+    } else if (key == kCloudKeepHere) {
+        cloud::keep_here();
+    } else if (key == kCloudKeepOther) {
+        cloud::keep_other();
+    } else if (key == kCloudOff) {
+        cloud::disconnect();
+    } else {
+        return false;
+    }
+    return true;
+}
+
 constexpr const char* kHdTextures = "video.hd_textures";
 
 const Slider* slider_of(const std::string& key) {
@@ -206,6 +332,8 @@ std::vector<std::string> tab_keys(size_t tab, Device device) {
     }
     case 1: {
         std::vector<std::string> keys = {"game.text_speed", "game.skip_movies", "game.button_icons", "game.save_photos", "saves.backups", "system.discord", kPlayTime};
+        std::vector<std::string> sync_rows = cloud_keys();
+        keys.insert(keys.begin() + 5, sync_rows.begin(), sync_rows.end());
         if (kPhone) {
             keys.erase(std::find(keys.begin(), keys.end(), "system.discord"));
         }
@@ -265,11 +393,15 @@ std::vector<std::string> tab_keys(size_t tab, Device device) {
 }
 
 Kind kind(const std::string& key) {
-    if (key == kResetKeys || key == kResetPad || key == kResetColors || key == kHdTextures || key == kFlyCamera) {
+    if (key == kResetKeys || key == kResetPad || key == kResetColors || key == kHdTextures || key == kFlyCamera || key == kCloudCreate || key == kCloudEnter ||
+        key == kCloudAdd || key == kCloudErase || key == kCloudCancel || key == kCloudKeepHere || key == kCloudKeepOther || key == kCloudOff) {
         return Kind::Button;
     }
-    if (key == kPlayTime || key == kUpdate) {
+    if (key == kPlayTime || key == kUpdate || key == kCloudStatus) {
         return Kind::Info;
+    }
+    if (key == kCloudCode) {
+        return Kind::Choice;
     }
     if (starts_with(key, "keys.")) {
         return Kind::Key;
@@ -583,6 +715,16 @@ std::vector<Row> Menu::rows() const {
             row.value = play_time::format(play_time::seconds(), ui::language());
         } else if (key == kUpdate) {
             row.value = update_text();
+        } else if (key == kCloudStatus) {
+            row.value = cloud_status_text();
+        } else if (key == kCloudCode) {
+            row.value = code_entry_text();
+        } else if (key == kCloudAdd) {
+            row.value = g_code_typed.size() == kCloudCodeLength ? ui::label("saves.cloud.confirm") : "";
+        } else if (key == kCloudKeepHere) {
+            row.value = play_time::format(play_time::seconds(), ui::language());
+        } else if (key == kCloudKeepOther) {
+            row.value = cloud::other_device() + " - " + play_time::format(cloud::other_seconds(), ui::language());
         } else if (key == kHdTextures) {
             row.value = hd_text();
         } else if (key == kFlyCamera) {
@@ -671,6 +813,12 @@ std::string Menu::handle(Action action) {
         update::open_page();
         return "";
     }
+    if (changes_value && starts_with(key, "saves.cloud_") && cloud_action(key, action)) {
+        std::vector<std::string> updated = this->keys();
+        selection_ = std::min(selection_, updated.size() - 1);
+        keep_visible();
+        return "";
+    }
     if (changes_value && type == Kind::Info) {
         return "";
     }
@@ -742,6 +890,36 @@ std::string Menu::handle(Action action) {
     }
     }
     return "";
+}
+
+bool code_entry_key(unsigned key) {
+    if (!g_code_entry) {
+        return false;
+    }
+    if (key == 0x08) {
+        if (!g_code_typed.empty()) {
+            g_code_typed.pop_back();
+        }
+        return true;
+    }
+    if (key == 0x0D && g_code_typed.size() == kCloudCodeLength) {
+        submit_code();
+        return true;
+    }
+    if (key == 0x1B) {
+        g_code_entry = false;
+        g_code_typed.clear();
+        return true;
+    }
+    bool letter = (key >= '0' && key <= '9') || (key >= 'A' && key <= 'Z');
+    if (!letter) {
+        return false;
+    }
+    char character = key == 'O' ? '0' : (key == 'I' || key == 'L') ? '1' : static_cast<char>(key);
+    if (std::strchr(cloud::code_letters(), character) && g_code_typed.size() < kCloudCodeLength) {
+        g_code_typed.push_back(character);
+    }
+    return true;
 }
 
 uint32_t Repeat::update(uint32_t held, int64_t now) {

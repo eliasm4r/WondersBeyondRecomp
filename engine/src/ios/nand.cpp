@@ -18,7 +18,7 @@
 #include "wp/log.h"
 #include "wp/memory.h"
 #include "wp/save_backup.h"
-#include "wp/save_sync.h"
+#include "wp/cloud_sync.h"
 #include "wp/screenshot.h"
 #include "wp/settings.h"
 
@@ -81,18 +81,6 @@ int backups_to_keep() {
     return static_cast<int>(std::clamp(number, 0L, 1000L));
 }
 
-void sync_save(bool may_pull) {
-    const std::string folder = settings::text("saves.sync_folder", "WP_SAVE_SYNC");
-    if (folder.empty() || g_save.empty()) {
-        return;
-    }
-    saves::SyncOutcome outcome = saves::sync(g_root, g_save, g_backups, fs::u8path(folder), may_pull, backups_to_keep(), std::time(nullptr));
-    log::write("nand", "save sync: %s", outcome.message.c_str());
-    if (outcome.result == saves::SyncResult::Conflict || outcome.result == saves::SyncResult::Failed) {
-        std::fprintf(stderr, "save sync: %s\n", outcome.message.c_str());
-    }
-}
-
 void back_up_save(const char* moment) {
     int keep = backups_to_keep();
     if (keep == 0 || g_save.empty()) {
@@ -113,9 +101,6 @@ void back_up_save(const char* moment) {
         std::fprintf(stderr, "save backup (%s): %s\n", moment, outcome.message.c_str());
     }
     log::write("nand", "save backup (%s): %s", moment, outcome.message.c_str());
-    if (std::strcmp(moment, "start") != 0) {
-        sync_save(false);
-    }
 }
 
 bool same_element(const fs::path& first, const fs::path& second) {
@@ -430,7 +415,7 @@ bool mount(const std::string& root) {
     g_backups = saves::backups_beside(g_root);
     g_backed_up = false;
     back_up_save("start");
-    sync_save(true);
+    cloud::start(g_root, g_save, g_backups, backups_to_keep());
     return true;
 }
 
@@ -529,6 +514,9 @@ void close(int32_t handle) {
     g_files.erase(it);
     if (saved || g_backup_pending) {
         save_changed();
+    }
+    if (saved) {
+        cloud::saved();
     }
 }
 

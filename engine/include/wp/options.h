@@ -48,6 +48,7 @@ bool live(const std::string& key);
 std::vector<std::string> choices(const std::string& key);
 std::string shown_value(const std::string& key, const std::string& value);
 std::string step_value(const std::string& key, const std::string& value, int step);
+bool code_entry_key(unsigned key);
 
 class Menu {
 public:

@@ -154,7 +154,7 @@ void move_old_game_folder() {
         return;
     }
     fs::create_directories(folder, error);
-    for (const char* name : {"disc", "extracted", "nand", "backups", "sync_base", "textures", "settings.ini", "stats.ini"}) {
+    for (const char* name : {"disc", "extracted", "nand", "backups", "cloud_sync.txt", "textures", "settings.ini", "stats.ini"}) {
         if (fs::exists(old_folder / name, error) && !fs::exists(folder / name, error)) {
             fs::rename(old_folder / name, folder / name, error);
         }

@@ -40,7 +40,6 @@
 #include "wp/options_window.h"
 #include "wp/save_backup.h"
 #include "wp/save_cloud.h"
-#include "wp/save_sync.h"
 #include "wp/padmap.h"
 #include "wp/frame_pacing.h"
 #include "wp/free_camera.h"
@@ -302,55 +301,6 @@ void write_file(const std::filesystem::path& path, const std::string& contents) 
 std::string read_file(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary);
     return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
-}
-
-void test_save_sync() {
-    namespace fs = std::filesystem;
-    using wp::saves::SyncResult;
-    std::error_code error;
-    fs::path root = fs::temp_directory_path(error) / "wp_save_sync_tests";
-    fs::remove_all(root, error);
-    fs::path relative = wp::saves::save_relative(0x53555045);
-    fs::path shared = root / "shared";
-    fs::create_directories(shared, error);
-    fs::path first = root / "first" / "nand";
-    fs::path second = root / "second" / "nand";
-    fs::create_directories(first / relative, error);
-    fs::create_directories(second / relative, error);
-    auto put = [&](const fs::path& nand, const char* text) {
-        std::ofstream file(nand / relative / "GD0", std::ios::binary | std::ios::trunc);
-        file << text;
-    };
-    std::time_t now = 1790000000;
-    auto run = [&](const fs::path& nand, bool may_pull) {
-        return wp::saves::sync(nand, relative, wp::saves::backups_beside(nand), shared, may_pull, 5, now++).result;
-    };
-    CHECK(run(first, true) == SyncResult::Same);
-    put(first, "one");
-    CHECK(run(first, false) == SyncResult::Pushed);
-    CHECK(run(second, false) == SyncResult::Waiting);
-    CHECK(read_file(second / relative / "GD0").empty());
-    CHECK(run(second, true) == SyncResult::Pulled);
-    CHECK(read_file(second / relative / "GD0") == "one");
-    put(second, "two");
-    CHECK(run(second, false) == SyncResult::Pushed);
-    CHECK(run(first, false) == SyncResult::Waiting);
-    CHECK(read_file(first / relative / "GD0") == "one");
-    CHECK(run(first, true) == SyncResult::Pulled);
-    CHECK(read_file(first / relative / "GD0") == "two");
-    put(first, "three");
-    put(second, "four");
-    CHECK(run(first, false) == SyncResult::Pushed);
-    CHECK(run(second, true) == SyncResult::Conflict);
-    CHECK(read_file(second / relative / "GD0") == "four");
-    CHECK(read_file(shared / "53555045" / relative / "GD0") == "three");
-    {
-        std::ofstream file(shared / "53555045" / relative / "GD0", std::ios::binary | std::ios::trunc);
-        file << "half";
-    }
-    CHECK(run(first, true) == SyncResult::Waiting);
-    CHECK(read_file(first / relative / "GD0") == "three");
-    fs::remove_all(root, error);
 }
 
 void test_save_cloud() {
@@ -2114,7 +2064,7 @@ void test_options_menu() {
                                                                  "video.brightness", "video.contrast", "video.saturation", "video.gamma", "video.colors_reset"}));
     CHECK(std::strcmp(wp::ui::label("video.colors_reset", wp::ui::Language::French), "Couleurs d'origine") == 0);
     CHECK(std::strcmp(wp::ui::label("video.brightness", wp::ui::Language::French), "Luminosité") == 0);
-    CHECK((wp::options::tab_keys(1) == std::vector<std::string>{"game.text_speed", "game.skip_movies", "game.button_icons", "game.save_photos", "saves.backups", "system.discord", "stats.play_time"}));
+    CHECK((wp::options::tab_keys(1) == std::vector<std::string>{"game.text_speed", "game.skip_movies", "game.button_icons", "game.save_photos", "saves.backups", "saves.cloud_status", "saves.cloud_create", "saves.cloud_enter", "system.discord", "stats.play_time"}));
     CHECK((wp::options::tab_keys(2) == std::vector<std::string>{"audio.volume", "audio.mute", "audio.wiimote_speaker"}));
     CHECK((wp::options::tab_keys(6) == std::vector<std::string>{"cheats.fly_camera", "cheats.run_speed", "cheats.jump", "cheats.damage_dealt", "cheats.damage_taken", "cheats.berries", "cheats.prices", "cheats.chase_speed"}));
     CHECK((wp::options::choices("cheats.damage_taken") == std::vector<std::string>{"100", "150", "200", "300", "500", "1000", "0", "25", "50", "75"}) && wp::settings::number("cheats.jump", nullptr) == 100);
@@ -2206,9 +2156,9 @@ void test_options_menu() {
     CHECK(wp::settings::flag("game.button_icons", nullptr));
     CHECK(rows[3].key == "game.save_photos" && rows[3].kind == wp::options::Kind::Toggle && rows[3].live);
     CHECK(wp::settings::flag("game.save_photos", nullptr));
-    menu.select(6);
+    menu.select(9);
     rows = menu.rows();
-    CHECK(rows[6].kind == wp::options::Kind::Info && !rows[6].value.empty() && rows[6].live);
+    CHECK(rows[9].kind == wp::options::Kind::Info && !rows[9].value.empty() && rows[9].live);
     CHECK(menu.handle(wp::options::Action::Accept).empty() && menu.handle(wp::options::Action::Next).empty());
     CHECK(menu.handle(wp::options::Action::Previous).empty() && !menu.capturing());
 
@@ -3042,7 +2992,6 @@ int main() {
     test_disc_drive();
     test_save_backups();
     test_save_cloud();
-    test_save_sync();
     test_adopt_root_files();
     test_title_data_directory();
     test_read_directory_forms();
