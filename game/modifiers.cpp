@@ -53,6 +53,38 @@ constexpr uint32_t kLongestMotion = 16;
 std::string g_motion;
 uint32_t g_motion_flags = 0;
 uint32_t g_motion_serial = 0;
+constexpr uint32_t kSoundSlot = 0x38;
+constexpr uint32_t kEffectSlot = 0x3c;
+constexpr int kEventFrames = 20;
+uint32_t g_sound_module = 0;
+uint32_t g_effect_module = 0;
+std::array<float, 3> g_controlled_position{};
+uint32_t g_event_serial = 0;
+int g_event_frame = 0;
+
+struct RecentEvent {
+    int frame = 0;
+    presence::Event event;
+};
+
+std::vector<RecentEvent> g_recent;
+
+uint32_t module_at(uint32_t accessor, uint32_t slot) {
+    return rd32(accessor + (rd32(rd32(rd32(accessor) + slot)) & 0xffff));
+}
+
+std::array<float, 3> vector_at(uint32_t address) {
+    return {rdf32(address), rdf32(address + 4), rdf32(address + 8)};
+}
+
+void record(presence::Event event) {
+    event.serial = ++g_event_serial;
+    g_recent.push_back({g_event_frame, event});
+}
+
+std::array<float, 3> from_player(const std::array<float, 3>& point) {
+    return {point[0] - g_controlled_position[0], point[1] - g_controlled_position[1], point[2] - g_controlled_position[2]};
+}
 
 struct ShownPlayer {
     bool valid = false;
@@ -93,7 +125,16 @@ void publish_player() {
         return;
     }
     uint32_t zone = disc::current_field();
-    online::update(g_shown.position, zone, {g_shown.rotation, g_shown.character, g_motion, g_motion_flags, g_motion_serial});
+    g_event_frame++;
+    g_recent.erase(std::remove_if(g_recent.begin(), g_recent.end(), [](const RecentEvent& recent) { return g_event_frame - recent.frame > kEventFrames; }), g_recent.end());
+    if (g_recent.size() > presence::kMostEvents) {
+        g_recent.erase(g_recent.begin(), g_recent.end() - presence::kMostEvents);
+    }
+    std::vector<presence::Event> events;
+    for (const RecentEvent& recent : g_recent) {
+        events.push_back(recent.event);
+    }
+    online::update(g_shown.position, zone, {g_shown.rotation, g_shown.character, g_motion, g_motion_flags, g_motion_serial, std::move(events)});
     g_shown.valid = false;
     if (!g_field_camera) {
         return;
@@ -201,6 +242,9 @@ void player_move(Cpu& c, HleFunction original) {
         if (followed) {
             distance = -1.0f;
             g_controlled_accessor = rd32(player + kPlayerAccessor);
+            g_sound_module = module_at(g_controlled_accessor, kSoundSlot);
+            g_effect_module = module_at(g_controlled_accessor, kEffectSlot);
+            g_controlled_position = vector_at(now);
         } else if (g_field_camera) {
             uint32_t target = g_field_camera + kCameraTarget;
             for (uint32_t i = 0; i < 3; i++) {
@@ -253,6 +297,46 @@ void motion_start(Cpu& c, HleFunction original) {
         g_motion = name;
         g_motion_flags = c.r[7];
         g_motion_serial++;
+    }
+    original(c);
+}
+
+void sound_play(Cpu& c, HleFunction original) {
+    if (c.r[3] == g_sound_module && online::running()) {
+        presence::Event event;
+        event.kind = 0;
+        event.id = c.r[5];
+        event.f1 = static_cast<float>(c.f[1]);
+        event.f2 = static_cast<float>(c.f[2]);
+        record(event);
+    }
+    original(c);
+}
+
+void effect_at(Cpu& c, HleFunction original) {
+    if (c.r[3] == g_effect_module && online::running()) {
+        presence::Event event;
+        event.kind = 1;
+        event.id = c.r[4];
+        event.offset = from_player(vector_at(c.r[5]));
+        event.vector = vector_at(c.r[6]);
+        event.f1 = rdf32(c.r[7]);
+        record(event);
+    }
+    original(c);
+}
+
+void effect_on(Cpu& c, HleFunction original) {
+    if (c.r[3] == g_effect_module && online::running()) {
+        presence::Event event;
+        event.kind = 2;
+        event.id = c.r[4];
+        event.a = c.r[6];
+        event.b = c.r[7];
+        event.c = c.r[8];
+        event.f1 = static_cast<float>(c.f[1]);
+        event.f2 = static_cast<float>(c.f[2]);
+        record(event);
     }
     original(c);
 }

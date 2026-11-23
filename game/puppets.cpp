@@ -54,6 +54,17 @@ constexpr uint32_t kHitSlot = 0x68;
 constexpr uint32_t kJostleSlot = 0x5c;
 constexpr uint32_t kSetHittable = 0x3c;
 constexpr uint32_t kSetPushable = 0x6c;
+constexpr uint32_t kSoundSlot = 0x38;
+constexpr uint32_t kEffectSlot = 0x3c;
+constexpr uint32_t kPlaySound = 0x60;
+constexpr uint32_t kEffectAt = 0x60;
+constexpr uint32_t kEffectOn = 0x70;
+constexpr uint32_t kEventPoint = 0x240;
+constexpr uint32_t kEventVector = 0x250;
+constexpr uint32_t kEventScale = 0x260;
+constexpr uint32_t kEffectManager = 0x800769e0;
+constexpr uint32_t kEffectGroups = 0x24;
+constexpr uint32_t kGroupMatches = 0x80062570;
 
 struct Puppet {
     uint32_t peer = 0;
@@ -63,6 +74,8 @@ struct Puppet {
     uint32_t motion = 0;
     uint32_t serial = 0;
     uint32_t position_address = 0;
+    uint32_t last_event = 0;
+    bool heard = false;
     bool ready = false;
     int age = 0;
     int changed = 0;
@@ -124,6 +137,64 @@ void finish(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) 
     log::write("online", "showing %s as a character", peer.name.c_str());
 }
 
+bool effect_loaded(Cpu& c, uint32_t id) {
+    c.r[3] = 0;
+    call(c, kEffectManager);
+    for (uint32_t group = rd32(c.r[3] + kEffectGroups); group; group = rd32(group)) {
+        if (guest(c, kGroupMatches, group, id >> 16) == 1) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void replay(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t accessor, uint32_t frame) {
+    uint32_t newest = puppet.last_event;
+    for (const presence::Event& event : peer.pose.events) {
+        if (!puppet.heard || static_cast<int32_t>(event.serial - puppet.last_event) <= 0) {
+            if (static_cast<int32_t>(event.serial - newest) > 0) {
+                newest = event.serial;
+            }
+            continue;
+        }
+        if (static_cast<int32_t>(event.serial - newest) > 0) {
+            newest = event.serial;
+        }
+        if (event.kind != 0 && !effect_loaded(c, event.id)) {
+            continue;
+        }
+        uint32_t point = frame + kEventPoint;
+        uint32_t vector = frame + kEventVector;
+        uint32_t scale = frame + kEventScale;
+        for (uint32_t i = 0; i < 3; i++) {
+            wrf32(point + 4 * i, puppet.position[i] + event.offset[i]);
+            wrf32(vector + 4 * i, event.vector[i]);
+            wrf32(scale + 4 * i, event.f1);
+        }
+        uint32_t module = method(c, accessor, event.kind == 0 ? kSoundSlot : kEffectSlot);
+        uint32_t table = rd32(module);
+        if (event.kind == 0) {
+            c.r[7] = 0;
+            c.r[8] = 0;
+            c.f[1] = event.f1;
+            c.f[2] = event.f2;
+            guest(c, rd32(table + kPlaySound), module, accessor, event.id, 0xffffffffu);
+        } else if (event.kind == 1) {
+            c.r[7] = scale;
+            guest(c, rd32(table + kEffectAt), module, event.id, point, vector);
+        } else {
+            uint32_t model = method(c, accessor, kModelSlot);
+            c.r[7] = event.b;
+            c.r[8] = event.c;
+            c.f[1] = event.f1;
+            c.f[2] = event.f2;
+            guest(c, rd32(table + kEffectOn), module, event.id, model, event.a);
+        }
+    }
+    puppet.last_event = newest;
+    puppet.heard = true;
+}
+
 void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) {
     uint32_t accessor = guest(c, kAccessor, puppet.object);
     uint32_t posture = method(c, accessor, kPostureSlot);
@@ -141,6 +212,7 @@ void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) 
         wrf32(position + 4 * i, puppet.position[i]);
         wrf32(rotation + 4 * i, peer.pose.rotation[i]);
     }
+    replay(c, puppet, peer, accessor, frame);
     method(c, method(c, accessor, kHitSlot), kSetHittable, 0);
     method(c, method(c, accessor, kJostleSlot), kSetPushable, 0);
     if (peer.pose.motion.empty()) {

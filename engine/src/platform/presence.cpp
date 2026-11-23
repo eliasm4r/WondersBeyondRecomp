@@ -37,12 +37,16 @@ constexpr size_t kMotionAt = kCharacterAt + 4;
 constexpr size_t kMotionBytes = 16;
 constexpr size_t kMotionFlagsAt = kMotionAt + kMotionBytes;
 constexpr size_t kMotionSerialAt = kMotionFlagsAt + 4;
-constexpr size_t kPacketBytes = kMotionSerialAt + 4;
+constexpr size_t kEventCountAt = kMotionSerialAt + 4;
+constexpr size_t kPacketBytes = kEventCountAt + 4;
+constexpr size_t kEventWords = 14;
+constexpr size_t kEventBytes = kEventWords * 4;
+constexpr uint32_t kEventKinds = 3;
 constexpr size_t kMaxOthers = 3;
 constexpr double kPeerTimeout = 5.0;
 constexpr float kLargestCoordinate = 1e6f;
 constexpr int kMaxPacketsPerPump = 64;
-constexpr size_t kLargestDatagram = 512;
+constexpr size_t kLargestDatagram = kPacketBytes + kMostEvents * kEventBytes;
 constexpr uint32_t kStunCookie = 0x2112A442;
 constexpr size_t kStunHeader = 20;
 constexpr int kStunServers = 2;
@@ -71,7 +75,7 @@ std::string clean_name(const char* text, size_t size) {
 }
 
 bool decode(const uint8_t* data, size_t size, Peer& peer) {
-    if (size != kPacketBytes || get32(data) != kMagic) {
+    if (size < kPacketBytes || get32(data) != kMagic) {
         return false;
     }
     peer.id = get32(data + 4);
@@ -102,6 +106,36 @@ bool decode(const uint8_t* data, size_t size, Peer& peer) {
     }
     peer.pose.motion_flags = get32(data + kMotionFlagsAt);
     peer.pose.motion_serial = get32(data + kMotionSerialAt);
+    uint32_t count = get32(data + kEventCountAt);
+    if (count > kMostEvents || size != kPacketBytes + count * kEventBytes) {
+        return false;
+    }
+    peer.pose.events.resize(count);
+    for (uint32_t i = 0; i < count; i++) {
+        const uint8_t* at = data + kPacketBytes + i * kEventBytes;
+        Event& event = peer.pose.events[i];
+        event.serial = get32(at);
+        event.kind = get32(at + 4);
+        event.id = get32(at + 8);
+        event.a = get32(at + 12);
+        event.b = get32(at + 16);
+        event.c = get32(at + 20);
+        std::array<float, 8> numbers;
+        for (size_t n = 0; n < numbers.size(); n++) {
+            uint32_t bits = get32(at + 24 + 4 * n);
+            std::memcpy(&numbers[n], &bits, sizeof bits);
+            if (!std::isfinite(numbers[n]) || std::fabs(numbers[n]) > kLargestCoordinate) {
+                return false;
+            }
+        }
+        if (event.kind >= kEventKinds) {
+            return false;
+        }
+        event.f1 = numbers[0];
+        event.f2 = numbers[1];
+        event.offset = {numbers[2], numbers[3], numbers[4]};
+        event.vector = {numbers[5], numbers[6], numbers[7]};
+    }
     peer.zone = get32(data + 24);
     peer.name = clean_name(reinterpret_cast<const char*>(data + kNameAt), kNameBytes);
     return peer.id != 0;
@@ -218,8 +252,8 @@ struct Link::Impl {
         return true;
     }
 
-    void transmit(const uint8_t* data, const sockaddr_storage& to) const {
-        sendto(socket, reinterpret_cast<const char*>(data), static_cast<int>(kPacketBytes), 0, reinterpret_cast<const sockaddr*>(&to), address_size(to));
+    void transmit(const uint8_t* data, size_t length, const sockaddr_storage& to) const {
+        sendto(socket, reinterpret_cast<const char*>(data), static_cast<int>(length), 0, reinterpret_cast<const sockaddr*>(&to), address_size(to));
     }
 
     void prepare(const std::string& text) {
@@ -408,7 +442,9 @@ void Link::send(const std::array<float, 3>& position, uint32_t zone, const Pose&
     if (m_impl->socket == kNoSocket) {
         return;
     }
-    uint8_t packet[kPacketBytes] = {};
+    uint8_t packet[kLargestDatagram] = {};
+    size_t events = std::min(pose.events.size(), kMostEvents);
+    size_t length = kPacketBytes + events * kEventBytes;
     put32(packet, kMagic);
     put32(packet + 4, m_impl->id);
     put32(packet + 8, ++m_impl->sequence);
@@ -427,19 +463,36 @@ void Link::send(const std::array<float, 3>& position, uint32_t zone, const Pose&
     std::memcpy(packet + kMotionAt, pose.motion.data(), std::min(pose.motion.size(), kMotionBytes));
     put32(packet + kMotionFlagsAt, pose.motion_flags);
     put32(packet + kMotionSerialAt, pose.motion_serial);
+    put32(packet + kEventCountAt, static_cast<uint32_t>(events));
+    for (size_t i = 0; i < events; i++) {
+        uint8_t* at = packet + kPacketBytes + i * kEventBytes;
+        const Event& event = pose.events[i];
+        put32(at, event.serial);
+        put32(at + 4, event.kind);
+        put32(at + 8, event.id);
+        put32(at + 12, event.a);
+        put32(at + 16, event.b);
+        put32(at + 20, event.c);
+        const std::array<float, 8> numbers = {event.f1, event.f2, event.offset[0], event.offset[1], event.offset[2], event.vector[0], event.vector[1], event.vector[2]};
+        for (size_t n = 0; n < numbers.size(); n++) {
+            uint32_t bits;
+            std::memcpy(&bits, &numbers[n], sizeof bits);
+            put32(at + 24 + 4 * n, bits);
+        }
+    }
     std::memcpy(packet + kNameAt, m_impl->name, kNameBytes);
     if (m_impl->hosting) {
         for (const Client& client : m_impl->clients) {
-            m_impl->transmit(packet, client.address);
+            m_impl->transmit(packet, length, client.address);
         }
     } else if (m_impl->has_server) {
-        m_impl->transmit(packet, m_impl->server);
+        m_impl->transmit(packet, length, m_impl->server);
     }
     if (m_impl->hosting || !m_impl->has_server) {
         for (const Target& target : m_impl->targets) {
             bool known = std::any_of(m_impl->clients.begin(), m_impl->clients.end(), [&](const Client& c) { return same_address(c.address, target.address); });
             if (!known && target.until > m_impl->now) {
-                m_impl->transmit(packet, target.address);
+                m_impl->transmit(packet, length, target.address);
             }
         }
     }
@@ -500,7 +553,7 @@ void Link::pump(double now) {
         if (m_impl->hosting) {
             for (const Client& client : m_impl->clients) {
                 if (client.id != incoming.id) {
-                    m_impl->transmit(data, client.address);
+                    m_impl->transmit(data, static_cast<size_t>(got), client.address);
                 }
             }
         }

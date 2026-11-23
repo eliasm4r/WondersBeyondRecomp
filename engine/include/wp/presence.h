@@ -7,12 +7,28 @@
 
 namespace wp::presence {
 
+constexpr size_t kMostEvents = 8;
+
+struct Event {
+    uint32_t serial = 0;
+    uint32_t kind = 0;
+    uint32_t id = 0;
+    uint32_t a = 0;
+    uint32_t b = 0;
+    uint32_t c = 0;
+    float f1 = 0.0f;
+    float f2 = 0.0f;
+    std::array<float, 3> offset{};
+    std::array<float, 3> vector{};
+};
+
 struct Pose {
     std::array<float, 3> rotation{};
     uint32_t character = 0;
     std::string motion;
     uint32_t motion_flags = 0;
     uint32_t motion_serial = 0;
+    std::vector<Event> events;
 };
 
 struct Peer {

@@ -348,6 +348,22 @@ void test_presence() {
         cleaned = cleaned || peer.name == "Second?";
     }
     CHECK(cleaned);
+    wp::presence::Pose pose;
+    wp::presence::Event sent;
+    sent.serial = 9;
+    sent.kind = 2;
+    sent.id = 0x20010003;
+    sent.a = 13;
+    sent.f1 = 0.5f;
+    sent.offset = {1.0f, 2.0f, 3.0f};
+    pose.events = {sent, sent};
+    first.send({1.5f, 2.0f, 3.0f}, 0, pose);
+    settle(1.2);
+    bool got_events = false;
+    for (const auto& peer : host.peers()) {
+        got_events = got_events || (peer.name == "First" && peer.pose.events.size() == 2 && peer.pose.events[1].id == 0x20010003 && peer.pose.events[1].a == 13 && peer.pose.events[1].offset[2] == 3.0f);
+    }
+    CHECK(got_events);
     settle(7.0);
     CHECK(host.peers().empty());
     CHECK(first.peers().empty());
