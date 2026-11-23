@@ -1,5 +1,5 @@
-const MAX_BYTES = 32768;
-const MAX_SAVES = 100000;
+const MAX_BYTES = 65536;
+const MAX_SAVES = 80000;
 const KEEP_SECONDS = 365 * 24 * 60 * 60;
 const PATH = /^\/v1\/saves\/([0-9a-f]{64})$/;
 
