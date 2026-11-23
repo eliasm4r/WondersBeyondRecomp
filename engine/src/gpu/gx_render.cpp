@@ -39,6 +39,7 @@
 #include "wp/memory.h"
 #include "wp/frame_pacing.h"
 #include "wp/options.h"
+#include "wp/ghosts.h"
 #include "wp/hint.h"
 #include "wp/perf_overlay.h"
 #include "wp/screenshot.h"
@@ -812,6 +813,12 @@ struct Device {
     uint32_t hint_height = 0;
     uint64_t hint_version = 0;
     bool hint_visible = false;
+    ID3D11Texture2D* ghosts = nullptr;
+    ID3D11ShaderResourceView* ghosts_view = nullptr;
+    uint32_t ghosts_width = 0;
+    uint32_t ghosts_height = 0;
+    uint64_t ghosts_version = 0;
+    bool ghosts_visible = false;
     ID3D11RasterizerState* rasterizer = nullptr;
     std::map<uint32_t, ID3D11BlendState*> blend_states;
     std::map<uint32_t, ID3D11DepthStencilState*> depth_states;
@@ -4098,11 +4105,18 @@ void draw_overlay(const RECT& client) {
     if (hint::take(g_device.hint_version, image, g_device.hint_visible) && !image.pixels.empty()) {
         upload_overlay(image, g_device.hint, g_device.hint_view, g_device.hint_width, g_device.hint_height);
     }
+    if (ghosts::take(g_device.ghosts_version, image, g_device.ghosts_visible) && !image.pixels.empty()) {
+        upload_overlay(image, g_device.ghosts, g_device.ghosts_view, g_device.ghosts_width, g_device.ghosts_height);
+    }
+    bool players = g_device.ghosts_visible && g_device.ghosts_view;
     bool hud = g_device.hud_visible && g_device.hud_view;
     bool menu = g_device.overlay_visible && g_device.overlay_view;
     bool hint = g_device.hint_visible && g_device.hint_view;
-    if ((!hud && !menu && !hint) || !create_overlay_pipeline()) {
+    if ((!hud && !menu && !hint && !players) || !create_overlay_pipeline()) {
         return;
+    }
+    if (players) {
+        draw_image(g_device.ghosts_view, ghosts::place());
     }
     if (hud) {
         draw_image(g_device.hud_view, perf::corner_rect(client.right, client.bottom, static_cast<int>(g_device.hud_width), static_cast<int>(g_device.hud_height), g_device.hud_corner));
@@ -4150,6 +4164,7 @@ bool present_view(HWND window, double aspect, ID3D11ShaderResourceView* view) {
     }
     D3D11_VIEWPORT viewport{static_cast<float>((client.right - width) / 2), static_cast<float>((client.bottom - height) / 2),
                             static_cast<float>(width), static_cast<float>(height), 0.0f, 1.0f};
+    ghosts::set_picture({static_cast<int>((client.right - width) / 2), static_cast<int>((client.bottom - height) / 2), static_cast<int>(width), static_cast<int>(height)});
     g_auto_scale = scale_for_screen(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST));
     context->RSSetViewports(1, &viewport);
     context->RSSetState(g_device.present_rasterizer);

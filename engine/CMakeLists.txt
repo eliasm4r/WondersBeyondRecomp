@@ -52,6 +52,7 @@ add_library(wp_engine STATIC
     src/platform/play_time.cpp
     src/platform/perf.cpp
     src/platform/perf_overlay.cpp
+    src/platform/ghosts.cpp
     src/platform/hint.cpp
     src/platform/system_stats.cpp
     src/platform/ui_text.cpp

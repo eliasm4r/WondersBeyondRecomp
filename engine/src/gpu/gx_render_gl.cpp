@@ -35,6 +35,7 @@
 #include "wp/memory.h"
 #include "wp/titlebar.h"
 #include "wp/options.h"
+#include "wp/ghosts.h"
 #include "wp/hint.h"
 #include "wp/perf_overlay.h"
 #include "wp/screenshot.h"
@@ -1000,6 +1001,11 @@ struct Device {
     uint32_t hint_height = 0;
     uint64_t hint_version = 0;
     bool hint_visible = false;
+    GLuint ghosts_texture = 0;
+    uint32_t ghosts_width = 0;
+    uint32_t ghosts_height = 0;
+    uint64_t ghosts_version = 0;
+    bool ghosts_visible = false;
     GLuint bar_texture = 0;
     uint32_t bar_width = 0;
     uint32_t bar_height = 0;
@@ -3487,6 +3493,12 @@ void draw_overlay(int client_width, int client_height, int bar) {
     if (hint::take(g_device.hint_version, image, g_device.hint_visible) && !image.pixels.empty()) {
         upload_image(g_device.hint_texture, g_device.hint_width, g_device.hint_height, image);
     }
+    if (ghosts::take(g_device.ghosts_version, image, g_device.ghosts_visible) && !image.pixels.empty()) {
+        upload_image(g_device.ghosts_texture, g_device.ghosts_width, g_device.ghosts_height, image);
+    }
+    if (g_device.ghosts_visible) {
+        draw_image(g_device.ghosts_texture, ghosts::place(), client_height);
+    }
     if (g_device.hud_visible) {
         options::Rect placed = perf::corner_rect(client_width, client_height - bar, static_cast<int>(g_device.hud_width), static_cast<int>(g_device.hud_height), g_device.hud_corner);
         placed.y += bar;
@@ -3559,6 +3571,7 @@ bool present_frame(void* window_handle, double aspect) {
         height = box_height;
         width = height * aspect;
     }
+    ghosts::set_picture({static_cast<int>((client_width - width) / 2), bar + static_cast<int>((area - height) / 2), static_cast<int>(width), static_cast<int>(height)});
     gl.Viewport(static_cast<GLint>((client_width - width) / 2), static_cast<GLint>((area - height) / 2), static_cast<GLsizei>(width),
                 static_cast<GLsizei>(height));
     use_fullscreen(g_device.present, 1.0f);

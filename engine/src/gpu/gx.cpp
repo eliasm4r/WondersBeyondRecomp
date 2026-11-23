@@ -30,6 +30,7 @@
 #include <vector>
 
 #include "gx_render_common.h"
+#include "wp/ghosts.h"
 #include "wp/gx_lighting.h"
 #include "wp/gx_render.h"
 #include "wp/gx_state.h"
@@ -1972,6 +1973,11 @@ void flush_run() {
     lighting::begin(g_xf);
     begin_texture_coordinates();
     begin_projection();
+    if (ghosts::active() && screen_camera() && g_projection.e != 0.0f && g_projection.f / g_projection.e > kWorldFar) {
+        const ProjectionState& seen = g_projection;
+        render::Canvas shown = render::canvas();
+        ghosts::set_projection({seen.a, seen.b, seen.c, seen.d, seen.x_scale, seen.x_offset, seen.y_scale, seen.y_offset, shown.margin_x, shown.margin_y});
+    }
     fit_canvas(count);
     begin_colors();
     g_recording = render::interpolating();

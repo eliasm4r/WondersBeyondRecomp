@@ -39,6 +39,7 @@
 #include "wp/options.h"
 #include "wp/options_window.h"
 #include "wp/disc.h"
+#include "wp/ghosts.h"
 #include "wp/presence.h"
 #include "wp/save_backup.h"
 #include "wp/save_cloud.h"
@@ -354,6 +355,26 @@ void test_presence() {
     CHECK(wp::disc::field_in_path("game/extracted/files/Field/FdAB02Res.dac") == 0);
     CHECK(wp::disc::field_in_path("game/extracted/files/Archive/MenuField.dac") == 0);
     CHECK(wp::disc::field_in_path("Field/Fd") == 0);
+}
+
+void test_ghost_projection() {
+    wp::ghosts::Projection p{1.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 2.0f * 228.0f / 528.0f, 1.0f - 456.0f / 528.0f, 0, 0};
+    std::array<float, 3> eye{0.0f, 0.0f, 0.0f};
+    std::array<float, 3> target{0.0f, 0.0f, -1.0f};
+    float u = 0.0f;
+    float v = 0.0f;
+    CHECK(wp::ghosts::to_picture(p, eye, target, {0.0f, 0.0f, -2.0f}, u, v));
+    CHECK(std::fabs(u - 0.5f) < 1e-4f && std::fabs(v - 0.5f) < 1e-4f);
+    CHECK(wp::ghosts::to_picture(p, eye, target, {1.0f, 0.0f, -2.0f}, u, v));
+    CHECK(std::fabs(u - 0.75f) < 1e-4f);
+    CHECK(wp::ghosts::to_picture(p, eye, target, {0.0f, 1.0f, -2.0f}, u, v));
+    CHECK(v < 0.5f);
+    CHECK(!wp::ghosts::to_picture(p, eye, target, {0.0f, 0.0f, 2.0f}, u, v));
+    CHECK(!wp::ghosts::to_picture(p, eye, target, {9.0f, 0.0f, -2.0f}, u, v));
+    CHECK(!wp::ghosts::to_picture(p, eye, eye, {0.0f, 0.0f, -2.0f}, u, v));
+    p.margin_x = 80;
+    CHECK(wp::ghosts::to_picture(p, eye, target, {0.0f, 0.0f, -2.0f}, u, v));
+    CHECK(std::fabs(u - 0.5f) < 1e-4f);
 }
 
 void test_save_cloud() {
@@ -3065,6 +3086,7 @@ int main() {
     test_disc_drive();
     test_save_backups();
     test_presence();
+    test_ghost_projection();
     test_save_cloud();
     test_adopt_root_files();
     test_title_data_directory();

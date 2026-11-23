@@ -34,6 +34,7 @@
 #include "wp/frame_pacing.h"
 #include "wp/game.h"
 #include "wp/gx_state.h"
+#include "wp/ghosts.h"
 #include "wp/hint.h"
 #include "wp/log.h"
 #include "wp/memory.h"
@@ -359,6 +360,9 @@ struct Device {
     Overlay hint_image;
     uint64_t hint_version = 0;
     bool hint_visible = false;
+    Overlay ghosts_image;
+    uint64_t ghosts_version = 0;
+    bool ghosts_visible = false;
     Overlay bar_image;
     uint64_t bar_version = 0;
     std::map<uint64_t, VkSampler> samplers;
@@ -3625,6 +3629,9 @@ void take_overlays(int client_width, int client_height) {
     if (options::take_overlay(g_device.overlay_version, image, g_device.overlay_visible) && !image.pixels.empty()) {
         upload_overlay(g_device.overlay_image, image);
     }
+    if (ghosts::take(g_device.ghosts_version, image, g_device.ghosts_visible) && !image.pixels.empty()) {
+        upload_overlay(g_device.ghosts_image, image);
+    }
     if (hint::take(g_device.hint_version, image, g_device.hint_visible) && !image.pixels.empty()) {
         upload_overlay(g_device.hint_image, image);
     }
@@ -3655,6 +3662,7 @@ uint64_t overlay_signature(int client_width, int client_height) {
     mix(g_device.hud_version);
     mix(g_device.overlay_version);
     mix(g_device.hint_version);
+    mix(g_device.ghosts_version);
     mix(g_device.touch_version);
     mix(g_device.extras_version);
     mix(g_device.bar_version);
@@ -3691,6 +3699,9 @@ void draw_overlay(int client_width, int client_height, int bar) {
                                                  g_device.hud_corner);
         placed.y += bar;
         draw_image(g_device.hud_image.image, placed, true);
+    }
+    if (g_device.ghosts_visible) {
+        draw_image(g_device.ghosts_image.image, ghosts::place(), true);
     }
     if (g_device.hint_visible) {
         options::Rect placed = hint::place(client_width, client_height - bar, static_cast<int>(g_device.hint_image.width), static_cast<int>(g_device.hint_image.height));
@@ -4970,6 +4981,7 @@ bool present_image(SDL_Window* window, double aspect, Image* image) {
         height = box_height;
         width = height * aspect;
     }
+    ghosts::set_picture({static_cast<int>(std::floor((client_width - width) / 2)), static_cast<int>(std::floor(bar + (area - height) / 2)), static_cast<int>(std::floor(width)), static_cast<int>(std::floor(height))});
     set_viewport(static_cast<float>(std::floor((client_width - width) / 2)), static_cast<float>(std::floor(bar + (area - height) / 2)),
                  static_cast<float>(std::floor(width)), static_cast<float>(std::floor(height)));
     static const settings::LiveFlag smooth("video.smooth", "WP_SMOOTH");
