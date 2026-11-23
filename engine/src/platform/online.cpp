@@ -22,7 +22,7 @@ using Clock = std::chrono::steady_clock;
 
 constexpr auto kPumpEvery = std::chrono::milliseconds(16);
 constexpr auto kSendEvery = std::chrono::milliseconds(33);
-constexpr auto kQuietAfter = std::chrono::seconds(1);
+constexpr auto kQuietAfter = std::chrono::minutes(10);
 constexpr auto kStunEvery = std::chrono::milliseconds(300);
 constexpr auto kStunPatience = std::chrono::seconds(4);
 constexpr auto kHostPollEvery = std::chrono::seconds(5);
