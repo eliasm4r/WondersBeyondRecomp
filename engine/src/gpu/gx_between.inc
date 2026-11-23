@@ -1106,13 +1106,12 @@ bool near_camera_path(const RecordedDraw& draw, const RecordedDraw& before, cons
     return p[3] > 0.0f && a[3] > 0.0f && std::fabs(p[0] / p[3] - a[0] / a[3]) <= kNear && std::fabs(p[1] / p[3] - a[1] / a[3]) <= kNear;
 }
 
-bool camera_moves_sanely(const RecordedDraw& draw, const CameraMotion& camera) {
+bool camera_moves_sanely(const RecordedDraw& draw, const CameraMotion& camera, float least = 0.04f) {
     constexpr uint32_t kChecked = 9;
-    constexpr float kLeast = 0.04f;
     constexpr float kParallax = 4.0f;
     constexpr float kDepthSlack = 0.25f;
     constexpr float kDepthFloor = 1e-5f;
-    const float limit = std::min(kMaxStep, std::max(kLeast, kParallax * camera.reach));
+    const float limit = std::min(kMaxStep, std::max(least, kParallax * camera.reach));
     uint32_t step = std::max(1u, draw.positions / kChecked);
     for (uint32_t i = 0; i < draw.positions; i += step) {
         const std::array<float, 4>& b = g_record.positions[draw.first_position + i];
@@ -1257,7 +1256,8 @@ void pair_frame() {
             target[d] = partner[d];
             column[d] = 1;
         } else if (camera < kMaxCameras && !(pair && (kind[d] == kOnly || (kind[d] == kSameCount && near_camera_path(draw, g_previous.draws[partner[d]], g_cameras[camera]))))) {
-            bool sane = camera_moves_sanely(draw, g_cameras[camera]);
+            constexpr float kLeastForNewDraw = 0.004f;
+            bool sane = camera_moves_sanely(draw, g_cameras[camera], kLeastForNewDraw);
             target[d] = sane ? kByCamera + static_cast<uint32_t>(camera) : kUnmatched;
             column[d] = sane ? 5 : 2;
         } else if (pair && camera == kMaxCameras && kind[d] != kOnly) {
