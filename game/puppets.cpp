@@ -396,11 +396,6 @@ void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) 
 
 void step(Cpu& c, bool active, uint32_t frame) {
     if (rd8(kSceneManager + kSceneChanging) != 0) {
-        for (Puppet& puppet : g_puppets) {
-            remove(c, puppet);
-        }
-        g_puppets.clear();
-        g_cooldown = kRemoveCooldown;
         return;
     }
     uint32_t zone = disc::current_field();
@@ -466,6 +461,27 @@ void puppets_free_beam(Cpu& c) {
     for (Puppet& puppet : g_puppets) {
         stop_beam(c, puppet, kBeamNow);
     }
+    std::memcpy(c.r, saved.r, sizeof c.r);
+    std::memcpy(c.f, saved.f, sizeof c.f);
+    std::memcpy(c.ps1, saved.ps1, sizeof c.ps1);
+    std::memcpy(c.cr, saved.cr, sizeof c.cr);
+    c.lr = saved.lr;
+    c.ctr = saved.ctr;
+}
+
+void puppets_scene_change(Cpu& c) {
+    if (g_puppets.empty() || rd8(kSceneManager + kSceneChanging) == 0) {
+        return;
+    }
+    Cpu saved = c;
+    uint32_t stack = c.r[1];
+    c.r[1] = stack - kFrameSize;
+    wr32(c.r[1], stack);
+    for (Puppet& puppet : g_puppets) {
+        remove(c, puppet);
+    }
+    g_puppets.clear();
+    g_cooldown = kRemoveCooldown;
     std::memcpy(c.r, saved.r, sizeof c.r);
     std::memcpy(c.f, saved.f, sizeof c.f);
     std::memcpy(c.ps1, saved.ps1, sizeof c.ps1);

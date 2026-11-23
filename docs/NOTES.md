@@ -1833,4 +1833,4 @@ phone never did it.
 
 Players whose router blocks direct UDP fall back to a WebSocket relay held by the room's Durable Object. A joiner opens it after two failed join attempts, and the host opens it when a room poll reports a relay user. Each client sends at most one packet per player every 66 ms, because incoming WebSocket messages count against the Workers Free daily limit. Past that limit the relay fails and nothing is billed. The relay is Windows only for now.
 
-Puppets must be removed as soon as the scene manager's changing flag (0x804bae98 + 0x2c) is set. If they stay alive, the old field never finishes unloading and the game stays on a black screen. Puppets are shown again every frame because cutscenes can hide them.
+Puppets must be removed as soon as the scene manager's changing flag (0x804bae98 + 0x2c) is set. The check runs before the scene manager's own step: one step with the flag set is enough to make removing them crash. If they stay alive, the old field never finishes unloading and the game stays on a black screen. Puppets are shown again every frame because cutscenes can hide them.

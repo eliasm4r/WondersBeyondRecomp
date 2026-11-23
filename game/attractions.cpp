@@ -1,6 +1,7 @@
 #include "attractions.h"
 #include "modifiers.h"
 #include "prompts.h"
+#include "puppets.h"
 
 #include <algorithm>
 #include <array>
@@ -145,6 +146,7 @@ void layout_draw(Cpu& c, HleFunction original) {
 }
 
 void scene_manager_run_begin(Cpu& c, HleFunction original) {
+    puppets_scene_change(c);
     original(c);
     update_prompts();
     constexpr uint64_t kSceneHiddenSteps = 60;
