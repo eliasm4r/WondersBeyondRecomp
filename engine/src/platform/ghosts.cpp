@@ -35,8 +35,7 @@ std::mutex g_mutex;
 std::atomic<bool> g_active{false};
 Projection g_projection;
 bool g_have_projection = false;
-std::array<float, 3> g_eye{};
-std::array<float, 3> g_target{};
+View g_view{};
 std::vector<Marker> g_markers;
 std::chrono::steady_clock::time_point g_updated{};
 options::Rect g_picture;
@@ -44,10 +43,6 @@ options::Rect g_placed;
 bool g_dirty = false;
 bool g_shown = false;
 uint64_t g_version = 0;
-
-float dot(const std::array<float, 3>& a, const std::array<float, 3>& b) {
-    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
 
 options::Image render(options::Rect& placed) {
     options::Image image;
@@ -67,7 +62,7 @@ options::Image render(options::Rect& placed) {
     for (const Marker& marker : g_markers) {
         float u = 0.0f;
         float v = 0.0f;
-        if (!to_picture(g_projection, g_eye, g_target, marker.position, u, v)) {
+        if (!to_picture(g_projection, g_view, marker.position, u, v)) {
             continue;
         }
         int width = std::min(g_picture.width, static_cast<int>(std::ceil(canvas::text_width(face, marker.name))) + padding * 2);
@@ -113,27 +108,10 @@ options::Image render(options::Rect& placed) {
 
 }
 
-bool to_picture(const Projection& p, const std::array<float, 3>& eye, const std::array<float, 3>& target, const std::array<float, 3>& point, float& u, float& v) {
-    std::array<float, 3> forward{target[0] - eye[0], target[1] - eye[1], target[2] - eye[2]};
-    float length = std::sqrt(dot(forward, forward));
-    if (!(length > 1e-5f)) {
-        return false;
-    }
-    for (float& value : forward) {
-        value /= length;
-    }
-    std::array<float, 3> right{-forward[2], 0.0f, forward[0]};
-    length = std::sqrt(dot(right, right));
-    if (!(length > 1e-5f)) {
-        return false;
-    }
-    right[0] /= length;
-    right[2] /= length;
-    std::array<float, 3> up{right[1] * forward[2] - right[2] * forward[1], right[2] * forward[0] - right[0] * forward[2], right[0] * forward[1] - right[1] * forward[0]};
-    std::array<float, 3> offset{point[0] - eye[0], point[1] - eye[1], point[2] - eye[2]};
-    float eye_x = dot(right, offset);
-    float eye_y = dot(up, offset);
-    float eye_z = -dot(forward, offset);
+bool to_picture(const Projection& p, const View& view, const std::array<float, 3>& point, float& u, float& v) {
+    float eye_x = view[0] * point[0] + view[1] * point[1] + view[2] * point[2] + view[3];
+    float eye_y = view[4] * point[0] + view[5] * point[1] + view[6] * point[2] + view[7];
+    float eye_z = view[8] * point[0] + view[9] * point[1] + view[10] * point[2] + view[11];
     if (eye_z > -kNearest) {
         return false;
     }
@@ -156,10 +134,9 @@ void set_projection(const Projection& projection) {
     g_have_projection = true;
 }
 
-void set_view(const std::array<float, 3>& eye, const std::array<float, 3>& target, std::vector<Marker> markers) {
+void set_view(const View& view, std::vector<Marker> markers) {
     std::lock_guard<std::mutex> lock(g_mutex);
-    g_eye = eye;
-    g_target = target;
+    g_view = view;
     g_markers = std::move(markers);
     g_updated = std::chrono::steady_clock::now();
     g_dirty = true;

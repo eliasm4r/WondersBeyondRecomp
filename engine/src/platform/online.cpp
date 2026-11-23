@@ -43,8 +43,7 @@ std::mutex g_mutex;
 std::shared_ptr<Session> g_session;
 std::vector<presence::Peer> g_peers;
 std::array<float, 3> g_position{};
-std::array<float, 3> g_rotation{};
-uint32_t g_character = 0;
+presence::Pose g_pose;
 uint32_t g_zone = 0;
 Clock::time_point g_updated{};
 std::string g_code;
@@ -94,15 +93,13 @@ void pump_loop(std::shared_ptr<Session> session) {
     Clock::time_point next_send = started;
     while (!session->stop.load()) {
         std::array<float, 3> position;
-        std::array<float, 3> rotation;
-        uint32_t character;
+        presence::Pose pose;
         uint32_t zone;
         Clock::time_point updated;
         {
             std::lock_guard<std::mutex> lock(g_mutex);
             position = g_position;
-            rotation = g_rotation;
-            character = g_character;
+            pose = g_pose;
             zone = g_zone;
             updated = g_updated;
         }
@@ -112,7 +109,7 @@ void pump_loop(std::shared_ptr<Session> session) {
             std::lock_guard<std::mutex> lock(session->mutex);
             session->link.pump(std::chrono::duration<double>(now - started).count());
             if (now >= next_send) {
-                session->link.send(position, now - updated < kQuietAfter ? zone : 0, rotation, character);
+                session->link.send(position, now - updated < kQuietAfter ? zone : 0, pose);
                 next_send = now + kSendEvery;
             }
             seen = session->link.peers();
@@ -429,11 +426,10 @@ void start_from_environment() {
     }
 }
 
-void update(const std::array<float, 3>& position, uint32_t zone, const std::array<float, 3>& rotation, uint32_t character) {
+void update(const std::array<float, 3>& position, uint32_t zone, const presence::Pose& pose) {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_position = position;
-    g_rotation = rotation;
-    g_character = character;
+    g_pose = pose;
     g_zone = zone;
     g_updated = Clock::now();
 }

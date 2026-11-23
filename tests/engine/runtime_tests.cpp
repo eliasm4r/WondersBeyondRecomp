@@ -360,21 +360,20 @@ void test_presence() {
 
 void test_ghost_projection() {
     wp::ghosts::Projection p{1.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 2.0f * 228.0f / 528.0f, 1.0f - 456.0f / 528.0f, 0, 0};
-    std::array<float, 3> eye{0.0f, 0.0f, 0.0f};
-    std::array<float, 3> target{0.0f, 0.0f, -1.0f};
+    wp::ghosts::View view{1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
     float u = 0.0f;
     float v = 0.0f;
-    CHECK(wp::ghosts::to_picture(p, eye, target, {0.0f, 0.0f, -2.0f}, u, v));
+    CHECK(wp::ghosts::to_picture(p, view, {0.0f, 0.0f, -2.0f}, u, v));
     CHECK(std::fabs(u - 0.5f) < 1e-4f && std::fabs(v - 0.5f) < 1e-4f);
-    CHECK(wp::ghosts::to_picture(p, eye, target, {1.0f, 0.0f, -2.0f}, u, v));
+    CHECK(wp::ghosts::to_picture(p, view, {1.0f, 0.0f, -2.0f}, u, v));
     CHECK(std::fabs(u - 0.75f) < 1e-4f);
-    CHECK(wp::ghosts::to_picture(p, eye, target, {0.0f, 1.0f, -2.0f}, u, v));
+    CHECK(wp::ghosts::to_picture(p, view, {0.0f, 1.0f, -2.0f}, u, v));
     CHECK(v < 0.5f);
-    CHECK(!wp::ghosts::to_picture(p, eye, target, {0.0f, 0.0f, 2.0f}, u, v));
-    CHECK(!wp::ghosts::to_picture(p, eye, target, {9.0f, 0.0f, -2.0f}, u, v));
-    CHECK(!wp::ghosts::to_picture(p, eye, eye, {0.0f, 0.0f, -2.0f}, u, v));
+    CHECK(!wp::ghosts::to_picture(p, view, {0.0f, 0.0f, 2.0f}, u, v));
+    CHECK(!wp::ghosts::to_picture(p, view, {9.0f, 0.0f, -2.0f}, u, v));
+    CHECK(!wp::ghosts::to_picture(p, wp::ghosts::View{}, {0.0f, 0.0f, -2.0f}, u, v));
     p.margin_x = 80;
-    CHECK(wp::ghosts::to_picture(p, eye, target, {0.0f, 0.0f, -2.0f}, u, v));
+    CHECK(wp::ghosts::to_picture(p, view, {0.0f, 0.0f, -2.0f}, u, v));
     CHECK(std::fabs(u - 0.5f) < 1e-4f);
 }
 

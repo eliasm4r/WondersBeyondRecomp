@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <cctype>
 #include <cstring>
 #include <random>
 #include <string>
@@ -32,7 +33,11 @@ constexpr size_t kNameBytes = 12;
 constexpr size_t kNameAt = 28;
 constexpr size_t kRotationAt = kNameAt + kNameBytes;
 constexpr size_t kCharacterAt = kRotationAt + 12;
-constexpr size_t kPacketBytes = kCharacterAt + 4;
+constexpr size_t kMotionAt = kCharacterAt + 4;
+constexpr size_t kMotionBytes = 16;
+constexpr size_t kMotionFlagsAt = kMotionAt + kMotionBytes;
+constexpr size_t kMotionSerialAt = kMotionFlagsAt + 4;
+constexpr size_t kPacketBytes = kMotionSerialAt + 4;
 constexpr size_t kMaxOthers = 3;
 constexpr double kPeerTimeout = 5.0;
 constexpr float kLargestCoordinate = 1e6f;
@@ -80,12 +85,23 @@ bool decode(const uint8_t* data, size_t size, Peer& peer) {
     }
     for (int i = 0; i < 3; i++) {
         uint32_t bits = get32(data + kRotationAt + 4 * i);
-        std::memcpy(&peer.rotation[i], &bits, sizeof bits);
-        if (!std::isfinite(peer.rotation[i]) || std::fabs(peer.rotation[i]) > kLargestCoordinate) {
+        std::memcpy(&peer.pose.rotation[i], &bits, sizeof bits);
+        if (!std::isfinite(peer.pose.rotation[i]) || std::fabs(peer.pose.rotation[i]) > kLargestCoordinate) {
             return false;
         }
     }
-    peer.character = get32(data + kCharacterAt);
+    peer.pose.character = get32(data + kCharacterAt);
+    peer.pose.motion.clear();
+    for (size_t i = 0; i < kMotionBytes && data[kMotionAt + i] != 0; i++) {
+        unsigned char letter = data[kMotionAt + i];
+        if (!std::isalnum(letter) && letter != '_') {
+            peer.pose.motion.clear();
+            break;
+        }
+        peer.pose.motion.push_back(static_cast<char>(letter));
+    }
+    peer.pose.motion_flags = get32(data + kMotionFlagsAt);
+    peer.pose.motion_serial = get32(data + kMotionSerialAt);
     peer.zone = get32(data + 24);
     peer.name = clean_name(reinterpret_cast<const char*>(data + kNameAt), kNameBytes);
     return peer.id != 0;
@@ -388,7 +404,7 @@ uint16_t Link::port() const {
     return ntohs(address.sin_port);
 }
 
-void Link::send(const std::array<float, 3>& position, uint32_t zone, const std::array<float, 3>& rotation, uint32_t character) {
+void Link::send(const std::array<float, 3>& position, uint32_t zone, const Pose& pose) {
     if (m_impl->socket == kNoSocket) {
         return;
     }
@@ -404,10 +420,13 @@ void Link::send(const std::array<float, 3>& position, uint32_t zone, const std::
     put32(packet + 24, zone);
     for (int i = 0; i < 3; i++) {
         uint32_t bits;
-        std::memcpy(&bits, &rotation[i], sizeof bits);
+        std::memcpy(&bits, &pose.rotation[i], sizeof bits);
         put32(packet + kRotationAt + 4 * i, bits);
     }
-    put32(packet + kCharacterAt, character);
+    put32(packet + kCharacterAt, pose.character);
+    std::memcpy(packet + kMotionAt, pose.motion.data(), std::min(pose.motion.size(), kMotionBytes));
+    put32(packet + kMotionFlagsAt, pose.motion_flags);
+    put32(packet + kMotionSerialAt, pose.motion_serial);
     std::memcpy(packet + kNameAt, m_impl->name, kNameBytes);
     if (m_impl->hosting) {
         for (const Client& client : m_impl->clients) {

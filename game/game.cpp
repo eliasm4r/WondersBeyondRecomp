@@ -1045,7 +1045,7 @@ HookFunction hook(const char* name) {
                    {"DanceJudge", dance_judge}, {"CullingFrustum", culling_frustum}, {"CameraView", camera_view},
                    {"DialogueWriterStep", dialogue_writer_step}, {"MovieSceneUpdate", movie_scene_update},
                    {"FontResource", font_resource}, {"TextureBind", texture_bind}, {"MessageUpdate", message_update}, {"LayoutDraw", layout_draw},
-                   {"KineticEnergyUpdate", kinetic_energy_update}, {"ChaseStep", chase_step}, {"PlayerMove", player_move}, {"LifeDamage", life_damage},
+                   {"KineticEnergyUpdate", kinetic_energy_update}, {"ChaseStep", chase_step}, {"PlayerMove", player_move}, {"MotionStart", motion_start}, {"LifeDamage", life_damage},
                    {"AudioSystemInit", audio_hardware_setup}, {"AudioRateConverterInit", audio_hardware_setup}, {"MixerDspInit", audio_hardware_setup},
                    {"DspCheckMailToDsp", dsp_mail_taken}, {"AuxAInput", aux_buffer<0, false>}, {"AuxAOutput", aux_buffer<0, true>},
                    {"AuxBInput", aux_buffer<1, false>}, {"AuxBOutput", aux_buffer<1, true>}, {"AuxCInput", aux_buffer<2, false>},

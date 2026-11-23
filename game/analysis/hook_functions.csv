@@ -23,6 +23,7 @@ address,name
 0x800a9300,KineticEnergyUpdate
 0x801e1b80,ChaseStep
 0x80019b20,CameraView
+0x800912a0,MotionStart
 0x800c3fc0,PlayerMove
 0x800b01c0,LifeDamage
 0x8028e660,AudioSystemInit

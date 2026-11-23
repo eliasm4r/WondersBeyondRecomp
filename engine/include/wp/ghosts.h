@@ -22,15 +22,17 @@ struct Projection {
     int margin_y = 0;
 };
 
+using View = std::array<float, 12>;
+
 struct Marker {
     std::array<float, 3> position{};
     std::string name;
 };
 
-bool to_picture(const Projection& projection, const std::array<float, 3>& eye, const std::array<float, 3>& target, const std::array<float, 3>& point, float& u, float& v);
+bool to_picture(const Projection& projection, const View& view, const std::array<float, 3>& point, float& u, float& v);
 bool active();
 void set_projection(const Projection& projection);
-void set_view(const std::array<float, 3>& eye, const std::array<float, 3>& target, std::vector<Marker> markers);
+void set_view(const View& view, std::vector<Marker> markers);
 void set_picture(const options::Rect& picture);
 bool take(uint64_t& version, options::Image& image, bool& visible);
 options::Rect place();

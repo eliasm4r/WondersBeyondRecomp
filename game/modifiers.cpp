@@ -36,6 +36,7 @@ constexpr uint32_t kMoveFrame = 0x20;
 constexpr float kLongestStep = 3.0f;
 constexpr uint32_t kCameraShownEye = 0x18;
 constexpr uint32_t kCameraTarget = 0x28;
+constexpr uint32_t kCameraView = 0x48;
 constexpr float kMarkerHeight = 5.0f;
 
 uint32_t g_player = 0;
@@ -44,6 +45,14 @@ int g_frames_since_move = 1000;
 constexpr int kPlayerActiveFrames = 4;
 constexpr uint32_t kBodyRotation = 0x14;
 constexpr uint32_t kPlayerCharacter = 0xa;
+constexpr uint32_t kCameraFollowed = 0xb8;
+constexpr uint32_t kObjectHandle = 0x4;
+uint32_t g_controlled_accessor = 0;
+constexpr uint32_t kWholeBody = 0xffffffff;
+constexpr uint32_t kLongestMotion = 16;
+std::string g_motion;
+uint32_t g_motion_flags = 0;
+uint32_t g_motion_serial = 0;
 
 struct ShownPlayer {
     bool valid = false;
@@ -84,7 +93,7 @@ void publish_player() {
         return;
     }
     uint32_t zone = disc::current_field();
-    online::update(g_shown.position, zone, g_shown.rotation, g_shown.character);
+    online::update(g_shown.position, zone, {g_shown.rotation, g_shown.character, g_motion, g_motion_flags, g_motion_serial});
     g_shown.valid = false;
     if (!g_field_camera) {
         return;
@@ -95,9 +104,11 @@ void publish_player() {
             markers.push_back({{peer.position[0], peer.position[1] + kMarkerHeight, peer.position[2]}, peer.name});
         }
     }
-    uint32_t eye = g_field_camera + kCameraShownEye;
-    uint32_t target = g_field_camera + kCameraTarget;
-    ghosts::set_view({rdf32(eye), rdf32(eye + 4), rdf32(eye + 8)}, {rdf32(target), rdf32(target + 4), rdf32(target + 8)}, std::move(markers));
+    ghosts::View view;
+    for (uint32_t i = 0; i < view.size(); i++) {
+        view[i] = rdf32(g_field_camera + kCameraView + 4 * i);
+    }
+    ghosts::set_view(view, std::move(markers));
 }
 
 void modifiers_frame(Cpu& c, bool park) {
@@ -183,7 +194,11 @@ void player_move(Cpu& c, HleFunction original) {
     (void)from_environment;
     if (online::running()) {
         float distance = 0.0f;
-        if (g_field_camera) {
+        bool followed = g_field_camera && rd32(g_field_camera + kCameraFollowed) == rd32(player + kObjectHandle);
+        if (followed) {
+            distance = -1.0f;
+            g_controlled_accessor = rd32(player + kPlayerAccessor);
+        } else if (g_field_camera) {
             uint32_t target = g_field_camera + kCameraTarget;
             for (uint32_t i = 0; i < 3; i++) {
                 float gap = rdf32(now + 4 * i) - rdf32(target + 4 * i);
@@ -224,6 +239,19 @@ void player_move(Cpu& c, HleFunction original) {
         last[i] = rdf32(now + 4 * i);
     }
     last_player = player;
+}
+
+void motion_start(Cpu& c, HleFunction original) {
+    if (c.r[4] == g_controlled_accessor && c.r[6] && c.r[8] == kWholeBody) {
+        std::string name;
+        for (uint32_t i = 0; i < kLongestMotion && rd8(c.r[6] + i); i++) {
+            name.push_back(static_cast<char>(rd8(c.r[6] + i)));
+        }
+        g_motion = name;
+        g_motion_flags = c.r[7];
+        g_motion_serial++;
+    }
+    original(c);
 }
 
 void life_damage(Cpu& c, HleFunction original) {
