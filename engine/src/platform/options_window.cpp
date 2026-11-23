@@ -242,6 +242,9 @@ std::string menu_click(void* window, int x, int y, bool right) {
         sync(window);
         return "";
     }
+    if (type == Kind::Info) {
+        return act(window, Action::Accept);
+    }
     if (type == Kind::Toggle) {
         std::string changed = g_menu.set_toggle(row, control_fraction(frame, placed, row - g_menu.scroll(), x) < 0.5);
         sync(window);

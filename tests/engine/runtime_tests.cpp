@@ -396,6 +396,8 @@ void test_online_menu() {
     for (int i = 0; i < 12; i++) {
         wp::options::code_entry_key(0x08);
     }
+    CHECK(wp::options::kind("online.text") == wp::options::Kind::Info && wp::options::kind("saves.cloud_code") == wp::options::Kind::Info);
+    CHECK(wp::options::code_entry_key(0x25) && wp::options::code_entry_key(0x27));
     CHECK(wp::options::type_code("ab-1"));
     CHECK(wp::options::code_entry_key(0x0D) && !wp::options::code_entry_open());
     CHECK(wp::settings::text("online.name", nullptr) == "AB1");

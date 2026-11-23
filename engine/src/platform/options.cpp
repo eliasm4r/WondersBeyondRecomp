@@ -573,11 +573,8 @@ Kind kind(const std::string& key) {
         key == kOnlineAddress || key == kOnlineHost || key == kOnlineJoin || key == kOnlineLeave || key == kOnlineErase || key == kOnlineDone || key == kOnlineCancel) {
         return Kind::Button;
     }
-    if (key == kPlayTime || key == kUpdate || key == kCloudStatus || key == kOnlineStatus || key == kOnlineCode || key == kOnlineLocal) {
+    if (key == kPlayTime || key == kUpdate || key == kCloudStatus || key == kOnlineStatus || key == kOnlineCode || key == kOnlineLocal || key == kCloudCode || key == kOnlineText) {
         return Kind::Info;
-    }
-    if (key == kCloudCode || key == kOnlineText) {
-        return Kind::Choice;
     }
     if (starts_with(key, "keys.")) {
         return Kind::Key;
@@ -1132,7 +1129,7 @@ bool type_code(const char* text) {
 }
 
 bool text_field_open() {
-    return g_field != nullptr;
+    return g_field != nullptr || g_code_entry;
 }
 
 bool code_entry_open() {
@@ -1181,7 +1178,7 @@ bool code_entry_key(unsigned key) {
         close_code_entry();
         return true;
     }
-    if (key == 0x20) {
+    if (key == 0x20 || key == 0x25 || key == 0x27) {
         return true;
     }
     if (key >= 0x60 && key <= 0x69) {
