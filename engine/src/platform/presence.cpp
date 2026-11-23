@@ -25,9 +25,10 @@ namespace wp::presence {
 
 namespace {
 
-constexpr uint32_t kMagic = 0x57425231;
+constexpr uint32_t kMagic = 0x57425232;
 constexpr size_t kNameBytes = 12;
-constexpr size_t kPacketBytes = 24 + kNameBytes;
+constexpr size_t kNameAt = 28;
+constexpr size_t kPacketBytes = kNameAt + kNameBytes;
 constexpr size_t kMaxOthers = 3;
 constexpr double kPeerTimeout = 5.0;
 constexpr float kLargestCoordinate = 1e6f;
@@ -69,7 +70,8 @@ bool decode(const uint8_t* data, size_t size, Peer& peer) {
             return false;
         }
     }
-    peer.name = clean_name(reinterpret_cast<const char*>(data + 24), kNameBytes);
+    peer.zone = get32(data + 24);
+    peer.name = clean_name(reinterpret_cast<const char*>(data + kNameAt), kNameBytes);
     return peer.id != 0;
 }
 
@@ -203,7 +205,7 @@ uint16_t Link::port() const {
     return ntohs(address.sin_port);
 }
 
-void Link::send(const std::array<float, 3>& position) {
+void Link::send(const std::array<float, 3>& position, uint32_t zone) {
     if (m_impl->socket == kNoSocket) {
         return;
     }
@@ -216,7 +218,8 @@ void Link::send(const std::array<float, 3>& position) {
         std::memcpy(&bits, &position[i], sizeof bits);
         put32(packet + 12 + 4 * i, bits);
     }
-    std::memcpy(packet + 24, m_impl->name, kNameBytes);
+    put32(packet + 24, zone);
+    std::memcpy(packet + kNameAt, m_impl->name, kNameBytes);
     if (m_impl->hosting) {
         for (const Client& client : m_impl->clients) {
             m_impl->transmit(packet, client.address);

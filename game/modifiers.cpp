@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <string>
 
+#include "wp/disc.h"
 #include "wp/log.h"
 #include "wp/memory.h"
 #include "wp/presence.h"
@@ -154,11 +155,11 @@ void player_move(Cpu& c, HleFunction original) {
             double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
             link.pump(seconds);
             if (++steps % 2 == 0) {
-                link.send({rdf32(now), rdf32(now + 4), rdf32(now + 8)});
+                link.send({rdf32(now), rdf32(now + 4), rdf32(now + 8)}, disc::current_field());
             }
             if (steps % 60 == 0) {
                 for (const presence::Peer& peer : link.peers()) {
-                    log::write("online", "%s is at %.2f %.2f %.2f", peer.name.c_str(), peer.position[0], peer.position[1], peer.position[2]);
+                    log::write("online", "%s in zone %04u (here %04u) is at %.2f %.2f %.2f", peer.name.c_str(), peer.zone, disc::current_field(), peer.position[0], peer.position[1], peer.position[2]);
                 }
             }
         }

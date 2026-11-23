@@ -10,6 +10,7 @@ namespace wp::presence {
 struct Peer {
     uint32_t id = 0;
     uint32_t sequence = 0;
+    uint32_t zone = 0;
     std::array<float, 3> position{};
     std::string name;
     double seen = 0.0;
@@ -24,7 +25,7 @@ public:
 
     bool host(uint16_t port, const std::string& name);
     bool join(const std::string& address, uint16_t port, const std::string& name);
-    void send(const std::array<float, 3>& position);
+    void send(const std::array<float, 3>& position, uint32_t zone = 0);
     void pump(double now);
     const std::vector<Peer>& peers() const { return m_peers; }
     uint16_t port() const;

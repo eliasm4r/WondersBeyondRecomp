@@ -38,6 +38,7 @@
 #include "wp/nand.h"
 #include "wp/options.h"
 #include "wp/options_window.h"
+#include "wp/disc.h"
 #include "wp/presence.h"
 #include "wp/save_backup.h"
 #include "wp/padmap.h"
@@ -324,7 +325,7 @@ void test_presence() {
     first.send({1.0f, 2.0f, 3.0f});
     second.send({4.0f, 5.0f, 6.0f});
     settle(1.0);
-    host.send({7.0f, 8.0f, 9.0f});
+    host.send({7.0f, 8.0f, 9.0f}, 102);
     first.send({1.5f, 2.0f, 3.0f});
     second.send({4.5f, 5.0f, 6.0f});
     settle(1.1);
@@ -334,7 +335,7 @@ void test_presence() {
     bool saw_host = false;
     bool saw_first = false;
     for (const auto& peer : second.peers()) {
-        saw_host = saw_host || (peer.name == "Host" && peer.position[0] == 7.0f);
+        saw_host = saw_host || (peer.name == "Host" && peer.position[0] == 7.0f && peer.zone == 102);
         saw_first = saw_first || (peer.name == "First" && peer.position[0] == 1.5f);
     }
     CHECK(saw_host);
@@ -347,6 +348,11 @@ void test_presence() {
     settle(7.0);
     CHECK(host.peers().empty());
     CHECK(first.peers().empty());
+    CHECK(wp::disc::field_in_path("game/extracted/files/Field/Fd0102Res.dac") == 102);
+    CHECK(wp::disc::field_in_path("game/extracted/files/Field/Fd0301Dat.dac") == 0);
+    CHECK(wp::disc::field_in_path("game/extracted/files/Field/FdAB02Res.dac") == 0);
+    CHECK(wp::disc::field_in_path("game/extracted/files/Archive/MenuField.dac") == 0);
+    CHECK(wp::disc::field_in_path("Field/Fd") == 0);
 }
 
 void test_save_backups() {

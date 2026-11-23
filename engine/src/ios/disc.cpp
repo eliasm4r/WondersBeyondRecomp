@@ -15,6 +15,8 @@ namespace wp::disc {
 
 namespace {
 
+std::atomic<uint32_t> g_field{0};
+
 constexpr size_t kEntrySize = 12;
 constexpr uint32_t kOffsetShift = 2;
 constexpr uint64_t kBootOffset = 0;
@@ -144,6 +146,27 @@ double seconds_since_read(const char* path_part) {
     return static_cast<double>(now_nanoseconds() - g_watched_read.load()) * 1e-9;
 }
 
+uint32_t field_in_path(const std::string& path) {
+    static const std::string kStart = "Field/Fd";
+    static const std::string kEnd = "Res.dac";
+    size_t at = path.rfind(kStart);
+    if (at == std::string::npos || path.size() != at + kStart.size() + 4 + kEnd.size() || path.compare(at + kStart.size() + 4, kEnd.size(), kEnd) != 0) {
+        return 0;
+    }
+    uint32_t field = 0;
+    for (size_t i = at + kStart.size(); i < at + kStart.size() + 4; i++) {
+        if (path[i] < '0' || path[i] > '9') {
+            return 0;
+        }
+        field = field * 10 + static_cast<uint32_t>(path[i] - '0');
+    }
+    return field;
+}
+
+uint32_t current_field() {
+    return g_field.load(std::memory_order_relaxed);
+}
+
 void read(uint64_t offset, uint32_t length, uint32_t destination) {
     static const bool logging = std::getenv("WP_LOG_DISC") != nullptr;
     uint8_t* output = host(destination);
@@ -162,6 +185,9 @@ void read(uint64_t offset, uint32_t length, uint32_t destination) {
         uint64_t start = std::max(offset, it->offset);
         uint64_t stop = std::min(end, file_end);
         auto began = std::chrono::steady_clock::now();
+        if (uint32_t field = field_in_path(it->path)) {
+            g_field.store(field, std::memory_order_relaxed);
+        }
         if (!g_watched_part.empty() && it->path.find(g_watched_part) != std::string::npos) {
             g_watched_read = now_nanoseconds();
         }
