@@ -55,6 +55,7 @@ uint32_t g_motion_flags = 0;
 uint32_t g_motion_serial = 0;
 constexpr uint32_t kSoundSlot = 0x38;
 constexpr uint32_t kEffectSlot = 0x3c;
+constexpr uint32_t kSoundOwner = 0x8;
 constexpr int kEventFrames = 20;
 uint32_t g_sound_module = 0;
 uint32_t g_effect_module = 0;
@@ -305,6 +306,27 @@ void sound_play(Cpu& c, HleFunction original) {
         event.id = c.r[5];
         event.f1 = static_cast<float>(c.f[1]);
         event.f2 = static_cast<float>(c.f[2]);
+        record(event);
+    }
+    original(c);
+}
+
+void sound_stop(Cpu& c, HleFunction original) {
+    if (g_sound_module && c.r[5] == rd32(g_sound_module + kSoundOwner) && online::running()) {
+        presence::Event event;
+        event.kind = 4;
+        event.id = c.r[4];
+        event.b = c.r[6];
+        record(event);
+    }
+    original(c);
+}
+
+void sound_stop_all(Cpu& c, HleFunction original) {
+    if (g_sound_module && c.r[4] == rd32(g_sound_module + kSoundOwner) && online::running()) {
+        presence::Event event;
+        event.kind = 5;
+        event.b = c.r[5];
         record(event);
     }
     original(c);

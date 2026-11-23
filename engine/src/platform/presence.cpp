@@ -38,10 +38,11 @@ constexpr size_t kMotionBytes = 16;
 constexpr size_t kMotionFlagsAt = kMotionAt + kMotionBytes;
 constexpr size_t kMotionSerialAt = kMotionFlagsAt + 4;
 constexpr size_t kEventCountAt = kMotionSerialAt + 4;
-constexpr size_t kPacketBytes = kEventCountAt + 4;
+constexpr size_t kSentAt = kEventCountAt + 4;
+constexpr size_t kPacketBytes = kSentAt + 4;
 constexpr size_t kEventWords = 14;
 constexpr size_t kEventBytes = kEventWords * 4;
-constexpr uint32_t kEventKinds = 4;
+constexpr uint32_t kEventKinds = 6;
 constexpr size_t kMaxOthers = 3;
 constexpr double kPeerTimeout = 5.0;
 constexpr float kLargestCoordinate = 1e6f;
@@ -106,6 +107,7 @@ bool decode(const uint8_t* data, size_t size, Peer& peer) {
     }
     peer.pose.motion_flags = get32(data + kMotionFlagsAt);
     peer.pose.motion_serial = get32(data + kMotionSerialAt);
+    peer.pose.sent_ms = get32(data + kSentAt);
     uint32_t count = get32(data + kEventCountAt);
     if (count > kMostEvents || size != kPacketBytes + count * kEventBytes) {
         return false;
@@ -438,6 +440,45 @@ uint16_t Link::port() const {
     return ntohs(address.sin_port);
 }
 
+Snapshot snapshot_at(const std::vector<Snapshot>& snapshots, double time, float teleport) {
+    if (snapshots.empty()) {
+        return {};
+    }
+    if (time <= snapshots.front().time) {
+        return snapshots.front();
+    }
+    for (size_t i = 1; i < snapshots.size(); i++) {
+        const Snapshot& before = snapshots[i - 1];
+        const Snapshot& after = snapshots[i];
+        if (time > after.time) {
+            continue;
+        }
+        float gap = 0.0f;
+        for (int axis = 0; axis < 3; axis++) {
+            float step = after.position[axis] - before.position[axis];
+            gap += step * step;
+        }
+        if (after.time <= before.time || gap > teleport * teleport) {
+            return after;
+        }
+        float share = static_cast<float>((time - before.time) / (after.time - before.time));
+        Snapshot blended;
+        blended.time = time;
+        for (int axis = 0; axis < 3; axis++) {
+            blended.position[axis] = before.position[axis] + (after.position[axis] - before.position[axis]) * share;
+            float turn = std::fmod(after.rotation[axis] - before.rotation[axis], 360.0f);
+            if (turn > 180.0f) {
+                turn -= 360.0f;
+            } else if (turn < -180.0f) {
+                turn += 360.0f;
+            }
+            blended.rotation[axis] = before.rotation[axis] + turn * share;
+        }
+        return blended;
+    }
+    return snapshots.back();
+}
+
 void Link::send(const std::array<float, 3>& position, uint32_t zone, const Pose& pose) {
     if (m_impl->socket == kNoSocket) {
         return;
@@ -463,6 +504,7 @@ void Link::send(const std::array<float, 3>& position, uint32_t zone, const Pose&
     std::memcpy(packet + kMotionAt, pose.motion.data(), std::min(pose.motion.size(), kMotionBytes));
     put32(packet + kMotionFlagsAt, pose.motion_flags);
     put32(packet + kMotionSerialAt, pose.motion_serial);
+    put32(packet + kSentAt, pose.sent_ms);
     put32(packet + kEventCountAt, static_cast<uint32_t>(events));
     for (size_t i = 0; i < events; i++) {
         uint8_t* at = packet + kPacketBytes + i * kEventBytes;

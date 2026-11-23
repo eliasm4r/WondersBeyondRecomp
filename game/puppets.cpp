@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <vector>
@@ -46,7 +47,9 @@ constexpr uint32_t kHandleSpace = 0x20;
 constexpr int kLoadPatience = 900;
 constexpr int kCharacterPatience = 20;
 constexpr int kRemoveCooldown = 120;
-constexpr float kFollow = 0.35f;
+constexpr double kShownBehind = 0.08;
+constexpr double kClockRelax = 0.0002;
+constexpr size_t kKeptSnapshots = 32;
 constexpr float kTeleport = 30.0f;
 constexpr float kRunning = 0.06f;
 constexpr uint32_t kNameSpace = 0x200;
@@ -65,6 +68,11 @@ constexpr uint32_t kEventScale = 0x260;
 constexpr uint32_t kEffectManager = 0x800769e0;
 constexpr uint32_t kEffectGroups = 0x24;
 constexpr uint32_t kGroupMatches = 0x80062570;
+constexpr uint32_t kSoundManager = 0x800768d0;
+constexpr uint32_t kStopSound = 0x80068210;
+constexpr uint32_t kStopAllSounds = 0x68;
+constexpr uint32_t kSoundOwner = 0x8;
+constexpr uint32_t kLongestFade = 600;
 constexpr uint32_t kMostJoints = 0x100;
 constexpr std::array<uint32_t, 5> kStopSlots = {0xa4, 0xa8, 0x98, 0x9c, 0xc0};
 constexpr uint32_t kFirstPointer = 0x80000000;
@@ -77,6 +85,9 @@ struct Puppet {
     uint32_t motion = 0;
     uint32_t serial = 0;
     uint32_t last_event = 0;
+    uint32_t sequence = 0;
+    double clock_gap = 0.0;
+    std::vector<presence::Snapshot> snapshots;
     bool heard = false;
     bool ready = false;
     int age = 0;
@@ -162,6 +173,18 @@ void replay(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t accesso
         if (static_cast<int32_t>(event.serial - newest) > 0) {
             newest = event.serial;
         }
+        if (event.kind == 4 || event.kind == 5) {
+            uint32_t sounds = method(c, accessor, kSoundSlot);
+            uint32_t fade = event.b <= kLongestFade ? event.b : 0;
+            if (event.kind == 5) {
+                guest(c, rd32(rd32(sounds) + kStopAllSounds), sounds, fade);
+            } else {
+                uint32_t owner = rd32(sounds + kSoundOwner);
+                uint32_t manager = guest(c, kSoundManager, 0);
+                guest(c, kStopSound, manager, event.id, owner, fade);
+            }
+            continue;
+        }
         if (event.kind == 3) {
             bool known = std::find(kStopSlots.begin(), kStopSlots.end(), event.a) != kStopSlots.end();
             bool plain = (event.id < kFirstPointer || event.id == 0xffffffffu) && (event.b < kFirstPointer || event.b == 0xffffffffu);
@@ -211,16 +234,34 @@ void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) 
     uint32_t posture = method(c, accessor, kPostureSlot);
     uint32_t position = method(c, posture, kPositionSlot);
     uint32_t rotation = method(c, posture, kRotationSlot);
+    double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (peer.sequence != puppet.sequence) {
+        double sent = peer.pose.sent_ms / 1000.0;
+        double gap_now = now - sent;
+        puppet.clock_gap = puppet.snapshots.empty() ? gap_now : std::min(gap_now, puppet.clock_gap + kClockRelax);
+        if (!puppet.snapshots.empty() && sent < puppet.snapshots.back().time) {
+            puppet.snapshots.clear();
+            puppet.clock_gap = gap_now;
+        }
+        puppet.sequence = peer.sequence;
+        if (puppet.snapshots.empty() || sent > puppet.snapshots.back().time) {
+            puppet.snapshots.push_back({sent, peer.position, peer.pose.rotation});
+        }
+        if (puppet.snapshots.size() > kKeptSnapshots) {
+            puppet.snapshots.erase(puppet.snapshots.begin());
+        }
+    }
+    presence::Snapshot shown = presence::snapshot_at(puppet.snapshots, now - puppet.clock_gap - kShownBehind, kTeleport);
     float distance = 0.0f;
     for (int i = 0; i < 3; i++) {
-        float gap = peer.position[i] - puppet.position[i];
+        float gap = shown.position[i] - puppet.position[i];
         distance += i == 1 ? 0.0f : gap * gap;
     }
     distance = std::sqrt(distance);
     for (uint32_t i = 0; i < 3; i++) {
-        puppet.position[i] = distance > kTeleport ? peer.position[i] : puppet.position[i] + (peer.position[i] - puppet.position[i]) * kFollow;
+        puppet.position[i] = shown.position[i];
         wrf32(position + 4 * i, puppet.position[i]);
-        wrf32(rotation + 4 * i, peer.pose.rotation[i]);
+        wrf32(rotation + 4 * i, shown.rotation[i]);
     }
     replay(c, puppet, peer, accessor, frame);
     method(c, method(c, accessor, kHitSlot), kSetHittable, 0);

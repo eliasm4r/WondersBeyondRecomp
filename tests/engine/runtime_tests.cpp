@@ -393,6 +393,17 @@ void test_ghost_projection() {
     CHECK(std::fabs(u - 0.5f) < 1e-4f);
 }
 
+void test_snapshot_blend() {
+    using wp::presence::Snapshot;
+    std::vector<Snapshot> shots = {{1.0, {0.0f, 0.0f, 0.0f}, {0.0f, 350.0f, 0.0f}}, {2.0, {10.0f, 0.0f, 0.0f}, {0.0f, 10.0f, 0.0f}}, {3.0, {100.0f, 0.0f, 0.0f}, {0.0f, 10.0f, 0.0f}}};
+    Snapshot middle = wp::presence::snapshot_at(shots, 1.5, 30.0f);
+    CHECK(std::fabs(middle.position[0] - 5.0f) < 1e-4f);
+    CHECK(std::fabs(middle.rotation[1] - 360.0f) < 1e-3f);
+    CHECK(wp::presence::snapshot_at(shots, 0.5, 30.0f).position[0] == 0.0f);
+    CHECK(wp::presence::snapshot_at(shots, 9.0, 30.0f).position[0] == 100.0f);
+    CHECK(wp::presence::snapshot_at(shots, 2.5, 30.0f).position[0] == 100.0f);
+}
+
 void test_online_menu() {
     for (const char* good : {"127.0.0.1", "192.168.1.20", "0.0.0.0", "255.255.255.255"}) {
         CHECK(wp::online::valid_address(good));
@@ -3144,6 +3155,7 @@ int main() {
     test_save_backups();
     test_presence();
     test_ghost_projection();
+    test_snapshot_blend();
     test_online_menu();
     test_save_cloud();
     test_adopt_root_files();

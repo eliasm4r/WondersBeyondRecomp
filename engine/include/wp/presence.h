@@ -29,7 +29,16 @@ struct Pose {
     uint32_t motion_flags = 0;
     uint32_t motion_serial = 0;
     std::vector<Event> events;
+    uint32_t sent_ms = 0;
 };
+
+struct Snapshot {
+    double time = 0.0;
+    std::array<float, 3> position{};
+    std::array<float, 3> rotation{};
+};
+
+Snapshot snapshot_at(const std::vector<Snapshot>& snapshots, double time, float teleport);
 
 struct Peer {
     uint32_t id = 0;
