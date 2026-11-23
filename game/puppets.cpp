@@ -47,6 +47,7 @@ constexpr uint32_t kHandleSpace = 0x20;
 constexpr int kLoadPatience = 900;
 constexpr int kCharacterPatience = 20;
 constexpr int kRemoveCooldown = 120;
+constexpr int kReportEvery = 1200;
 constexpr double kShownBehind = 0.08;
 constexpr double kClockRelax = 0.0002;
 constexpr size_t kKeptSnapshots = 32;
@@ -118,6 +119,8 @@ bool alive(const Puppet& puppet) {
 
 void remove(Cpu& c, const Puppet& puppet) {
     if (alive(puppet)) {
+        uint32_t sounds = method(c, guest(c, kAccessor, puppet.object), kSoundSlot);
+        guest(c, rd32(rd32(sounds) + kStopAllSounds), sounds, 0);
         uint32_t manager = rd32(c.r[13] - kManagerOffset);
         guest(c, kUnregister, manager, puppet.handle);
         guest(c, kDestroy, manager, puppet.handle);
@@ -262,6 +265,9 @@ void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) 
         puppet.position[i] = shown.position[i];
         wrf32(position + 4 * i, puppet.position[i]);
         wrf32(rotation + 4 * i, shown.rotation[i]);
+    }
+    if (++puppet.age % kReportEvery == 1) {
+        log::write("online", "%s shown at %.1f %.1f %.1f, packet %u", peer.name.c_str(), shown.position[0], shown.position[1], shown.position[2], peer.sequence);
     }
     replay(c, puppet, peer, accessor, frame);
     method(c, method(c, accessor, kHitSlot), kSetHittable, 0);

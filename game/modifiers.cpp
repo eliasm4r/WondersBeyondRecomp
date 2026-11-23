@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -69,6 +70,10 @@ struct RecentEvent {
 };
 
 std::vector<RecentEvent> g_recent;
+std::vector<uint32_t> g_playing;
+constexpr uint32_t kSoundIsPlaying = 0x800be650;
+constexpr uint32_t kSoundFade = 10;
+constexpr size_t kMostPlaying = 24;
 
 uint32_t module_at(uint32_t accessor, uint32_t slot) {
     return rd32(accessor + (rd32(rd32(rd32(accessor) + slot)) & 0xffff));
@@ -153,7 +158,40 @@ void publish_player() {
     ghosts::set_view(view, std::move(markers));
 }
 
+void report_ended_sounds(Cpu& c) {
+    if (g_playing.empty() || !g_sound_module || !online::running()) {
+        g_playing.clear();
+        return;
+    }
+    Cpu saved = c;
+    uint32_t stack = c.r[1];
+    c.r[1] = stack - kMoveFrame;
+    wr32(c.r[1], stack);
+    for (auto id = g_playing.begin(); id != g_playing.end();) {
+        c.r[3] = g_sound_module;
+        c.r[4] = *id;
+        call(c, kSoundIsPlaying);
+        if (c.r[3] != 0) {
+            ++id;
+            continue;
+        }
+        presence::Event event;
+        event.kind = 4;
+        event.id = *id;
+        event.b = kSoundFade;
+        record(event);
+        id = g_playing.erase(id);
+    }
+    std::memcpy(c.r, saved.r, sizeof c.r);
+    std::memcpy(c.f, saved.f, sizeof c.f);
+    std::memcpy(c.ps1, saved.ps1, sizeof c.ps1);
+    std::memcpy(c.cr, saved.cr, sizeof c.cr);
+    c.lr = saved.lr;
+    c.ctr = saved.ctr;
+}
+
 void modifiers_frame(Cpu& c, bool park) {
+    report_ended_sounds(c);
     publish_player();
     puppets_frame(c, park, g_player && rd32(g_player) == kPlayerTable && g_frames_since_move < kPlayerActiveFrames);
     g_frames_since_move++;
@@ -307,6 +345,9 @@ void sound_play(Cpu& c, HleFunction original) {
         event.f1 = static_cast<float>(c.f[1]);
         event.f2 = static_cast<float>(c.f[2]);
         record(event);
+        if (std::find(g_playing.begin(), g_playing.end(), event.id) == g_playing.end() && g_playing.size() < kMostPlaying) {
+            g_playing.push_back(event.id);
+        }
     }
     original(c);
 }

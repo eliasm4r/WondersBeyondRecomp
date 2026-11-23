@@ -157,6 +157,16 @@ bool same_address(const sockaddr_storage& a, const sockaddr_storage& b) {
     return x.sin6_port == y.sin6_port && std::memcmp(&x.sin6_addr, &y.sin6_addr, sizeof x.sin6_addr) == 0;
 }
 
+bool same_host(const sockaddr_storage& a, const sockaddr_storage& b) {
+    if (a.ss_family != b.ss_family) {
+        return false;
+    }
+    if (a.ss_family == AF_INET) {
+        return reinterpret_cast<const sockaddr_in&>(a).sin_addr.s_addr == reinterpret_cast<const sockaddr_in&>(b).sin_addr.s_addr;
+    }
+    return std::memcmp(&reinterpret_cast<const sockaddr_in6&>(a).sin6_addr, &reinterpret_cast<const sockaddr_in6&>(b).sin6_addr, sizeof(in6_addr)) == 0;
+}
+
 socklen_t address_size(const sockaddr_storage& address) {
     return address.ss_family == AF_INET ? sizeof(sockaddr_in) : sizeof(sockaddr_in6);
 }
@@ -578,7 +588,7 @@ void Link::pump(double now) {
             }
             client->seen = now;
         } else if (!m_impl->has_server) {
-            bool expected = std::any_of(m_impl->targets.begin(), m_impl->targets.end(), [&](const Target& target) { return same_address(target.address, from); });
+            bool expected = std::any_of(m_impl->targets.begin(), m_impl->targets.end(), [&](const Target& target) { return same_host(target.address, from); });
             if (!expected) {
                 continue;
             }
