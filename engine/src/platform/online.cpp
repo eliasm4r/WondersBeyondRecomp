@@ -13,6 +13,7 @@
 
 #include "wp/cloud_sync.h"
 #include "wp/log.h"
+#include "wp/relay.h"
 
 namespace wp::online {
 
@@ -30,12 +31,14 @@ constexpr auto kHostSearchEvery = std::chrono::seconds(2);
 constexpr auto kJoinRetryEvery = std::chrono::seconds(3);
 constexpr auto kDirectPatience = std::chrono::seconds(15);
 constexpr int kJoinAttempts = 10;
+constexpr int kRelayAfterAttempts = 2;
 constexpr int kNetworkRetries = 3;
 constexpr double kPunchSeconds = 25.0;
 constexpr double kDirectSeconds = 3600.0;
 
 struct Session {
     presence::Link link;
+    std::unique_ptr<relay::Socket> relay;
     std::mutex mutex;
     std::atomic<bool> stop{false};
 };
@@ -109,6 +112,11 @@ void pump_loop(std::shared_ptr<Session> session) {
         {
             std::lock_guard<std::mutex> lock(session->mutex);
             session->link.pump(std::chrono::duration<double>(now - started).count());
+            if (session->relay) {
+                for (const std::vector<uint8_t>& packet : session->relay->take()) {
+                    session->link.relay_packet(packet.data(), packet.size());
+                }
+            }
             if (now >= next_send) {
                 session->link.send(position, now - updated < kQuietAfter ? zone : 0, pose);
                 next_send = now + kSendEvery;
@@ -191,6 +199,25 @@ void add_targets(const std::shared_ptr<Session>& session, const std::string& tex
     }
 }
 
+void open_relay(const std::shared_ptr<Session>& session, const std::string& code) {
+    {
+        std::lock_guard<std::mutex> lock(session->mutex);
+        if (session->relay) {
+            return;
+        }
+    }
+    auto socket = std::make_unique<relay::Socket>();
+    if (!socket->open(code)) {
+        log::write("online", "relay not reachable");
+        return;
+    }
+    std::lock_guard<std::mutex> lock(session->mutex);
+    relay::Socket* raw = socket.get();
+    session->relay = std::move(socket);
+    session->link.use_relay([raw](const uint8_t* data, size_t size) { raw->send(data, size); });
+    log::write("online", "using the relay");
+}
+
 void run_host(std::shared_ptr<Session> session) {
     std::vector<std::string> servers = presence::Link::stun_servers();
     std::string endpoints = own_endpoints(session, servers);
@@ -233,6 +260,9 @@ void run_host(std::shared_ptr<Session> session) {
         }
         if (status == 200) {
             add_targets(session, reply);
+            if (reply.find("relay") != std::string::npos) {
+                open_relay(session, code);
+            }
         } else if (status == 404) {
             {
                 std::lock_guard<std::mutex> lock(g_mutex);
@@ -279,6 +309,9 @@ void run_join(std::shared_ptr<Session> session, std::string code) {
         }
         if (!current(session) || wait_for_player(session, kJoinRetryEvery)) {
             return;
+        }
+        if (reached && attempt + 1 >= kRelayAfterAttempts) {
+            open_relay(session, code);
         }
     }
     fail(session, reached ? Problem::Blocked : Problem::NoInternet);

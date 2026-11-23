@@ -41,6 +41,8 @@ constexpr uint32_t kObjectHandle = 0x4;
 constexpr uint32_t kObjectState = 0x18;
 constexpr std::array<uint32_t, 4> kHeroSpecies = {204, 207, 205, 206};
 constexpr uint32_t kCharacterKind = 4;
+constexpr uint32_t kSceneManager = 0x804bae98;
+constexpr uint32_t kSceneChanging = 0x2c;
 constexpr uint32_t kFrameSize = 0x400;
 constexpr uint32_t kParameters = 0x100;
 constexpr uint32_t kHandleSpace = 0x20;
@@ -331,6 +333,7 @@ void replay(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t accesso
 
 void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) {
     uint32_t accessor = guest(c, kAccessor, puppet.object);
+    method(c, method(c, accessor, kModelSlot), kShowSlot, 1);
     uint32_t posture = method(c, accessor, kPostureSlot);
     uint32_t position = method(c, posture, kPositionSlot);
     uint32_t rotation = method(c, posture, kRotationSlot);
@@ -392,6 +395,14 @@ void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) 
 }
 
 void step(Cpu& c, bool active, uint32_t frame) {
+    if (rd8(kSceneManager + kSceneChanging) != 0) {
+        for (Puppet& puppet : g_puppets) {
+            remove(c, puppet);
+        }
+        g_puppets.clear();
+        g_cooldown = kRemoveCooldown;
+        return;
+    }
     uint32_t zone = disc::current_field();
     if (zone != g_zone) {
         g_puppets.clear();

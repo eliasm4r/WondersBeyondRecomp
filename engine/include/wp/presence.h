@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -68,10 +69,14 @@ public:
     static std::vector<std::string> stun_servers();
     void send(const std::array<float, 3>& position, uint32_t zone = 0, const Pose& pose = {});
     void pump(double now);
+    void use_relay(std::function<void(const uint8_t*, size_t)> out);
+    void relay_packet(const uint8_t* data, size_t size);
     const std::vector<Peer>& peers() const { return m_peers; }
     uint16_t port() const;
 
 private:
+    void accept(const uint8_t* data, size_t size, const void* source, bool relayed);
+
     struct Impl;
     Impl* m_impl;
     std::vector<Peer> m_peers;

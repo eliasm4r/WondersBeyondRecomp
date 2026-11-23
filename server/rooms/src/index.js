@@ -8,7 +8,9 @@ const MAX_BODY = 128;
 const ROOM_SECONDS = 120;
 const TOUCH_SECONDS = 30;
 const RECENT_SECONDS = 60;
-const PATH = /^\/v1\/rooms(?:\/([0-9A-HJKMNP-TV-Z]{6})(?:\/(join|[0-9a-f]{32}))?)?$/;
+const PATH = /^\/v1\/rooms(?:\/([0-9A-HJKMNP-TV-Z]{6})(?:\/(join|relay|[0-9a-f]{32}))?)?$/;
+const MAX_RELAY_BYTES = 1200;
+const MAX_RELAY_PER_SECOND = 90;
 const ENDPOINT = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3}):(\d{1,5})$/;
 
 const text = (status, body = "") => new Response(body, { status, headers: { "Content-Type": "text/plain" } });
@@ -88,7 +90,77 @@ export class Room extends DurableObject {
       await this.save();
     }
     const oldest = now() - RECENT_SECONDS;
-    return text(200, room.joiners.filter((joiner) => joiner.at >= oldest).map((joiner) => `${joiner.public} ${joiner.local}`).join("\n"));
+    const lines = room.joiners.filter((joiner) => joiner.at >= oldest).map((joiner) => `${joiner.public} ${joiner.local}`);
+    if (this.ctx.getWebSockets().length > 0) {
+      lines.push("relay");
+    }
+    return text(200, lines.join("\n"));
+  }
+
+  async fetch(request) {
+    if (request.headers.get("Upgrade") !== "websocket") {
+      return text(426);
+    }
+    if (!(await this.load())) {
+      return text(404);
+    }
+    if (this.ctx.getWebSockets().length > MAX_OTHERS) {
+      return text(409);
+    }
+    const pair = new WebSocketPair();
+    this.ctx.acceptWebSocket(pair[1]);
+    return new Response(null, { status: 101, webSocket: pair[0] });
+  }
+
+  async webSocketMessage(socket, message) {
+    if (typeof message === "string" || message.byteLength > MAX_RELAY_BYTES) {
+      socket.close(1009, "too large");
+      return;
+    }
+    if (!(await this.load())) {
+      socket.close(1000, "room closed");
+      return;
+    }
+    this.rates ??= new Map();
+    const second = now();
+    const rate = this.rates.get(socket);
+    if (rate?.second === second) {
+      rate.count++;
+      if (rate.count > MAX_RELAY_PER_SECOND) {
+        socket.close(1008, "too fast");
+        return;
+      }
+    } else {
+      this.rates.set(socket, { second, count: 1 });
+    }
+    for (const other of this.ctx.getWebSockets()) {
+      if (other !== socket) {
+        try {
+          other.send(message);
+        } catch {
+          this.rates.delete(other);
+        }
+      }
+    }
+  }
+
+  webSocketClose(socket) {
+    this.rates?.delete(socket);
+    try {
+      socket.close();
+    } catch {}
+  }
+
+  webSocketError(socket) {
+    this.rates?.delete(socket);
+  }
+
+  closeRelay() {
+    for (const socket of this.ctx.getWebSockets()) {
+      try {
+        socket.close(1000, "room closed");
+      } catch {}
+    }
   }
 
   async close(token) {
@@ -97,6 +169,7 @@ export class Room extends DurableObject {
       return text(404);
     }
     this.room = undefined;
+    this.closeRelay();
     await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
     return text(204);
@@ -113,6 +186,7 @@ export class Room extends DurableObject {
       return;
     }
     this.room = undefined;
+    this.closeRelay();
     await this.ctx.storage.deleteAll();
   }
 }
@@ -131,7 +205,10 @@ export default {
     if (!success) {
       return text(429);
     }
-    if (request.method === "DELETE" && code && action && action !== "join") {
+    if (request.method === "GET" && code && action === "relay") {
+      return roomFor(env, code).fetch(request);
+    }
+    if (request.method === "DELETE" && code && action && action !== "join" && action !== "relay") {
       return roomFor(env, code).close(action);
     }
     if (request.method !== "POST") {
@@ -163,6 +240,6 @@ export default {
     if (action === "join") {
       return roomFor(env, code).join(seen);
     }
-    return action ? roomFor(env, code).poll(action, seen) : text(404);
+    return action && action !== "relay" ? roomFor(env, code).poll(action, seen) : text(404);
   },
 };

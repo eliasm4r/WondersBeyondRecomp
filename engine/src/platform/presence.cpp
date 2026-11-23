@@ -241,6 +241,7 @@ struct Link::Impl {
     double now = 0.0;
     uint8_t stun_id[11] = {};
     std::string mapped[kStunServers];
+    std::function<void(const uint8_t*, size_t)> relay;
 
     bool read_stun(const uint8_t* data, size_t size) {
         if (size < kStunHeader || big16(data) != 0x0101 || big32(data + 4) != kStunCookie || data[8] >= kStunServers || std::memcmp(data + 9, stun_id, sizeof stun_id) != 0) {
@@ -266,6 +267,12 @@ struct Link::Impl {
     }
 
     void transmit(const uint8_t* data, size_t length, const sockaddr_storage& to) const {
+        if (to.ss_family == AF_UNSPEC) {
+            if (relay) {
+                relay(data, length);
+            }
+            return;
+        }
         sendto(socket, reinterpret_cast<const char*>(data), static_cast<int>(length), 0, reinterpret_cast<const sockaddr*>(&to), address_size(to));
     }
 
@@ -541,6 +548,9 @@ void Link::send(const std::array<float, 3>& position, uint32_t zone, const Pose&
     } else if (m_impl->has_server) {
         m_impl->transmit(packet, length, m_impl->server);
     }
+    if (!m_impl->hosting && !m_impl->has_server && m_impl->relay) {
+        m_impl->relay(packet, length);
+    }
     if (m_impl->hosting || !m_impl->has_server) {
         for (const Target& target : m_impl->targets) {
             bool known = std::any_of(m_impl->clients.begin(), m_impl->clients.end(), [&](const Client& c) { return same_address(c.address, target.address); });
@@ -564,6 +574,67 @@ void Link::send(const std::array<float, 3>& position, uint32_t zone, const Pose&
     }
 }
 
+void Link::use_relay(std::function<void(const uint8_t*, size_t)> out) {
+    m_impl->relay = std::move(out);
+}
+
+void Link::relay_packet(const uint8_t* data, size_t size) {
+    sockaddr_storage from{};
+    accept(data, size, &from, true);
+}
+
+void Link::accept(const uint8_t* data, size_t size, const void* source, bool relayed) {
+    const sockaddr_storage& from = *static_cast<const sockaddr_storage*>(source);
+    double now = m_impl->now;
+    if (!relayed && m_impl->read_stun(data, size)) {
+        return;
+    }
+    Peer incoming;
+    if (!decode(data, size, incoming) || incoming.id == m_impl->id) {
+        return;
+    }
+    if (m_impl->hosting) {
+        auto client = std::find_if(m_impl->clients.begin(), m_impl->clients.end(), [&](const Client& c) { return c.id == incoming.id; });
+        if (client == m_impl->clients.end()) {
+            if (m_impl->clients.size() >= kMaxOthers) {
+                return;
+            }
+            m_impl->clients.push_back({from, incoming.id, now});
+            client = m_impl->clients.end() - 1;
+        } else if (!same_address(client->address, from)) {
+            return;
+        }
+        client->seen = now;
+    } else if (!m_impl->has_server) {
+        bool expected = relayed || std::any_of(m_impl->targets.begin(), m_impl->targets.end(), [&](const Target& target) { return same_host(target.address, from); });
+        if (!expected) {
+            return;
+        }
+        m_impl->server = from;
+        m_impl->has_server = true;
+        m_impl->targets.clear();
+    } else if (!same_address(m_impl->server, from)) {
+        return;
+    }
+    auto peer = std::find_if(m_peers.begin(), m_peers.end(), [&](const Peer& p) { return p.id == incoming.id; });
+    if (peer != m_peers.end() && static_cast<int32_t>(incoming.sequence - peer->sequence) <= 0) {
+        return;
+    }
+    if (m_impl->hosting) {
+        for (const Client& client : m_impl->clients) {
+            if (client.id != incoming.id && !(relayed && client.address.ss_family == AF_UNSPEC)) {
+                m_impl->transmit(data, size, client.address);
+            }
+        }
+    }
+    incoming.seen = now;
+    if (peer != m_peers.end()) {
+        *peer = incoming;
+    } else if (m_peers.size() < kMaxOthers) {
+        m_peers.push_back(incoming);
+    }
+}
+
 void Link::pump(double now) {
     if (m_impl->socket == kNoSocket) {
         return;
@@ -582,53 +653,7 @@ void Link::pump(double now) {
 #endif
             break;
         }
-        if (m_impl->read_stun(data, static_cast<size_t>(got))) {
-            continue;
-        }
-        Peer incoming;
-        if (!decode(data, static_cast<size_t>(got), incoming) || incoming.id == m_impl->id) {
-            continue;
-        }
-        if (m_impl->hosting) {
-            auto client = std::find_if(m_impl->clients.begin(), m_impl->clients.end(), [&](const Client& c) { return c.id == incoming.id; });
-            if (client == m_impl->clients.end()) {
-                if (m_impl->clients.size() >= kMaxOthers) {
-                    continue;
-                }
-                m_impl->clients.push_back({from, incoming.id, now});
-                client = m_impl->clients.end() - 1;
-            } else if (!same_address(client->address, from)) {
-                continue;
-            }
-            client->seen = now;
-        } else if (!m_impl->has_server) {
-            bool expected = std::any_of(m_impl->targets.begin(), m_impl->targets.end(), [&](const Target& target) { return same_host(target.address, from); });
-            if (!expected) {
-                continue;
-            }
-            m_impl->server = from;
-            m_impl->has_server = true;
-            m_impl->targets.clear();
-        } else if (!same_address(m_impl->server, from)) {
-            continue;
-        }
-        auto peer = std::find_if(m_peers.begin(), m_peers.end(), [&](const Peer& p) { return p.id == incoming.id; });
-        if (peer != m_peers.end() && static_cast<int32_t>(incoming.sequence - peer->sequence) <= 0) {
-            continue;
-        }
-        if (m_impl->hosting) {
-            for (const Client& client : m_impl->clients) {
-                if (client.id != incoming.id) {
-                    m_impl->transmit(data, static_cast<size_t>(got), client.address);
-                }
-            }
-        }
-        incoming.seen = now;
-        if (peer != m_peers.end()) {
-            *peer = incoming;
-        } else if (m_peers.size() < kMaxOthers) {
-            m_peers.push_back(incoming);
-        }
+        accept(data, static_cast<size_t>(got), &from, false);
     }
     m_peers.erase(std::remove_if(m_peers.begin(), m_peers.end(), [&](const Peer& p) { return now - p.seen > kPeerTimeout; }), m_peers.end());
     auto& clients = m_impl->clients;

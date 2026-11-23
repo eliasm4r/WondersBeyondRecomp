@@ -45,6 +45,7 @@ add_library(wp_engine STATIC
     src/platform/png.cpp
     src/platform/online.cpp
     src/platform/presence.cpp
+    src/platform/relay.cpp
     src/platform/save_backup.cpp
     src/platform/cloud_sync.cpp
     src/platform/save_cloud.cpp

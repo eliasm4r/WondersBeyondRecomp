@@ -1828,3 +1828,9 @@ phone never did it.
 - The effect manager has a single Thunderbolt specializer slot (pool at +0x150), and the game does not check for a failed
   allocation. A puppet's beam only takes a free slot, and any local beam request first releases it with 0x8005dde0 and
   flag 1. Puppet effects also leave 16 free entries in each effect pool for the local game.
+
+## Online relay and field changes
+
+Players whose router blocks direct UDP fall back to a WebSocket relay held by the room's Durable Object. A joiner opens it after two failed join attempts, and the host opens it when a room poll reports a relay user. Each client sends at most one packet per player every 66 ms, because incoming WebSocket messages count against the Workers Free daily limit. Past that limit the relay fails and nothing is billed. The relay is Windows only for now.
+
+Puppets must be removed as soon as the scene manager's changing flag (0x804bae98 + 0x2c) is set. If they stay alive, the old field never finishes unloading and the game stays on a black screen. Puppets are shown again every frame because cutscenes can hide them.

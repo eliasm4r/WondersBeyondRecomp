@@ -679,6 +679,10 @@ const char* code_letters() {
     return kLetters;
 }
 
+const char* rooms_host() {
+    return kRoomsHost;
+}
+
 
 bool room_request(const char* method, const std::string& path, const std::string& body, int& status, std::string& reply) {
     Bytes data(body.begin(), body.end());
