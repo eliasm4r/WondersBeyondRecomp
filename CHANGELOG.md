@@ -10,7 +10,7 @@ Every change to WondersBeyondRecomp, newest first.
 
 <br>
 
-## v0.5.0-alpha · 2026-11-23
+## v0.4.2-alpha · 2026-11-23
 
 ### Added
 - **Save sync between your devices**: create a code in the new **Saves** tab of the F1 menu, type it on your other devices, and the game gets your latest progress at launch and sends it after each save. No account, no password, no email.

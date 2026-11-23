@@ -18,7 +18,7 @@ if(ANDROID)
 endif()
 
 set(WP_BUILD "2611-010")
-set(WP_VERSION "0.5.0-alpha")
+set(WP_VERSION "0.4.2-alpha")
 option(WP_TRACE_CALLS "Record every guest function entry for diagnostics (slower)" OFF)
 option(WP_CONSOLE "Build the game as a console program" OFF)
 set(WP_CODE_OPT "-O1" CACHE STRING "Optimization flag for the translated game code")
