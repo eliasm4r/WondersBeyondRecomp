@@ -38,6 +38,7 @@
 #include "wp/nand.h"
 #include "wp/options.h"
 #include "wp/options_window.h"
+#include "wp/presence.h"
 #include "wp/save_backup.h"
 #include "wp/padmap.h"
 #include "wp/frame_pacing.h"
@@ -300,6 +301,52 @@ void write_file(const std::filesystem::path& path, const std::string& contents) 
 std::string read_file(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary);
     return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+}
+
+void test_presence() {
+    using wp::presence::Link;
+    Link host;
+    CHECK(host.host(0, "Host"));
+    uint16_t port = host.port();
+    CHECK(port != 0);
+    Link first;
+    Link second;
+    CHECK(first.join("127.0.0.1", port, "First"));
+    CHECK(second.join("127.0.0.1", port, "Second\x01"));
+    auto settle = [&](double now) {
+        for (int i = 0; i < 40; i++) {
+            host.pump(now);
+            first.pump(now);
+            second.pump(now);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    };
+    first.send({1.0f, 2.0f, 3.0f});
+    second.send({4.0f, 5.0f, 6.0f});
+    settle(1.0);
+    host.send({7.0f, 8.0f, 9.0f});
+    first.send({1.5f, 2.0f, 3.0f});
+    second.send({4.5f, 5.0f, 6.0f});
+    settle(1.1);
+    CHECK(host.peers().size() == 2);
+    CHECK(first.peers().size() == 2);
+    CHECK(second.peers().size() == 2);
+    bool saw_host = false;
+    bool saw_first = false;
+    for (const auto& peer : second.peers()) {
+        saw_host = saw_host || (peer.name == "Host" && peer.position[0] == 7.0f);
+        saw_first = saw_first || (peer.name == "First" && peer.position[0] == 1.5f);
+    }
+    CHECK(saw_host);
+    CHECK(saw_first);
+    bool cleaned = false;
+    for (const auto& peer : first.peers()) {
+        cleaned = cleaned || peer.name == "Second?";
+    }
+    CHECK(cleaned);
+    settle(7.0);
+    CHECK(host.peers().empty());
+    CHECK(first.peers().empty());
 }
 
 void test_save_backups() {
@@ -2882,6 +2929,7 @@ int main() {
     test_quantization();
     test_disc_drive();
     test_save_backups();
+    test_presence();
     test_adopt_root_files();
     test_title_data_directory();
     test_read_directory_forms();

@@ -43,6 +43,7 @@ add_library(wp_engine STATIC
     src/core/io.cpp
     src/platform/performance_hints.cpp
     src/platform/png.cpp
+    src/platform/presence.cpp
     src/platform/save_backup.cpp
     src/platform/screenshot.cpp
     src/platform/settings.cpp
@@ -60,6 +61,9 @@ add_library(wp_engine STATIC
     src/platform/update_check.cpp
     src/platform/hd_textures.cpp
 )
+if(WIN32)
+    target_link_libraries(wp_engine PUBLIC ws2_32)
+endif()
 option(WP_OPENGL "Draw with OpenGL instead of Direct3D 11 on Windows" OFF)
 option(WP_METAL "Draw with Metal instead of OpenGL on macOS" ON)
 if(WIN32 AND NOT WP_OPENGL)

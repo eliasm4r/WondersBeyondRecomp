@@ -2,11 +2,15 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
+#include <string>
 
 #include "wp/log.h"
 #include "wp/memory.h"
+#include "wp/presence.h"
 #include "wp/settings.h"
 
 namespace wp::game {
@@ -124,6 +128,41 @@ void player_move(Cpu& c, HleFunction original) {
     }
     g_player = player;
     uint32_t now = body + kBodyPosition;
+    static const char* const online = std::getenv("WP_ONLINE");
+    if (online) {
+        static presence::Link link;
+        static const bool ready = [] {
+            const char* given = std::getenv("WP_ONLINE_NAME");
+            const std::string name = given ? given : "Player";
+            const std::string text = online;
+            size_t last = text.rfind(':');
+            int port = last == std::string::npos ? 0 : std::atoi(text.c_str() + last + 1);
+            bool ok = false;
+            if (port > 0 && port < 65536) {
+                if (text.rfind("host:", 0) == 0) {
+                    ok = link.host(static_cast<uint16_t>(port), name);
+                } else if (text.rfind("join:", 0) == 0 && last > 5) {
+                    ok = link.join(text.substr(5, last - 5), static_cast<uint16_t>(port), name);
+                }
+            }
+            log::write("online", ok ? "connected as %s (%s)" : "could not start for %s (%s)", name.c_str(), text.c_str());
+            return ok;
+        }();
+        static uint32_t steps = 0;
+        if (ready) {
+            static const auto started = std::chrono::steady_clock::now();
+            double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+            link.pump(seconds);
+            if (++steps % 2 == 0) {
+                link.send({rdf32(now), rdf32(now + 4), rdf32(now + 8)});
+            }
+            if (steps % 60 == 0) {
+                for (const presence::Peer& peer : link.peers()) {
+                    log::write("online", "%s is at %.2f %.2f %.2f", peer.name.c_str(), peer.position[0], peer.position[1], peer.position[2]);
+                }
+            }
+        }
+    }
     int run = speed();
     int rise = jump();
     uint32_t wanted = c.r[4];
