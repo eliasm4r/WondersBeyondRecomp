@@ -41,6 +41,7 @@
 #include "wp/disc.h"
 #include "wp/presence.h"
 #include "wp/save_backup.h"
+#include "wp/save_cloud.h"
 #include "wp/padmap.h"
 #include "wp/frame_pacing.h"
 #include "wp/free_camera.h"
@@ -353,6 +354,114 @@ void test_presence() {
     CHECK(wp::disc::field_in_path("game/extracted/files/Field/FdAB02Res.dac") == 0);
     CHECK(wp::disc::field_in_path("game/extracted/files/Archive/MenuField.dac") == 0);
     CHECK(wp::disc::field_in_path("Field/Fd") == 0);
+}
+
+void test_save_cloud() {
+    namespace fs = std::filesystem;
+    using namespace wp::cloud;
+    auto hex = [](const uint8_t* data, size_t size) {
+        std::string out;
+        char pair[3];
+        for (size_t i = 0; i < size; i++) {
+            std::snprintf(pair, sizeof pair, "%02x", data[i]);
+            out += pair;
+        }
+        return out;
+    };
+    const std::string abc = "abc";
+    CHECK(sha256_hex(reinterpret_cast<const uint8_t*>(abc.data()), abc.size()) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    Bytes one = pbkdf2_sha256("password", "salt", 1, 32);
+    CHECK(hex(one.data(), one.size()) == "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b");
+    Bytes two = pbkdf2_sha256("password", "salt", 2, 32);
+    CHECK(hex(two.data(), two.size()) == "ae4d0c95af6b46d32d0adff928f06dd02a303f8ef3c251dfd6e2d85a95474c43");
+    Key key{};
+    for (size_t i = 0; i < key.size(); i++) {
+        key[i] = static_cast<uint8_t>(0x80 + i);
+    }
+    const Nonce nonce = {0x07, 0, 0, 0, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47};
+    const Bytes extra = {0x50, 0x51, 0x52, 0x53, 0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7};
+    const std::string poem = "Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.";
+    Bytes sealed = seal_with_nonce(key, nonce, extra, Bytes(poem.begin(), poem.end()));
+    CHECK(sealed.size() == poem.size() + 16);
+    CHECK(hex(sealed.data(), 16) == "d31a8d34648e60db7b86afbc53ef7ec2");
+    CHECK(hex(sealed.data() + poem.size(), 16) == "1ae10b594f09e26a7e902ecbd0600691");
+    Bytes opened;
+    CHECK(open_sealed(key, nonce, extra, sealed.data(), sealed.size(), opened));
+    CHECK(std::string(opened.begin(), opened.end()) == poem);
+    sealed[3] ^= 1;
+    CHECK(!open_sealed(key, nonce, extra, sealed.data(), sealed.size(), opened));
+
+    std::string code = new_code();
+    std::string cleaned;
+    CHECK(code.size() == 10);
+    CHECK(clean_code(shown_code(code), cleaned) && cleaned == code);
+    CHECK(clean_code("k7p4q-x29tm", cleaned) && cleaned == "K7P4QX29TM");
+    CHECK(clean_code("o1il0 abcde", cleaned) && cleaned == "01110ABCDE");
+    CHECK(!clean_code("K7P4Q", cleaned));
+    CHECK(!clean_code("K7P4Q-X29TU", cleaned));
+    CHECK(shown_code("K7P4QX29TM") == "K7P4Q-X29TM");
+    Keys keys = derive_keys("K7P4QX29TM");
+    CHECK(keys.id.size() == 64);
+    CHECK(derive_keys("K7P4QX29TM").id == keys.id);
+    CHECK(derive_keys("K7P4QX29TN").id != keys.id);
+
+    Snapshot snapshot;
+    snapshot.saved_at = 1790000000;
+    snapshot.play_seconds = 3600;
+    snapshot.device = "PC";
+    snapshot.files = {{"GD0", Bytes(5344, 7)}, {"GD0M", Bytes(5344, 8)}, {"banner.bin", Bytes(29344, 9)}};
+    Bytes box = seal(keys.key, snapshot);
+    CHECK(box.size() < 65536);
+    Snapshot back;
+    CHECK(open(keys.key, box, back));
+    CHECK(back.device == "PC" && back.saved_at == 1790000000 && back.play_seconds == 3600 && back.files.size() == 3);
+    CHECK(progress_hash(back) == progress_hash(snapshot));
+    Key wrong = keys.key;
+    wrong[0] ^= 1;
+    CHECK(!open(wrong, box, back));
+    box[box.size() / 2] ^= 1;
+    CHECK(!open(keys.key, box, back));
+    Snapshot unsafe = snapshot;
+    unsafe.files = {{"../evil", Bytes(4, 1)}};
+    CHECK(!open(keys.key, seal(keys.key, unsafe), back));
+
+    std::error_code error;
+    fs::path folder = fs::temp_directory_path(error) / "wp_save_cloud_tests";
+    fs::remove_all(folder, error);
+    fs::create_directories(folder, error);
+    {
+        std::ofstream photo(folder / "Pic0", std::ios::binary);
+        photo << "photo";
+    }
+    CHECK(write_save(folder, snapshot));
+    CHECK(read_file(folder / "Pic0") == "photo");
+    Snapshot stored;
+    CHECK(read_save(folder, stored));
+    CHECK(progress_hash(stored) == progress_hash(snapshot));
+    Snapshot smaller = snapshot;
+    smaller.files.pop_back();
+    CHECK(write_save(folder, smaller));
+    CHECK(!fs::exists(folder / "banner.bin", error));
+    fs::remove_all(folder, error);
+
+    auto facts = [](const char* local, const char* agreed, const char* remote, bool start) {
+        Facts value;
+        value.local = local;
+        value.agreed = agreed;
+        value.remote = remote;
+        value.at_start = start;
+        return decide(value);
+    };
+    CHECK(facts("", "", "", true) == Decision::Nothing);
+    CHECK(facts("a", "", "", true) == Decision::Upload);
+    CHECK(facts("a", "", "a", true) == Decision::Nothing);
+    CHECK(facts("", "", "b", true) == Decision::Download);
+    CHECK(facts("", "", "b", false) == Decision::Nothing);
+    CHECK(facts("a", "", "b", true) == Decision::Ask);
+    CHECK(facts("a", "a", "b", true) == Decision::Download);
+    CHECK(facts("a", "a", "b", false) == Decision::Nothing);
+    CHECK(facts("c", "a", "a", false) == Decision::Upload);
+    CHECK(facts("c", "a", "b", true) == Decision::Ask);
 }
 
 void test_save_backups() {
@@ -1999,7 +2108,7 @@ void test_options_menu() {
         }
     }
     wp::ui::set_language(wp::ui::Language::English);
-    CHECK(wp::options::kTabCount == 7);
+    CHECK(wp::options::kTabCount == 8);
     CHECK(std::strcmp(wp::ui::label("tab.screen", wp::ui::Language::French), "Écran") == 0);
     CHECK(std::strcmp(wp::ui::label("tab.advanced", wp::ui::Language::English), "Advanced") == 0);
     CHECK(std::strcmp(wp::ui::label("tab.controls", wp::ui::Language::Galician), "Controls") != 0);
@@ -2008,7 +2117,8 @@ void test_options_menu() {
                                                                  "video.brightness", "video.contrast", "video.saturation", "video.gamma", "video.colors_reset"}));
     CHECK(std::strcmp(wp::ui::label("video.colors_reset", wp::ui::Language::French), "Couleurs d'origine") == 0);
     CHECK(std::strcmp(wp::ui::label("video.brightness", wp::ui::Language::French), "Luminosité") == 0);
-    CHECK((wp::options::tab_keys(1) == std::vector<std::string>{"game.text_speed", "game.skip_movies", "game.button_icons", "game.save_photos", "saves.backups", "system.discord", "stats.play_time"}));
+    CHECK((wp::options::tab_keys(1) == std::vector<std::string>{"game.text_speed", "game.skip_movies", "game.button_icons", "game.save_photos", "system.discord", "stats.play_time"}));
+    CHECK((wp::options::tab_keys(7) == std::vector<std::string>{"saves.cloud_status", "saves.cloud_create", "saves.cloud_enter", "saves.backups"}));
     CHECK((wp::options::tab_keys(2) == std::vector<std::string>{"audio.volume", "audio.mute", "audio.wiimote_speaker"}));
     CHECK((wp::options::tab_keys(6) == std::vector<std::string>{"cheats.fly_camera", "cheats.run_speed", "cheats.jump", "cheats.damage_dealt", "cheats.damage_taken", "cheats.berries", "cheats.prices", "cheats.chase_speed"}));
     CHECK((wp::options::choices("cheats.damage_taken") == std::vector<std::string>{"100", "150", "200", "300", "500", "1000", "0", "25", "50", "75"}) && wp::settings::number("cheats.jump", nullptr) == 100);
@@ -2100,11 +2210,30 @@ void test_options_menu() {
     CHECK(wp::settings::flag("game.button_icons", nullptr));
     CHECK(rows[3].key == "game.save_photos" && rows[3].kind == wp::options::Kind::Toggle && rows[3].live);
     CHECK(wp::settings::flag("game.save_photos", nullptr));
-    menu.select(6);
+    menu.select(5);
     rows = menu.rows();
-    CHECK(rows[6].kind == wp::options::Kind::Info && !rows[6].value.empty() && rows[6].live);
+    CHECK(rows[5].kind == wp::options::Kind::Info && !rows[5].value.empty() && rows[5].live);
     CHECK(menu.handle(wp::options::Action::Accept).empty() && menu.handle(wp::options::Action::Next).empty());
     CHECK(menu.handle(wp::options::Action::Previous).empty() && !menu.capturing());
+
+    menu.select_tab(7);
+    rows = menu.rows();
+    CHECK(rows[1].value == "Create" && rows[2].value == "Enter");
+    menu.select(2);
+    menu.handle(wp::options::Action::Accept);
+    CHECK(wp::options::code_entry_open() && wp::options::take_keyboard_request() && !wp::options::take_keyboard_request());
+    CHECK(wp::options::type_code("k7-p"));
+    CHECK(wp::options::code_entry_key('4'));
+    CHECK(menu.rows()[0].value == "K7P4_-_____");
+    CHECK(wp::options::code_entry_key(0x08));
+    CHECK(menu.rows()[0].value == "K7P__-_____");
+    menu.select(0);
+    menu.handle(wp::options::Action::Next);
+    CHECK(menu.rows()[0].value == "K7P0_-_____");
+    menu.handle(wp::options::Action::Next);
+    CHECK(menu.rows()[0].value == "K7P1_-_____");
+    CHECK(wp::options::code_entry_key(0x1B) && !wp::options::code_entry_open());
+    menu.select(0);
 
     menu.select_tab(3);
     rows = menu.rows();
@@ -2936,6 +3065,7 @@ int main() {
     test_disc_drive();
     test_save_backups();
     test_presence();
+    test_save_cloud();
     test_adopt_root_files();
     test_title_data_directory();
     test_read_directory_forms();

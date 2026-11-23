@@ -18,6 +18,7 @@
 #include "wp/log.h"
 #include "wp/memory.h"
 #include "wp/save_backup.h"
+#include "wp/cloud_sync.h"
 #include "wp/screenshot.h"
 #include "wp/settings.h"
 
@@ -414,6 +415,7 @@ bool mount(const std::string& root) {
     g_backups = saves::backups_beside(g_root);
     g_backed_up = false;
     back_up_save("start");
+    cloud::start(g_root, g_save, g_backups, backups_to_keep());
     return true;
 }
 
@@ -512,6 +514,9 @@ void close(int32_t handle) {
     g_files.erase(it);
     if (saved || g_backup_pending) {
         save_changed();
+    }
+    if (saved) {
+        cloud::saved();
     }
 }
 

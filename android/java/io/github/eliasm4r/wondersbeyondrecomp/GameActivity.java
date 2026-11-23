@@ -8,6 +8,14 @@ import android.view.WindowManager;
 
 import org.libsdl.app.SDLActivity;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.ByteBuffer;
+
 public class GameActivity extends SDLActivity {
     private volatile int askedRate = -1;
 
@@ -34,6 +42,47 @@ public class GameActivity extends SDLActivity {
         final int rate = askedRate;
         if (rate > 0) {
             chooseMode(rate);
+        }
+    }
+
+    public byte[] cloudRequest(String method, String address, byte[] body, long revision) {
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new URL(address).openConnection();
+            connection.setRequestMethod(method);
+            connection.setConnectTimeout(3000);
+            connection.setReadTimeout(4000);
+            connection.setRequestProperty("Content-Type", "application/octet-stream");
+            connection.setRequestProperty("X-Revision", Long.toString(revision));
+            if (body != null) {
+                connection.setDoOutput(true);
+                connection.setFixedLengthStreamingMode(body.length);
+                try (OutputStream out = connection.getOutputStream()) {
+                    out.write(body);
+                }
+            }
+            int status = connection.getResponseCode();
+            String given = connection.getHeaderField("X-Revision");
+            long seen = given == null ? 0 : Long.parseLong(given);
+            ByteArrayOutputStream reply = new ByteArrayOutputStream();
+            InputStream in = status < 400 ? connection.getInputStream() : connection.getErrorStream();
+            if (in != null) {
+                try (InputStream stream = in) {
+                    byte[] buffer = new byte[8192];
+                    int read;
+                    while ((read = stream.read(buffer)) > 0) {
+                        reply.write(buffer, 0, read);
+                    }
+                }
+            }
+            byte[] content = reply.toByteArray();
+            return ByteBuffer.allocate(12 + content.length).putInt(status).putLong(seen).put(content).array();
+        } catch (IOException | NumberFormatException problem) {
+            return null;
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
         }
     }
 
