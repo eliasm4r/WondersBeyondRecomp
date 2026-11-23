@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <string>
 #include <thread>
+#include <utility>
 
 #include "wp/discord.h"
 #include "wp/update_check.h"
@@ -175,6 +176,47 @@ void use_default_log() {
 #endif
 }
 
+std::string g_second_game_data;
+
+#ifdef _WIN32
+bool enter_second_game() {
+    namespace fs = std::filesystem;
+    static HANDLE running = CreateMutexA(nullptr, FALSE, "WondersBeyondRecompRunning");
+    if (!running || GetLastError() != ERROR_ALREADY_EXISTS || std::getenv("WP_ROOT")) {
+        return true;
+    }
+    const wp::game::Description& game = wp::game::description();
+    const fs::path folder = fs::path(game.settings_file).parent_path();
+    const fs::path root = "second_game";
+    const fs::path target = root / folder;
+    std::error_code error;
+    std::string data = fs::absolute(game.data_directory, error).string();
+    if (!error) {
+        fs::create_directories(target, error);
+    }
+    if (!error && !fs::exists(target / "nand", error)) {
+        fs::remove_all(target / "nand.partial", error);
+        fs::copy(game.nand_directory, target / "nand.partial", fs::copy_options::recursive, error);
+        if (!error) {
+            fs::rename(target / "nand.partial", target / "nand", error);
+        }
+    }
+    if (!error) {
+        for (const char* name : {"settings.ini", "stats.ini", "shaders.bin"}) {
+            std::error_code optional;
+            fs::copy_file(folder / name, target / name, fs::copy_options::skip_existing, optional);
+        }
+        fs::current_path(root, error);
+    }
+    if (error) {
+        MessageBoxA(nullptr, ("The second game could not get its own save folder: " + error.message()).c_str(), "PokePark 2: Wonders Beyond", MB_ICONERROR);
+        return false;
+    }
+    g_second_game_data = std::move(data);
+    return true;
+}
+#endif
+
 void log_machine() {
 #ifdef _WIN32
     SYSTEM_POWER_STATUS power{};
@@ -191,8 +233,18 @@ int run(int argc, char** argv) {
     if (!std::getenv("WP_HEADLESS")) {
         wp::play_time::start(wp::play_time::stats_path(wp::game::description().settings_file));
     }
+    if (!g_second_game_data.empty()) {
+        for (const auto& [key, value] : {std::pair<const char*, const char*>{"video.fullscreen", "0"}, {"video.scale", "2"}, {"video.fps", "60"}, {"video.bug_recorder", "0"},
+                                         {"input.gamepads", "0"}, {"input.real_wiimotes", "0"}, {"input.joycon_pairs", "0"}, {"audio.mute", "1"},
+                                         {"system.discord", "0"}, {"system.check_updates", "0"}}) {
+            wp::settings::store(key, value);
+        }
+        if (wp::settings::text("online.name", nullptr) == "Player") {
+            wp::settings::store("online.name", "Player2");
+        }
+    }
     wp::input::upgrade_bindings();
-    std::string extracted = argc > 1 ? argv[1] : wp::game::description().data_directory;
+    std::string extracted = argc > 1 ? argv[1] : !g_second_game_data.empty() ? g_second_game_data : wp::game::description().data_directory;
     int timeout_seconds = argc > 2 ? std::atoi(argv[2]) : 0;
 
     wp::g_memory = static_cast<uint8_t*>(std::calloc(wp::kMemorySize, 1));
@@ -335,6 +387,11 @@ int main(int argc, char** argv) {
         std::error_code error;
         std::filesystem::current_path(root, error);
     }
+#ifdef _WIN32
+    if (!enter_second_game()) {
+        return 1;
+    }
+#endif
     move_old_game_folder();
     use_default_log();
     if (const char* log_path = std::getenv("WP_LOG_FILE")) {

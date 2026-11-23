@@ -2,10 +2,8 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
-#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -13,7 +11,7 @@
 #include "wp/ghosts.h"
 #include "wp/log.h"
 #include "wp/memory.h"
-#include "wp/presence.h"
+#include "wp/online.h"
 #include "wp/settings.h"
 
 namespace wp::game {
@@ -139,50 +137,21 @@ void player_move(Cpu& c, HleFunction original) {
     }
     g_player = player;
     uint32_t now = body + kBodyPosition;
-    static const char* const online = std::getenv("WP_ONLINE");
-    if (online) {
-        static presence::Link link;
-        static const bool ready = [] {
-            const char* given = std::getenv("WP_ONLINE_NAME");
-            const std::string name = given ? given : "Player";
-            const std::string text = online;
-            size_t last = text.rfind(':');
-            int port = last == std::string::npos ? 0 : std::atoi(text.c_str() + last + 1);
-            bool ok = false;
-            if (port > 0 && port < 65536) {
-                if (text.rfind("host:", 0) == 0) {
-                    ok = link.host(static_cast<uint16_t>(port), name);
-                } else if (text.rfind("join:", 0) == 0 && last > 5) {
-                    ok = link.join(text.substr(5, last - 5), static_cast<uint16_t>(port), name);
+    static const bool from_environment = (online::start_from_environment(), true);
+    (void)from_environment;
+    if (online::running()) {
+        uint32_t zone = disc::current_field();
+        online::update({rdf32(now), rdf32(now + 4), rdf32(now + 8)}, zone);
+        if (g_field_camera) {
+            std::vector<ghosts::Marker> markers;
+            for (const presence::Peer& peer : online::peers()) {
+                if (peer.zone != 0 && peer.zone == zone) {
+                    markers.push_back({{peer.position[0], peer.position[1] + kMarkerHeight, peer.position[2]}, peer.name});
                 }
             }
-            log::write("online", ok ? "connected as %s (%s)" : "could not start for %s (%s)", name.c_str(), text.c_str());
-            return ok;
-        }();
-        static uint32_t steps = 0;
-        if (ready) {
-            static const auto started = std::chrono::steady_clock::now();
-            double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-            link.pump(seconds);
-            if (++steps % 2 == 0) {
-                link.send({rdf32(now), rdf32(now + 4), rdf32(now + 8)}, disc::current_field());
-            }
-            if (g_field_camera) {
-                std::vector<ghosts::Marker> markers;
-                for (const presence::Peer& peer : link.peers()) {
-                    if (peer.zone == disc::current_field()) {
-                        markers.push_back({{peer.position[0], peer.position[1] + kMarkerHeight, peer.position[2]}, peer.name});
-                    }
-                }
-                uint32_t eye = g_field_camera + kCameraShownEye;
-                uint32_t target = g_field_camera + kCameraTarget;
-                ghosts::set_view({rdf32(eye), rdf32(eye + 4), rdf32(eye + 8)}, {rdf32(target), rdf32(target + 4), rdf32(target + 8)}, std::move(markers));
-            }
-            if (steps % 60 == 0) {
-                for (const presence::Peer& peer : link.peers()) {
-                    log::write("online", "%s in zone %04u (here %04u) is at %.2f %.2f %.2f", peer.name.c_str(), peer.zone, disc::current_field(), peer.position[0], peer.position[1], peer.position[2]);
-                }
-            }
+            uint32_t eye = g_field_camera + kCameraShownEye;
+            uint32_t target = g_field_camera + kCameraTarget;
+            ghosts::set_view({rdf32(eye), rdf32(eye + 4), rdf32(eye + 8)}, {rdf32(target), rdf32(target + 4), rdf32(target + 8)}, std::move(markers));
         }
     }
     int run = speed();

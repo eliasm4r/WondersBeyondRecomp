@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "wp/cloud_sync.h"
+#include "wp/online.h"
 #include "wp/game.h"
 #include "wp/gamepad.h"
 #include "wp/hd_textures.h"
@@ -285,8 +286,13 @@ std::string poll_gamepads(void* window) {
     static Repeat repeat(kRepeating, kRepeatDelay, kRepeatInterval);
     static hd_textures::Progress shown;
     static uint64_t cloud_shown = 0;
+    static uint64_t online_shown = 0;
     if (g_menu.open() && cloud::version() != cloud_shown) {
         cloud_shown = cloud::version();
+        sync(window);
+    }
+    if (g_menu.open() && online::version() != online_shown) {
+        online_shown = online::version();
         sync(window);
     }
     hd_textures::Progress job = hd_textures::progress();

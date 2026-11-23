@@ -40,6 +40,7 @@
 #include "wp/options_window.h"
 #include "wp/disc.h"
 #include "wp/ghosts.h"
+#include "wp/online.h"
 #include "wp/presence.h"
 #include "wp/save_backup.h"
 #include "wp/save_cloud.h"
@@ -375,6 +376,41 @@ void test_ghost_projection() {
     p.margin_x = 80;
     CHECK(wp::ghosts::to_picture(p, eye, target, {0.0f, 0.0f, -2.0f}, u, v));
     CHECK(std::fabs(u - 0.5f) < 1e-4f);
+}
+
+void test_online_menu() {
+    for (const char* good : {"127.0.0.1", "192.168.1.20", "0.0.0.0", "255.255.255.255"}) {
+        CHECK(wp::online::valid_address(good));
+    }
+    for (const char* bad : {"", "1.2.3", "1.2.3.4.5", "256.1.1.1", "1..2.3", "a.b.c.d", "1.2.3.", "1234.1.1.1"}) {
+        CHECK(!wp::online::valid_address(bad));
+    }
+    wp::settings::load("");
+    wp::options::Menu menu;
+    menu.set_open(true);
+    menu.select_tab(8);
+    CHECK((wp::options::tab_keys(8) == std::vector<std::string>{"online.status", "online.name", "online.address", "online.host", "online.join"}));
+    menu.select(1);
+    menu.handle(wp::options::Action::Accept);
+    CHECK(wp::options::code_entry_open() && wp::options::take_keyboard_request());
+    CHECK(wp::options::type_code("ab-1"));
+    CHECK(wp::options::code_entry_key(0x0D) && !wp::options::code_entry_open());
+    CHECK(wp::settings::text("online.name", nullptr) == "AB1");
+    menu.select(2);
+    menu.handle(wp::options::Action::Accept);
+    wp::options::type_code("10.0.0");
+    CHECK(wp::options::code_entry_key(0x0D) && wp::options::code_entry_open());
+    CHECK(wp::options::code_entry_key(0xBE));
+    CHECK(wp::options::code_entry_key('7'));
+    CHECK(wp::options::code_entry_key(0x0D) && !wp::options::code_entry_open());
+    CHECK(wp::settings::text("online.address", nullptr) == "10.0.0.7");
+    wp::options::take_keyboard_request();
+    CHECK(wp::online::host("Host", 0));
+    CHECK(wp::online::running() && (wp::options::tab_keys(8) == std::vector<std::string>{"online.status", "online.leave"}));
+    wp::online::leave();
+    CHECK(!wp::online::running() && wp::online::state() == wp::online::State::Off);
+    CHECK(!wp::online::join("nope", "Guest", 1) && wp::online::state() == wp::online::State::Failed);
+    wp::online::leave();
 }
 
 void test_save_cloud() {
@@ -2129,7 +2165,7 @@ void test_options_menu() {
         }
     }
     wp::ui::set_language(wp::ui::Language::English);
-    CHECK(wp::options::kTabCount == 8);
+    CHECK(wp::options::kTabCount == 9);
     CHECK(std::strcmp(wp::ui::label("tab.screen", wp::ui::Language::French), "Écran") == 0);
     CHECK(std::strcmp(wp::ui::label("tab.advanced", wp::ui::Language::English), "Advanced") == 0);
     CHECK(std::strcmp(wp::ui::label("tab.controls", wp::ui::Language::Galician), "Controls") != 0);
@@ -3087,6 +3123,7 @@ int main() {
     test_save_backups();
     test_presence();
     test_ghost_projection();
+    test_online_menu();
     test_save_cloud();
     test_adopt_root_files();
     test_title_data_directory();

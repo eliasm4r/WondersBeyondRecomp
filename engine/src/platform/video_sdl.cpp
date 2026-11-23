@@ -399,7 +399,7 @@ void handle_event(SDL_Window* window, const SDL_Event& event) {
         touch::other_input();
         int vk = vk_for(event.key.scancode);
         bool repeat = event.key.repeat;
-        if (options::menu_open() && options::code_entry_open() && ((vk >= '0' && vk <= '9') || (vk >= 'A' && vk <= 'Z') || (vk >= 0x60 && vk <= 0x69))) {
+        if (options::menu_open() && options::code_entry_open() && ((vk >= '0' && vk <= '9') || (vk >= 'A' && vk <= 'Z') || (vk >= 0x60 && vk <= 0x69) || vk == 0x6E || vk == 0xBC || vk == 0xBE)) {
             return;
         }
         if (vk == kF11 && !repeat) {

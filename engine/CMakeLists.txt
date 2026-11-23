@@ -43,6 +43,7 @@ add_library(wp_engine STATIC
     src/core/io.cpp
     src/platform/performance_hints.cpp
     src/platform/png.cpp
+    src/platform/online.cpp
     src/platform/presence.cpp
     src/platform/save_backup.cpp
     src/platform/cloud_sync.cpp
