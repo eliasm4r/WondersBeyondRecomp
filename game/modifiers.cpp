@@ -377,6 +377,9 @@ void record_beam(uint32_t kind, uint32_t start, uint32_t end) {
 void beam_start(Cpu& c, HleFunction original) {
     constexpr uint32_t kThunderbolt = 0x20010005;
     bool ours = c.r[3] == g_effect_module && c.r[4] == kThunderbolt && online::running();
+    if (c.r[6] == 0) {
+        puppets_free_beam(c);
+    }
     original(c);
     if (ours) {
         g_own_beam = c.r[3];

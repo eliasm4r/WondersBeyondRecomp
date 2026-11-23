@@ -1825,3 +1825,6 @@ phone never did it.
   origin and scale. A slot the game takes for a quest marker is left to the game.
 - Punching also tries the 8 ports around each endpoint, and a joiner accepts its host from any port of the same address,
   because some routers change the port for each destination.
+- The effect manager has a single Thunderbolt specializer slot (pool at +0x150), and the game does not check for a failed
+  allocation. A puppet's beam only takes a free slot, and any local beam request first releases it with 0x8005dde0 and
+  flag 1. Puppet effects also leave 16 free entries in each effect pool for the local game.

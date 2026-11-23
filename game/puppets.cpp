@@ -81,6 +81,14 @@ constexpr uint32_t kSmallEntry = 0x40;
 constexpr uint32_t kLargePool = 0x84;
 constexpr uint32_t kLargeEntry = 0xa8;
 constexpr int kBeamPatience = 60;
+constexpr uint32_t kPoolNext = 8;
+constexpr uint32_t kPoolHead = 0x10;
+constexpr uint32_t kPoolEnd = 0xffff;
+constexpr uint32_t kSmallSlots = 0x6c;
+constexpr uint32_t kLargeSlots = 0x80;
+constexpr uint32_t kBeamSlots = 0x150;
+constexpr uint32_t kKeepEffects = 16;
+constexpr uint32_t kBeamNow = 1;
 constexpr uint32_t kEffectGroups = 0x24;
 constexpr uint32_t kGroupMatches = 0x80062570;
 constexpr uint32_t kStopOneSound = 0x64;
@@ -131,6 +139,23 @@ bool alive(const Puppet& puppet) {
     return rd32(puppet.object) == kPokemonTable && rd32(puppet.object + kObjectHandle) == puppet.handle && rd8(puppet.object + kObjectState) >= 2 && rd8(puppet.object + kObjectState) <= 4;
 }
 
+bool g_making_beam = false;
+
+uint32_t free_slots(uint32_t manager, uint32_t pool, uint32_t enough) {
+    uint32_t next = rd32(manager + pool + kPoolNext);
+    uint32_t slot = rd16(manager + pool + kPoolHead);
+    uint32_t count = 0;
+    while (slot != kPoolEnd && count < enough) {
+        count++;
+        slot = rd16(next + slot * 2);
+    }
+    return count;
+}
+
+bool room_for_effect(uint32_t manager) {
+    return free_slots(manager, kSmallSlots, kKeepEffects + 1) > kKeepEffects && free_slots(manager, kLargeSlots, kKeepEffects + 1) > kKeepEffects;
+}
+
 bool beam_alive(uint32_t manager, uint32_t beam) {
     if (beam == kNoBeam) {
         return false;
@@ -140,10 +165,10 @@ bool beam_alive(uint32_t manager, uint32_t beam) {
     return rd32(entry + 8) == beam;
 }
 
-void stop_beam(Cpu& c, Puppet& puppet) {
+void stop_beam(Cpu& c, Puppet& puppet, uint32_t how = 0) {
     uint32_t manager = guest(c, kEffectManager, 0);
     if (beam_alive(manager, puppet.beam)) {
-        guest(c, kBeamStop, manager, puppet.beam, 0);
+        guest(c, kBeamStop, manager, puppet.beam, how);
     }
     puppet.beam = kNoBeam;
 }
@@ -231,8 +256,13 @@ void replay(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t accesso
             uint32_t manager = guest(c, kEffectManager, 0);
             if (event.kind == 6) {
                 stop_beam(c, puppet);
+                if (free_slots(manager, kBeamSlots, 1) == 0 || !room_for_effect(manager)) {
+                    continue;
+                }
                 uint32_t effects = method(c, accessor, kEffectSlot);
+                g_making_beam = true;
                 puppet.beam = guest(c, rd32(rd32(effects) + kBeamCreate), effects, kBeamEffect, start, 0);
+                g_making_beam = false;
                 if (beam_alive(manager, puppet.beam)) {
                     wr32(ends, start);
                     wr32(ends + 4, end);
@@ -264,7 +294,7 @@ void replay(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t accesso
             }
             continue;
         }
-        if (event.kind != 0 && (!effect_loaded(c, event.id) || (event.kind == 2 && event.a >= kMostJoints))) {
+        if (event.kind != 0 && (!effect_loaded(c, event.id) || (event.kind == 2 && event.a >= kMostJoints) || !room_for_effect(guest(c, kEffectManager, 0)))) {
             continue;
         }
         uint32_t point = frame + kEventPoint;
@@ -414,6 +444,23 @@ void step(Cpu& c, bool active, uint32_t frame) {
     }
 }
 
+}
+
+void puppets_free_beam(Cpu& c) {
+    bool held = std::any_of(g_puppets.begin(), g_puppets.end(), [](const Puppet& puppet) { return puppet.beam != kNoBeam; });
+    if (g_making_beam || !held) {
+        return;
+    }
+    Cpu saved = c;
+    for (Puppet& puppet : g_puppets) {
+        stop_beam(c, puppet, kBeamNow);
+    }
+    std::memcpy(c.r, saved.r, sizeof c.r);
+    std::memcpy(c.f, saved.f, sizeof c.f);
+    std::memcpy(c.ps1, saved.ps1, sizeof c.ps1);
+    std::memcpy(c.cr, saved.cr, sizeof c.cr);
+    c.lr = saved.lr;
+    c.ctr = saved.ctr;
 }
 
 void puppets_frame(Cpu& c, bool park, bool active) {
