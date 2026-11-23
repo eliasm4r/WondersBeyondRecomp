@@ -23,7 +23,7 @@ bool host(const std::string& name, uint16_t port = kPort, bool use_room = true);
 bool join(const std::string& target, const std::string& name, uint16_t port = kPort);
 void leave();
 void start_from_environment();
-void update(const std::array<float, 3>& position, uint32_t zone);
+void update(const std::array<float, 3>& position, uint32_t zone, const std::array<float, 3>& rotation = {}, uint32_t character = 0);
 std::vector<presence::Peer> peers();
 State state();
 Problem problem();

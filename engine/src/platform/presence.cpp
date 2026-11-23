@@ -30,7 +30,9 @@ namespace {
 constexpr uint32_t kMagic = 0x57425232;
 constexpr size_t kNameBytes = 12;
 constexpr size_t kNameAt = 28;
-constexpr size_t kPacketBytes = kNameAt + kNameBytes;
+constexpr size_t kRotationAt = kNameAt + kNameBytes;
+constexpr size_t kCharacterAt = kRotationAt + 12;
+constexpr size_t kPacketBytes = kCharacterAt + 4;
 constexpr size_t kMaxOthers = 3;
 constexpr double kPeerTimeout = 5.0;
 constexpr float kLargestCoordinate = 1e6f;
@@ -76,6 +78,14 @@ bool decode(const uint8_t* data, size_t size, Peer& peer) {
             return false;
         }
     }
+    for (int i = 0; i < 3; i++) {
+        uint32_t bits = get32(data + kRotationAt + 4 * i);
+        std::memcpy(&peer.rotation[i], &bits, sizeof bits);
+        if (!std::isfinite(peer.rotation[i]) || std::fabs(peer.rotation[i]) > kLargestCoordinate) {
+            return false;
+        }
+    }
+    peer.character = get32(data + kCharacterAt);
     peer.zone = get32(data + 24);
     peer.name = clean_name(reinterpret_cast<const char*>(data + kNameAt), kNameBytes);
     return peer.id != 0;
@@ -378,7 +388,7 @@ uint16_t Link::port() const {
     return ntohs(address.sin_port);
 }
 
-void Link::send(const std::array<float, 3>& position, uint32_t zone) {
+void Link::send(const std::array<float, 3>& position, uint32_t zone, const std::array<float, 3>& rotation, uint32_t character) {
     if (m_impl->socket == kNoSocket) {
         return;
     }
@@ -392,6 +402,12 @@ void Link::send(const std::array<float, 3>& position, uint32_t zone) {
         put32(packet + 12 + 4 * i, bits);
     }
     put32(packet + 24, zone);
+    for (int i = 0; i < 3; i++) {
+        uint32_t bits;
+        std::memcpy(&bits, &rotation[i], sizeof bits);
+        put32(packet + kRotationAt + 4 * i, bits);
+    }
+    put32(packet + kCharacterAt, character);
     std::memcpy(packet + kNameAt, m_impl->name, kNameBytes);
     if (m_impl->hosting) {
         for (const Client& client : m_impl->clients) {

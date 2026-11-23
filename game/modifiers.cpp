@@ -1,5 +1,7 @@
 #include "modifiers.h"
 
+#include "puppets.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -38,6 +40,20 @@ constexpr float kMarkerHeight = 5.0f;
 
 uint32_t g_player = 0;
 uint32_t g_field_camera = 0;
+int g_frames_since_move = 1000;
+constexpr int kPlayerActiveFrames = 4;
+constexpr uint32_t kBodyRotation = 0x14;
+constexpr uint32_t kPlayerCharacter = 0xa;
+
+struct ShownPlayer {
+    bool valid = false;
+    float distance = 0.0f;
+    std::array<float, 3> position{};
+    std::array<float, 3> rotation{};
+    uint32_t character = 0;
+};
+
+ShownPlayer g_shown;
 
 struct Chased {
     uint32_t accessor = 0;
@@ -62,7 +78,32 @@ bool chased(uint32_t accessor) {
 
 }
 
+void publish_player() {
+    if (!g_shown.valid || !online::running()) {
+        g_shown.valid = false;
+        return;
+    }
+    uint32_t zone = disc::current_field();
+    online::update(g_shown.position, zone, g_shown.rotation, g_shown.character);
+    g_shown.valid = false;
+    if (!g_field_camera) {
+        return;
+    }
+    std::vector<ghosts::Marker> markers;
+    for (const presence::Peer& peer : online::peers()) {
+        if (peer.zone != 0 && peer.zone == zone) {
+            markers.push_back({{peer.position[0], peer.position[1] + kMarkerHeight, peer.position[2]}, peer.name});
+        }
+    }
+    uint32_t eye = g_field_camera + kCameraShownEye;
+    uint32_t target = g_field_camera + kCameraTarget;
+    ghosts::set_view({rdf32(eye), rdf32(eye + 4), rdf32(eye + 8)}, {rdf32(target), rdf32(target + 4), rdf32(target + 8)}, std::move(markers));
+}
+
 void modifiers_frame(Cpu& c, bool park) {
+    publish_player();
+    puppets_frame(c, park, g_player && rd32(g_player) == kPlayerTable && g_frames_since_move < kPlayerActiveFrames);
+    g_frames_since_move++;
     static const settings::LiveNumber gained("cheats.berries", "WP_CHEAT_BERRIES");
     static const settings::LiveNumber prices("cheats.prices", "WP_CHEAT_PRICES");
     static bool have = false;
@@ -136,22 +177,22 @@ void player_move(Cpu& c, HleFunction original) {
         return;
     }
     g_player = player;
+    g_frames_since_move = 0;
     uint32_t now = body + kBodyPosition;
     static const bool from_environment = (online::start_from_environment(), true);
     (void)from_environment;
     if (online::running()) {
-        uint32_t zone = disc::current_field();
-        online::update({rdf32(now), rdf32(now + 4), rdf32(now + 8)}, zone);
+        float distance = 0.0f;
         if (g_field_camera) {
-            std::vector<ghosts::Marker> markers;
-            for (const presence::Peer& peer : online::peers()) {
-                if (peer.zone != 0 && peer.zone == zone) {
-                    markers.push_back({{peer.position[0], peer.position[1] + kMarkerHeight, peer.position[2]}, peer.name});
-                }
-            }
-            uint32_t eye = g_field_camera + kCameraShownEye;
             uint32_t target = g_field_camera + kCameraTarget;
-            ghosts::set_view({rdf32(eye), rdf32(eye + 4), rdf32(eye + 8)}, {rdf32(target), rdf32(target + 4), rdf32(target + 8)}, std::move(markers));
+            for (uint32_t i = 0; i < 3; i++) {
+                float gap = rdf32(now + 4 * i) - rdf32(target + 4 * i);
+                distance += gap * gap;
+            }
+        }
+        if (!g_shown.valid || distance < g_shown.distance) {
+            uint32_t turned = body + kBodyRotation;
+            g_shown = {true, distance, {rdf32(now), rdf32(now + 4), rdf32(now + 8)}, {rdf32(turned), rdf32(turned + 4), rdf32(turned + 8)}, rd16(player + kPlayerCharacter)};
         }
     }
     int run = speed();
