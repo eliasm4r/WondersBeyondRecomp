@@ -401,10 +401,6 @@ void test_online_menu() {
     CHECK(wp::settings::text("online.name", nullptr) == "AB1");
     menu.select(2);
     menu.handle(wp::options::Action::Accept);
-    wp::options::code_entry_key(0x08);
-    for (int i = 0; i < 16; i++) {
-        wp::options::code_entry_key(0x08);
-    }
     wp::options::type_code("10.0.0");
     CHECK(wp::options::code_entry_key(0x0D) && wp::options::code_entry_open());
     CHECK(wp::options::code_entry_key(0xBE));

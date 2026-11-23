@@ -369,7 +369,7 @@ bool online_action(const std::string& key, Action action) {
     } else if (key == kOnlineName || key == kOnlineAddress) {
         close_field();
         g_field = key == kOnlineName ? kOnlineName : kOnlineAddress;
-        g_field_text = settings::text(g_field, nullptr);
+        g_field_text = g_field == kOnlineName ? settings::text(g_field, nullptr) : "";
         g_field_letter = 0;
         g_keyboard_wanted = true;
     } else if (key == kOnlineHost) {
@@ -901,6 +901,9 @@ std::vector<Row> Menu::rows() const {
             row.value = field_text();
         } else if (key == kOnlineName || key == kOnlineAddress) {
             row.value = settings::text(key.c_str(), nullptr);
+            if (row.value.empty()) {
+                row.value = ui::label("saves.cloud.do_enter");
+            }
         } else if (key == kOnlineHost) {
             row.value = ui::label("online.do_host");
         } else if (key == kOnlineJoin) {
