@@ -250,7 +250,7 @@ bool request(const char* method, const std::string& id, const Bytes* body, uint6
     return ok;
 }
 #else
-std::string quoted(const std::string& text) {
+std::string shell_quoted(const std::string& text) {
     std::string out = "'";
     for (char character : text) {
         if (character == '\'') {
@@ -268,7 +268,7 @@ bool request(const char* method, const std::string& id, const Bytes* body, uint6
     std::string headers_path = stem + ".head";
     std::string output_path = stem + ".out";
     std::string input_path = stem + ".in";
-    std::string command = "curl -s -m 8 -X " + std::string(method) + " -A " + quoted(agent()) + " -D " + quoted(headers_path) + " -o " + quoted(output_path) +
+    std::string command = "curl -s -m 8 -X " + std::string(method) + " -A " + shell_quoted(agent()) + " -D " + shell_quoted(headers_path) + " -o " + shell_quoted(output_path) +
                           " -w '%{http_code}' -H 'Content-Type: application/octet-stream' -H 'X-Revision: " + std::to_string(revision) + "'";
     if (body) {
         std::ofstream input(input_path, std::ios::binary);
@@ -276,9 +276,9 @@ bool request(const char* method, const std::string& id, const Bytes* body, uint6
         if (!input.flush()) {
             return false;
         }
-        command += " --data-binary @" + quoted(input_path);
+        command += " --data-binary @" + shell_quoted(input_path);
     }
-    command += " " + quoted(std::string("https://") + kHost + "/v1/saves/" + id) + " 2>/dev/null";
+    command += " " + shell_quoted(std::string("https://") + kHost + "/v1/saves/" + id) + " 2>/dev/null";
     bool ok = false;
     if (FILE* pipe = popen(command.c_str(), "r")) {
         char text[16] = {};
