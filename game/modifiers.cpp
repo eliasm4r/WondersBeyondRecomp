@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <iterator>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -71,6 +72,7 @@ struct RecentEvent {
 
 std::vector<RecentEvent> g_recent;
 std::vector<uint32_t> g_playing;
+uint32_t g_own_beam = 0xffffffffu;
 constexpr uint32_t kSoundIsPlaying = 0x800be650;
 constexpr uint32_t kSoundFade = 10;
 constexpr size_t kMostPlaying = 24;
@@ -350,6 +352,113 @@ void sound_play(Cpu& c, HleFunction original) {
         }
     }
     original(c);
+}
+
+void record_beam(uint32_t kind, uint32_t start, uint32_t end) {
+    presence::Event event;
+    event.kind = kind;
+    event.offset = from_player({rdf32(start), rdf32(start + 4), rdf32(start + 8)});
+    event.vector = from_player({rdf32(end), rdf32(end + 4), rdf32(end + 8)});
+    record(event);
+}
+
+void beam_start(Cpu& c, HleFunction original) {
+    constexpr uint32_t kThunderbolt = 0x20010005;
+    bool ours = c.r[3] == g_effect_module && c.r[4] == kThunderbolt && online::running();
+    original(c);
+    if (ours) {
+        g_own_beam = c.r[3];
+    }
+}
+
+void beam_set(Cpu& c, HleFunction original) {
+    if (c.r[4] == g_own_beam && online::running()) {
+        record_beam(6, rd32(c.r[5]), rd32(c.r[5] + 4));
+    }
+    original(c);
+}
+
+void beam_move(Cpu& c, HleFunction original) {
+    constexpr uint32_t kBeamSendEvery = 3;
+    static uint32_t moves = 0;
+    if (c.r[4] == g_own_beam && online::running() && ++moves % kBeamSendEvery == 0) {
+        record_beam(7, c.r[5], c.r[6]);
+    }
+    original(c);
+}
+
+void beam_stop(Cpu& c, HleFunction original) {
+    if (c.r[4] == g_own_beam && online::running()) {
+        presence::Event event;
+        event.kind = 8;
+        record(event);
+        g_own_beam = 0xffffffffu;
+    }
+    original(c);
+}
+
+void minimap_update(Cpu& c, HleFunction original) {
+    constexpr uint32_t kMapState = 0x30;
+    constexpr uint32_t kMapClosed = 4;
+    constexpr uint32_t kMapZone = 0x20;
+    constexpr uint32_t kMapScaleX = 0x24;
+    constexpr uint32_t kMapScaleZ = 0x28;
+    constexpr uint32_t kZoneOriginX = 0x8;
+    constexpr uint32_t kZoneOriginZ = 0xc;
+    constexpr uint32_t kSlotIds = 0x3c;
+    constexpr uint32_t kSlotPanes = 0x40;
+    constexpr uint32_t kSlotBytes = 8;
+    constexpr uint32_t kFreeSlot = 0xffff;
+    constexpr uint32_t kPaneX = 0x2c;
+    constexpr uint32_t kPaneY = 0x30;
+    constexpr uint32_t kPaneFlags = 0xbb;
+    constexpr uint8_t kPaneShown = 1;
+    constexpr float kMapHalf = 80.0f;
+    constexpr int kSlots = 5;
+    static uint32_t marked_map = 0;
+    static bool marked[kSlots] = {};
+    uint32_t map = c.r[3];
+    original(c);
+    uint32_t state = rd8(map + kMapState);
+    uint32_t zone_data = rd32(map + kMapZone);
+    if (state == 0 || state == kMapClosed || !zone_data) {
+        return;
+    }
+    if (map != marked_map) {
+        marked_map = map;
+        std::fill(std::begin(marked), std::end(marked), false);
+    }
+    std::vector<presence::Peer> peers;
+    if (online::running()) {
+        uint32_t zone = disc::current_field();
+        for (const presence::Peer& peer : online::peers()) {
+            if (peer.zone != 0 && peer.zone == zone) {
+                peers.push_back(peer);
+            }
+        }
+    }
+    size_t next = 0;
+    for (int slot = kSlots - 1; slot >= 0; slot--) {
+        uint32_t entry = map + kSlotBytes * slot;
+        if (rd16(entry + kSlotIds) != kFreeSlot) {
+            marked[slot] = false;
+            continue;
+        }
+        uint32_t pane = rd32(entry + kSlotPanes);
+        if (!pane) {
+            continue;
+        }
+        if (next < peers.size()) {
+            const presence::Peer& peer = peers[next++];
+            wrf32(pane + kPaneX, -kMapHalf + (peer.position[0] - rdf32(zone_data + kZoneOriginX)) * rdf32(map + kMapScaleX));
+            wrf32(pane + kPaneY, kMapHalf - (peer.position[2] - rdf32(zone_data + kZoneOriginZ)) * rdf32(map + kMapScaleZ));
+            wr8(pane + kPaneFlags, rd8(pane + kPaneFlags) | kPaneShown);
+            marked[slot] = true;
+        } else if (marked[slot]) {
+            wr8(pane + kPaneFlags, rd8(pane + kPaneFlags) & ~kPaneShown);
+            marked[slot] = false;
+        }
+    }
 }
 
 void sound_stop(Cpu& c, HleFunction original) {

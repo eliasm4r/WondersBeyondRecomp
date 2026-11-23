@@ -45,8 +45,8 @@ constexpr uint32_t kFrameSize = 0x400;
 constexpr uint32_t kParameters = 0x100;
 constexpr uint32_t kHandleSpace = 0x20;
 constexpr int kLoadPatience = 900;
-constexpr int kCharacterPatience = 20;
-constexpr int kRemoveCooldown = 120;
+constexpr int kCharacterPatience = 3;
+constexpr int kRemoveCooldown = 2;
 constexpr int kReportEvery = 1200;
 constexpr double kShownBehind = 0.08;
 constexpr double kClockRelax = 0.0002;
@@ -67,12 +67,24 @@ constexpr uint32_t kEventPoint = 0x240;
 constexpr uint32_t kEventVector = 0x250;
 constexpr uint32_t kEventScale = 0x260;
 constexpr uint32_t kEffectManager = 0x800769e0;
+constexpr uint32_t kModelObject = 0xc;
+constexpr uint32_t kLocalHeight = 0x28;
+constexpr uint32_t kWorldHeight = 0x58;
+constexpr uint32_t kNoBeam = 0xffffffffu;
+constexpr uint32_t kBeamEffect = 0x20010005;
+constexpr uint32_t kBeamCreate = 0x58;
+constexpr uint32_t kBeamSet = 0x8005dbd0;
+constexpr uint32_t kBeamMove = 0x8005dc40;
+constexpr uint32_t kBeamStop = 0x8005dde0;
+constexpr uint32_t kSmallPool = 0x70;
+constexpr uint32_t kSmallEntry = 0x40;
+constexpr uint32_t kLargePool = 0x84;
+constexpr uint32_t kLargeEntry = 0xa8;
+constexpr int kBeamPatience = 60;
 constexpr uint32_t kEffectGroups = 0x24;
 constexpr uint32_t kGroupMatches = 0x80062570;
-constexpr uint32_t kSoundManager = 0x800768d0;
-constexpr uint32_t kStopSound = 0x80068210;
+constexpr uint32_t kStopOneSound = 0x64;
 constexpr uint32_t kStopAllSounds = 0x68;
-constexpr uint32_t kSoundOwner = 0x8;
 constexpr uint32_t kLongestFade = 600;
 constexpr uint32_t kMostJoints = 0x100;
 constexpr std::array<uint32_t, 5> kStopSlots = {0xa4, 0xa8, 0x98, 0x9c, 0xc0};
@@ -86,6 +98,8 @@ struct Puppet {
     uint32_t motion = 0;
     uint32_t serial = 0;
     uint32_t last_event = 0;
+    uint32_t beam = 0xffffffffu;
+    int beam_age = 0;
     uint32_t sequence = 0;
     double clock_gap = 0.0;
     std::vector<presence::Snapshot> snapshots;
@@ -117,8 +131,26 @@ bool alive(const Puppet& puppet) {
     return rd32(puppet.object) == kPokemonTable && rd32(puppet.object + kObjectHandle) == puppet.handle && rd8(puppet.object + kObjectState) >= 2 && rd8(puppet.object + kObjectState) <= 4;
 }
 
-void remove(Cpu& c, const Puppet& puppet) {
+bool beam_alive(uint32_t manager, uint32_t beam) {
+    if (beam == kNoBeam) {
+        return false;
+    }
+    uint32_t index = (beam >> 16) & 0x7fff;
+    uint32_t entry = beam >> 31 ? rd32(manager + kLargePool) + index * kLargeEntry : rd32(manager + kSmallPool) + index * kSmallEntry;
+    return rd32(entry + 8) == beam;
+}
+
+void stop_beam(Cpu& c, Puppet& puppet) {
+    uint32_t manager = guest(c, kEffectManager, 0);
+    if (beam_alive(manager, puppet.beam)) {
+        guest(c, kBeamStop, manager, puppet.beam, 0);
+    }
+    puppet.beam = kNoBeam;
+}
+
+void remove(Cpu& c, Puppet& puppet) {
     if (alive(puppet)) {
+        stop_beam(c, puppet);
         uint32_t sounds = method(c, guest(c, kAccessor, puppet.object), kSoundSlot);
         guest(c, rd32(rd32(sounds) + kStopAllSounds), sounds, 0);
         uint32_t manager = rd32(c.r[13] - kManagerOffset);
@@ -176,15 +208,50 @@ void replay(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t accesso
         if (static_cast<int32_t>(event.serial - newest) > 0) {
             newest = event.serial;
         }
+        if (event.kind >= 6) {
+            puppet.beam_age = 0;
+            if (event.kind == 8) {
+                stop_beam(c, puppet);
+                continue;
+            }
+            bool finite = true;
+            for (int i = 0; i < 3; i++) {
+                finite = finite && std::isfinite(event.offset[i]) && std::isfinite(event.vector[i]);
+            }
+            if (!finite || !effect_loaded(c, kBeamEffect)) {
+                continue;
+            }
+            uint32_t start = frame + kEventPoint;
+            uint32_t end = frame + kEventVector;
+            uint32_t ends = frame + kEventScale;
+            for (uint32_t i = 0; i < 3; i++) {
+                wrf32(start + 4 * i, puppet.position[i] + event.offset[i]);
+                wrf32(end + 4 * i, puppet.position[i] + event.vector[i]);
+            }
+            uint32_t manager = guest(c, kEffectManager, 0);
+            if (event.kind == 6) {
+                stop_beam(c, puppet);
+                uint32_t effects = method(c, accessor, kEffectSlot);
+                puppet.beam = guest(c, rd32(rd32(effects) + kBeamCreate), effects, kBeamEffect, start, 0);
+                if (beam_alive(manager, puppet.beam)) {
+                    wr32(ends, start);
+                    wr32(ends + 4, end);
+                    guest(c, kBeamSet, manager, puppet.beam, ends);
+                } else {
+                    puppet.beam = kNoBeam;
+                }
+            } else if (beam_alive(manager, puppet.beam)) {
+                guest(c, kBeamMove, manager, puppet.beam, start, end);
+            }
+            continue;
+        }
         if (event.kind == 4 || event.kind == 5) {
             uint32_t sounds = method(c, accessor, kSoundSlot);
             uint32_t fade = event.b <= kLongestFade ? event.b : 0;
             if (event.kind == 5) {
                 guest(c, rd32(rd32(sounds) + kStopAllSounds), sounds, fade);
             } else {
-                uint32_t owner = rd32(sounds + kSoundOwner);
-                uint32_t manager = guest(c, kSoundManager, 0);
-                guest(c, kStopSound, manager, event.id, owner, fade);
+                guest(c, rd32(rd32(sounds) + kStopOneSound), sounds, event.id, fade);
             }
             continue;
         }
@@ -269,7 +336,13 @@ void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) 
     if (++puppet.age % kReportEvery == 1) {
         log::write("online", "%s shown at %.1f %.1f %.1f, packet %u", peer.name.c_str(), shown.position[0], shown.position[1], shown.position[2], peer.sequence);
     }
+    uint32_t model_object = rd32(method(c, accessor, kModelSlot) + kModelObject);
+    float ground = rdf32(model_object + kWorldHeight) - rdf32(model_object + kLocalHeight);
+    wrf32(model_object + kLocalHeight, std::max(0.0f, shown.position[1] - ground));
     replay(c, puppet, peer, accessor, frame);
+    if (puppet.beam != kNoBeam && ++puppet.beam_age > kBeamPatience) {
+        stop_beam(c, puppet);
+    }
     method(c, method(c, accessor, kHitSlot), kSetHittable, 0);
     method(c, method(c, accessor, kJostleSlot), kSetPushable, 0);
     if (peer.pose.motion.empty()) {

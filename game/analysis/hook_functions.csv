@@ -24,6 +24,10 @@ address,name
 0x801e1b80,ChaseStep
 0x80019b20,CameraView
 0x800912a0,MotionStart
+0x8005dbd0,BeamSet
+0x8005dc40,BeamMove
+0x8005dde0,BeamStop
+0x800a0720,BeamStart
 0x800a07f0,EffectAt
 0x800a0c90,EffectOn
 0x800a1440,EffectStop0
@@ -34,6 +38,7 @@ address,name
 0x800be140,SoundPlay
 0x80068210,SoundStop
 0x80068250,SoundStopAll
+0x8016d710,MinimapUpdate
 0x800c3fc0,PlayerMove
 0x800b01c0,LifeDamage
 0x8028e660,AudioSystemInit
