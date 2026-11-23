@@ -384,6 +384,11 @@ void handle_event(SDL_Window* window, const SDL_Event& event) {
         touch::phone_motion(event.sensor.data[0] / kGravity, event.sensor.data[1] / kGravity, event.sensor.data[2] / kGravity);
         return;
     }
+    case SDL_EVENT_TEXT_INPUT:
+        if (options::menu_open() && options::type_code(event.text.text)) {
+            options::refresh_menu(window);
+        }
+        return;
     case SDL_EVENT_KEY_DOWN: {
         if (event.key.scancode == SDL_SCANCODE_AC_BACK) {
             if (!event.key.repeat) {
@@ -394,6 +399,9 @@ void handle_event(SDL_Window* window, const SDL_Event& event) {
         touch::other_input();
         int vk = vk_for(event.key.scancode);
         bool repeat = event.key.repeat;
+        if (options::menu_open() && options::code_entry_open() && ((vk >= '0' && vk <= '9') || (vk >= 'A' && vk <= 'Z') || (vk >= 0x60 && vk <= 0x69))) {
+            return;
+        }
         if (vk == kF11 && !repeat) {
             set_fullscreen(window, !g_fullscreen);
             settings::store("video.fullscreen", g_fullscreen ? "1" : "0");
@@ -629,6 +637,24 @@ void window_thread(bool visible) {
             titlebar::set_title(title);
         }
         apply_option(window, options::poll_gamepads(window));
+        {
+            static bool typing = false;
+            bool wanted = options::menu_open() && options::code_entry_open();
+            bool asked = options::take_keyboard_request();
+            if (wanted && (asked || !typing)) {
+                SDL_StopTextInput(window);
+                SDL_PropertiesID properties = SDL_CreateProperties();
+                SDL_SetNumberProperty(properties, SDL_PROP_TEXTINPUT_TYPE_NUMBER, SDL_TEXTINPUT_TYPE_TEXT_PASSWORD_VISIBLE);
+                SDL_SetNumberProperty(properties, SDL_PROP_TEXTINPUT_CAPITALIZATION_NUMBER, SDL_CAPITALIZE_LETTERS);
+                SDL_SetBooleanProperty(properties, SDL_PROP_TEXTINPUT_AUTOCORRECT_BOOLEAN, false);
+                SDL_StartTextInputWithProperties(window, properties);
+                SDL_DestroyProperties(properties);
+                typing = true;
+            } else if (!wanted && typing) {
+                SDL_StopTextInput(window);
+                typing = false;
+            }
+        }
         perf::update();
 #ifdef __ANDROID__
         bool capture = false;

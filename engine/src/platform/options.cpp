@@ -1,6 +1,7 @@
 #include "wp/options.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
@@ -76,7 +77,7 @@ constexpr Slider kSliders[] = {{"audio.volume", 0, 300, 5},
                                {color::kSaturation.key, color::kSaturation.low, color::kSaturation.high, 5},
                                {color::kGamma.key, color::kGamma.low, color::kGamma.high, 5}};
 
-constexpr const char* kTabLabels[kTabCount] = {"tab.screen", "tab.game", "tab.sound", "tab.controls", "tab.language", "tab.advanced", "tab.cheats"};
+constexpr const char* kTabLabels[kTabCount] = {"tab.screen", "tab.game", "tab.sound", "tab.controls", "tab.language", "tab.advanced", "tab.cheats", "tab.saves"};
 
 constexpr const char* kDevice = "controls.device";
 constexpr const char* kPlayTime = "stats.play_time";
@@ -113,6 +114,8 @@ constexpr size_t kCloudCodeLength = 10;
 bool g_code_entry = false;
 std::string g_code_typed;
 size_t g_code_letter = 0;
+bool g_code_picking = false;
+bool g_keyboard_wanted = false;
 
 std::vector<std::string> cloud_keys() {
     if (g_code_entry) {
@@ -160,53 +163,58 @@ std::string cloud_status_text() {
 
 std::string code_entry_text() {
     std::string shown = g_code_typed;
-    if (shown.size() < kCloudCodeLength) {
+    if (shown.size() < kCloudCodeLength && g_code_picking) {
         shown.push_back(cloud::code_letters()[g_code_letter]);
     }
     shown.append(kCloudCodeLength - shown.size(), '_');
     return cloud::shown_code(shown);
 }
 
-void submit_code() {
+void close_code_entry() {
+    g_code_entry = false;
+    g_code_picking = false;
+    g_code_typed.clear();
+}
+
+void add_code_character(char character) {
+    g_code_typed.push_back(character);
     if (g_code_typed.size() == kCloudCodeLength) {
-        cloud::link(g_code_typed);
-        g_code_entry = false;
-        g_code_typed.clear();
+        std::string code = g_code_typed;
+        close_code_entry();
+        cloud::link(code);
     }
 }
 
 bool cloud_action(const std::string& key, Action action) {
     if (key == kCloudCode) {
         size_t letters = std::strlen(cloud::code_letters());
-        if (action == Action::Previous) {
-            g_code_letter = (g_code_letter + letters - 1) % letters;
-            return true;
-        }
-        if (action == Action::Next) {
-            g_code_letter = (g_code_letter + 1) % letters;
+        if (action == Action::Previous || action == Action::Next) {
+            if (g_code_picking) {
+                g_code_letter = (g_code_letter + (action == Action::Next ? 1 : letters - 1)) % letters;
+            }
+            g_code_picking = true;
             return true;
         }
     }
     if (action != Action::Accept) {
         return false;
     }
-    if (key == kCloudCode || key == kCloudAdd) {
-        if (g_code_typed.size() < kCloudCodeLength) {
-            g_code_typed.push_back(cloud::code_letters()[g_code_letter]);
-        } else {
-            submit_code();
-        }
+    if (key == kCloudCode && !g_code_picking) {
+        g_keyboard_wanted = true;
+    } else if (key == kCloudCode || key == kCloudAdd) {
+        g_code_picking = true;
+        add_code_character(cloud::code_letters()[g_code_letter]);
     } else if (key == kCloudErase) {
         if (!g_code_typed.empty()) {
             g_code_typed.pop_back();
         }
     } else if (key == kCloudCancel) {
-        g_code_entry = false;
-        g_code_typed.clear();
+        close_code_entry();
     } else if (key == kCloudEnter) {
+        close_code_entry();
         g_code_entry = true;
-        g_code_typed.clear();
         g_code_letter = 0;
+        g_keyboard_wanted = true;
     } else if (key == kCloudCreate) {
         cloud::create();
     } else if (key == kCloudKeepHere) {
@@ -331,9 +339,7 @@ std::vector<std::string> tab_keys(size_t tab, Device device) {
         return keys;
     }
     case 1: {
-        std::vector<std::string> keys = {"game.text_speed", "game.skip_movies", "game.button_icons", "game.save_photos", "saves.backups", "system.discord", kPlayTime};
-        std::vector<std::string> sync_rows = cloud_keys();
-        keys.insert(keys.begin() + 5, sync_rows.begin(), sync_rows.end());
+        std::vector<std::string> keys = {"game.text_speed", "game.skip_movies", "game.button_icons", "game.save_photos", "system.discord", kPlayTime};
         if (kPhone) {
             keys.erase(std::find(keys.begin(), keys.end(), "system.discord"));
         }
@@ -387,6 +393,11 @@ std::vector<std::string> tab_keys(size_t tab, Device device) {
             return {"cheats.run_speed", "cheats.jump", "cheats.damage_dealt", "cheats.damage_taken", "cheats.berries", "cheats.prices", "cheats.chase_speed"};
         }
         return {kFlyCamera, "cheats.run_speed", "cheats.jump", "cheats.damage_dealt", "cheats.damage_taken", "cheats.berries", "cheats.prices", "cheats.chase_speed"};
+    case 7: {
+        std::vector<std::string> keys = cloud_keys();
+        keys.push_back("saves.backups");
+        return keys;
+    }
     default:
         return {};
     }
@@ -720,7 +731,17 @@ std::vector<Row> Menu::rows() const {
         } else if (key == kCloudCode) {
             row.value = code_entry_text();
         } else if (key == kCloudAdd) {
-            row.value = g_code_typed.size() == kCloudCodeLength ? ui::label("saves.cloud.confirm") : "";
+            row.value = ui::label("saves.cloud.do_add");
+        } else if (key == kCloudCreate) {
+            row.value = ui::label("saves.cloud.do_create");
+        } else if (key == kCloudEnter) {
+            row.value = ui::label("saves.cloud.do_enter");
+        } else if (key == kCloudErase) {
+            row.value = ui::label("saves.cloud.do_erase");
+        } else if (key == kCloudCancel) {
+            row.value = ui::label("saves.cloud_cancel");
+        } else if (key == kCloudOff) {
+            row.value = ui::label("saves.cloud.do_off");
         } else if (key == kCloudKeepHere) {
             row.value = play_time::format(play_time::seconds(), ui::language());
         } else if (key == kCloudKeepOther) {
@@ -892,6 +913,30 @@ std::string Menu::handle(Action action) {
     return "";
 }
 
+bool type_code(const char* text) {
+    if (!g_code_entry || !text) {
+        return false;
+    }
+    for (; *text && g_code_entry; text++) {
+        char character = static_cast<char>(std::toupper(static_cast<unsigned char>(*text)));
+        character = character == 'O' ? '0' : (character == 'I' || character == 'L') ? '1' : character;
+        if (character != 0 && std::strchr(cloud::code_letters(), character)) {
+            add_code_character(character);
+        }
+    }
+    return true;
+}
+
+bool code_entry_open() {
+    return g_code_entry;
+}
+
+bool take_keyboard_request() {
+    bool wanted = g_keyboard_wanted;
+    g_keyboard_wanted = false;
+    return wanted;
+}
+
 bool code_entry_key(unsigned key) {
     if (!g_code_entry) {
         return false;
@@ -902,23 +947,21 @@ bool code_entry_key(unsigned key) {
         }
         return true;
     }
-    if (key == 0x0D && g_code_typed.size() == kCloudCodeLength) {
-        submit_code();
-        return true;
-    }
     if (key == 0x1B) {
-        g_code_entry = false;
-        g_code_typed.clear();
+        close_code_entry();
         return true;
     }
-    bool letter = (key >= '0' && key <= '9') || (key >= 'A' && key <= 'Z');
-    if (!letter) {
+    if (key == 0x20) {
+        return true;
+    }
+    if (key >= 0x60 && key <= 0x69) {
+        key = '0' + (key - 0x60);
+    }
+    if (!((key >= '0' && key <= '9') || (key >= 'A' && key <= 'Z'))) {
         return false;
     }
-    char character = key == 'O' ? '0' : (key == 'I' || key == 'L') ? '1' : static_cast<char>(key);
-    if (std::strchr(cloud::code_letters(), character) && g_code_typed.size() < kCloudCodeLength) {
-        g_code_typed.push_back(character);
-    }
+    const char text[2] = {static_cast<char>(key), 0};
+    type_code(text);
     return true;
 }
 
@@ -971,7 +1014,7 @@ Rect place(int client_width, int client_height, int width, int height) {
 Rect tab_rect(const Layout& layout, size_t tab) {
     Rect result;
     result.x = layout.padding;
-    result.y = layout.padding + layout.title_height + static_cast<int>(tab) * (layout.tab_height + layout.unit / 2);
+    result.y = layout.padding + layout.title_height + static_cast<int>(tab) * (layout.tab_height + layout.unit / 3);
     result.width = layout.tabs_width;
     result.height = layout.tab_height;
     return result;

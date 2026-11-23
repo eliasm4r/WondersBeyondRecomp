@@ -61,3 +61,4 @@ __pycache__/
 /.superpowers/
 /game/photos.txt
 /game/android.keystore
+game/cloud_sync.txt

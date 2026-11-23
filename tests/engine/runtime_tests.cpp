@@ -2055,7 +2055,7 @@ void test_options_menu() {
         }
     }
     wp::ui::set_language(wp::ui::Language::English);
-    CHECK(wp::options::kTabCount == 7);
+    CHECK(wp::options::kTabCount == 8);
     CHECK(std::strcmp(wp::ui::label("tab.screen", wp::ui::Language::French), "Écran") == 0);
     CHECK(std::strcmp(wp::ui::label("tab.advanced", wp::ui::Language::English), "Advanced") == 0);
     CHECK(std::strcmp(wp::ui::label("tab.controls", wp::ui::Language::Galician), "Controls") != 0);
@@ -2064,7 +2064,8 @@ void test_options_menu() {
                                                                  "video.brightness", "video.contrast", "video.saturation", "video.gamma", "video.colors_reset"}));
     CHECK(std::strcmp(wp::ui::label("video.colors_reset", wp::ui::Language::French), "Couleurs d'origine") == 0);
     CHECK(std::strcmp(wp::ui::label("video.brightness", wp::ui::Language::French), "Luminosité") == 0);
-    CHECK((wp::options::tab_keys(1) == std::vector<std::string>{"game.text_speed", "game.skip_movies", "game.button_icons", "game.save_photos", "saves.backups", "saves.cloud_status", "saves.cloud_create", "saves.cloud_enter", "system.discord", "stats.play_time"}));
+    CHECK((wp::options::tab_keys(1) == std::vector<std::string>{"game.text_speed", "game.skip_movies", "game.button_icons", "game.save_photos", "system.discord", "stats.play_time"}));
+    CHECK((wp::options::tab_keys(7) == std::vector<std::string>{"saves.cloud_status", "saves.cloud_create", "saves.cloud_enter", "saves.backups"}));
     CHECK((wp::options::tab_keys(2) == std::vector<std::string>{"audio.volume", "audio.mute", "audio.wiimote_speaker"}));
     CHECK((wp::options::tab_keys(6) == std::vector<std::string>{"cheats.fly_camera", "cheats.run_speed", "cheats.jump", "cheats.damage_dealt", "cheats.damage_taken", "cheats.berries", "cheats.prices", "cheats.chase_speed"}));
     CHECK((wp::options::choices("cheats.damage_taken") == std::vector<std::string>{"100", "150", "200", "300", "500", "1000", "0", "25", "50", "75"}) && wp::settings::number("cheats.jump", nullptr) == 100);
@@ -2156,11 +2157,30 @@ void test_options_menu() {
     CHECK(wp::settings::flag("game.button_icons", nullptr));
     CHECK(rows[3].key == "game.save_photos" && rows[3].kind == wp::options::Kind::Toggle && rows[3].live);
     CHECK(wp::settings::flag("game.save_photos", nullptr));
-    menu.select(9);
+    menu.select(5);
     rows = menu.rows();
-    CHECK(rows[9].kind == wp::options::Kind::Info && !rows[9].value.empty() && rows[9].live);
+    CHECK(rows[5].kind == wp::options::Kind::Info && !rows[5].value.empty() && rows[5].live);
     CHECK(menu.handle(wp::options::Action::Accept).empty() && menu.handle(wp::options::Action::Next).empty());
     CHECK(menu.handle(wp::options::Action::Previous).empty() && !menu.capturing());
+
+    menu.select_tab(7);
+    rows = menu.rows();
+    CHECK(rows[1].value == "Create" && rows[2].value == "Enter");
+    menu.select(2);
+    menu.handle(wp::options::Action::Accept);
+    CHECK(wp::options::code_entry_open() && wp::options::take_keyboard_request() && !wp::options::take_keyboard_request());
+    CHECK(wp::options::type_code("k7-p"));
+    CHECK(wp::options::code_entry_key('4'));
+    CHECK(menu.rows()[0].value == "K7P4_-_____");
+    CHECK(wp::options::code_entry_key(0x08));
+    CHECK(menu.rows()[0].value == "K7P__-_____");
+    menu.select(0);
+    menu.handle(wp::options::Action::Next);
+    CHECK(menu.rows()[0].value == "K7P0_-_____");
+    menu.handle(wp::options::Action::Next);
+    CHECK(menu.rows()[0].value == "K7P1_-_____");
+    CHECK(wp::options::code_entry_key(0x1B) && !wp::options::code_entry_open());
+    menu.select(0);
 
     menu.select_tab(3);
     rows = menu.rows();

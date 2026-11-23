@@ -38,7 +38,7 @@ struct Row {
     std::string help;
 };
 
-constexpr size_t kTabCount = 7;
+constexpr size_t kTabCount = 8;
 constexpr size_t kVisibleRows = 9;
 
 const char* tab_label(size_t tab);
@@ -49,6 +49,9 @@ std::vector<std::string> choices(const std::string& key);
 std::string shown_value(const std::string& key, const std::string& value);
 std::string step_value(const std::string& key, const std::string& value, int step);
 bool code_entry_key(unsigned key);
+bool type_code(const char* text);
+bool code_entry_open();
+bool take_keyboard_request();
 
 class Menu {
 public:
