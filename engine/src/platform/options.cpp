@@ -350,7 +350,7 @@ std::vector<std::string> choices(const std::string& key) {
         return {"100", "150", "200", "300", "1000"};
     }
     if (key == "cheats.damage_taken") {
-        return {"100", "75", "50", "25", "0"};
+        return {"100", "150", "200", "300", "500", "1000", "0", "25", "50", "75"};
     }
     if (key == "cheats.run_speed") {
         return {"100", "125", "150", "200"};

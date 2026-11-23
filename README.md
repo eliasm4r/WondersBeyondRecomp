@@ -4,14 +4,14 @@
 
 # WondersBeyondRecomp
 
-### PokéPark 2: Wonders Beyond, running natively on PC
+### PokéPark 2: Wonders Beyond, running natively on PC, Mac, Steam Deck and Android
 
-A static recompilation of the Wii game: its code is translated to C++ ahead of time and built into a real PC program.<br>
+A static recompilation of the Wii game: its code is translated to C++ ahead of time and built into a real native program.<br>
 No emulator, up to 240 fps, high resolutions, wide screens, keyboard, mouse and modern controllers.
 
 [![Latest release](https://img.shields.io/github/v/release/eliasm4r/WondersBeyondRecomp?include_prereleases&style=for-the-badge&label=release&color=f08a00)](https://github.com/eliasm4r/WondersBeyondRecomp/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/eliasm4r/WondersBeyondRecomp/total?style=for-the-badge&color=2e7d32)](https://github.com/eliasm4r/WondersBeyondRecomp/releases)
-[![Platform](https://img.shields.io/badge/platform-Windows-0078d4?style=for-the-badge)](#requirements)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Android-0078d4?style=for-the-badge)](#other-systems)
 [![License](https://img.shields.io/badge/license-GPL--3.0-6a3d1b?style=for-the-badge)](LICENSE)
 
 <a href="https://recomplauncher.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
@@ -44,7 +44,7 @@ No emulator, up to 240 fps, high resolutions, wide screens, keyboard, mouse and 
 - **Xbox, PlayStation and Switch controllers**, named as they are in the menus, and **real Wii Remotes**. The game's own texts and prompts show **your keys and buttons** instead of the Wii Remote's.
 - **Controls made for the four attractions**: Cake Contraption, Dance Inferno, Power Bash and Flight of Fancy play with the keyboard, the mouse or a controller.
 - **Faster text and skippable cutscenes**: dialogue 2 or 3 times faster or a page at once, and hold a button to skip a video or fast-forward a story scene.
-- **Cheats**: running speed, jump height, damage dealt and taken, berries collected, prices and chased Pokémon speed, plus a **fly camera on F6** to look around the map.
+- **Cheats**: running speed, jump height, damage dealt and taken (both up to 1000%), berries collected, prices and chased Pokémon speed, plus a **fly camera on F6** to look around the map.
 - **HD photos**: the photos you keep are also saved as full-resolution PNG files, and the Pad shows them sharp.
 - **Options menu on F1**, drawn as the game's own dialog bubble, and a **performance overlay on F2**.
 - **Automatic save backups**, a play time counter, **Discord Rich Presence** and an **update check** against the latest release.
@@ -88,7 +88,7 @@ Other regions are planned.
 
 - **Linux and Steam Deck**: download the Linux zip for your processor, unzip it and start `Setup.sh`. It brings its own compiler. On the Steam Deck, use "Add to Steam" on the new menu entry to play in gaming mode.
 - **macOS** (Apple Silicon): download the macOS zip, unzip it and start `Setup.command`. It needs Apple's Command Line Tools and offers to install them.
-- **Android** (64-bit): no ready-made app is published, since it would contain the translated game. Build it on a computer from your own disc image with `python tools/android_tools.py`, then install it over USB with `python tools/android_tools.py --install`.
+- **Android** (64-bit, Vulkan or OpenGL ES 3.2): build the app on a computer from your own disc image with `python tools/android_tools.py`, then install it over USB with `python tools/android_tools.py --install`. Touch controls are included.
 
 <br>
 
@@ -168,7 +168,7 @@ The file `logs/pokepark2.log` in the install folder, and `logs/pokepark2.previou
 <summary><b>Is it an emulator?</b></summary>
 <br>
 
-No. An emulator reads the game's PowerPC instructions one by one while you play. Here they are translated to C++ once, during the install, and compiled into a normal Windows program. Only the console hardware underneath (graphics, sound, Wii Remotes, storage) is recreated.
+No. An emulator reads the game's PowerPC instructions one by one while you play. Here they are translated to C++ once, during the install, and compiled into a normal program for your system. Only the console hardware underneath (graphics, sound, Wii Remotes, storage) is recreated.
 </details>
 
 <br>

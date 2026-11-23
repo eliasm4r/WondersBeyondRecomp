@@ -10,6 +10,14 @@ Every change to WondersBeyondRecomp, newest first.
 
 <br>
 
+## v0.4.1-alpha · 2026-11-23
+
+### Added
+- **Stronger opponents**: the Damage taken cheat now goes up to 1000%, with 150, 200, 300, 500 and 1000%.
+
+### Changed
+- The README lists every supported system.
+
 ## v0.4.0-alpha · 2026-11-23
 
 > **Android, Linux, Steam Deck and macOS.** The game now runs on phones with touch controls, on Linux and the Steam Deck, and on Apple Silicon Macs. [Download it here.](https://github.com/eliasm4r/WondersBeyondRecomp/releases/tag/v0.4.0-alpha)
