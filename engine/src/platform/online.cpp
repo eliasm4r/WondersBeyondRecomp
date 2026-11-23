@@ -26,9 +26,10 @@ constexpr auto kQuietAfter = std::chrono::minutes(10);
 constexpr auto kStunEvery = std::chrono::milliseconds(300);
 constexpr auto kStunPatience = std::chrono::seconds(4);
 constexpr auto kHostPollEvery = std::chrono::seconds(5);
-constexpr auto kJoinRetryEvery = std::chrono::seconds(8);
+constexpr auto kHostSearchEvery = std::chrono::seconds(2);
+constexpr auto kJoinRetryEvery = std::chrono::seconds(3);
 constexpr auto kDirectPatience = std::chrono::seconds(15);
-constexpr int kJoinAttempts = 4;
+constexpr int kJoinAttempts = 10;
 constexpr int kNetworkRetries = 3;
 constexpr double kPunchSeconds = 25.0;
 constexpr double kDirectSeconds = 3600.0;
@@ -220,7 +221,7 @@ void run_host(std::shared_ptr<Session> session) {
     log::write("online", "room %s is open", code.c_str());
     set_state(session, State::Hosting);
     const std::string path = "/v1/rooms/" + code + "/" + token;
-    while (wait(session, kHostPollEvery)) {
+    while (wait(session, others() > 0 ? kHostPollEvery : kHostSearchEvery)) {
         std::string body;
         {
             std::lock_guard<std::mutex> lock(session->mutex);

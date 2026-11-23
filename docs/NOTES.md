@@ -1812,3 +1812,16 @@ phone never did it.
 - `tests/engine/metal_shaders_test.mm` builds every shader and pipeline on the macOS workflow's Metal device.
 - Apple GPUs remove hidden pixels before shading unless the fragment shader can discard. When the alpha test passes for every alpha value, the variant is built with `WP_NO_DISCARD` (an extra key word), so opaque draws keep that removal and early depth.
 - When the game clears the whole shown picture with color, alpha and depth on, and no EFB pass is open (the usual clear right after the XFB copy), the next pass starts with Metal clear load actions instead of loading the old tiles and drawing a clear triangle.
+
+## Online puppets: sounds, jump, lightning, map
+
+- A looping sound must be stopped through the sound module's slot 0x64 (0x800be4b0). The manager stop 0x80068210 alone
+  leaves the id in the module's list at +0x2c, and the module's update starts the sound again.
+- The game rewrites a model's world height every frame, so a puppet jump goes through the model's local matrix height
+  (model object +0x28). The base height is world +0x58 minus that local value. The shadow stays on the ground.
+- The Thunderbolt beam is effect 0x20010005 with specializer 0. It needs 0x8005dbd0 with two point pointers right after
+  its creation, 0x8005dc40 to move it and 0x8005dde0 to stop it. A handle is checked against its pool entry before use.
+- The minimap (0x8016d710) places the free IconGolePoint panes from the last slot down, with the zone's MapUIParam
+  origin and scale. A slot the game takes for a quest marker is left to the game.
+- Punching also tries the 8 ports around each endpoint, and a joiner accepts its host from any port of the same address,
+  because some routers change the port for each destination.

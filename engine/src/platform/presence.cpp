@@ -47,6 +47,7 @@ constexpr size_t kMaxOthers = 3;
 constexpr double kPeerTimeout = 5.0;
 constexpr float kLargestCoordinate = 1e6f;
 constexpr int kMaxPacketsPerPump = 64;
+constexpr int kPortGuesses = 8;
 constexpr size_t kLargestDatagram = kPacketBytes + kMostEvents * kEventBytes;
 constexpr uint32_t kStunCookie = 0x2112A442;
 constexpr size_t kStunHeader = 20;
@@ -543,8 +544,21 @@ void Link::send(const std::array<float, 3>& position, uint32_t zone, const Pose&
     if (m_impl->hosting || !m_impl->has_server) {
         for (const Target& target : m_impl->targets) {
             bool known = std::any_of(m_impl->clients.begin(), m_impl->clients.end(), [&](const Client& c) { return same_address(c.address, target.address); });
-            if (!known && target.until > m_impl->now) {
-                m_impl->transmit(packet, length, target.address);
+            if (known || target.until <= m_impl->now) {
+                continue;
+            }
+            m_impl->transmit(packet, length, target.address);
+            if (target.address.ss_family != AF_INET) {
+                continue;
+            }
+            for (int offset = -kPortGuesses; offset <= kPortGuesses; offset++) {
+                sockaddr_storage guess = target.address;
+                auto& ipv4 = reinterpret_cast<sockaddr_in&>(guess);
+                int port = ntohs(ipv4.sin_port) + offset;
+                if (offset != 0 && port > 0 && port <= 65535) {
+                    ipv4.sin_port = htons(static_cast<uint16_t>(port));
+                    m_impl->transmit(packet, length, guess);
+                }
             }
         }
     }
