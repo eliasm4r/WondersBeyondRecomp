@@ -1,6 +1,7 @@
 #include "wp/cloud_sync.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
@@ -263,7 +264,6 @@ std::string quoted(const std::string& text) {
 
 bool request(const char* method, const std::string& id, const Bytes* body, uint64_t revision, Reply& reply) {
     std::error_code error;
-    Bytes tag(8);
     std::string stem = (fs::temp_directory_path(error) / ("wbr-sync-" + new_code())).string();
     std::string headers_path = stem + ".head";
     std::string output_path = stem + ".out";

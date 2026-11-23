@@ -47,6 +47,7 @@ No emulator, up to 240 fps, high resolutions, wide screens, keyboard, mouse and 
 - **Cheats**: running speed, jump height, damage dealt and taken (both up to 1000%), berries collected, prices and chased Pokémon speed, plus a **fly camera on F6** to look around the map.
 - **HD photos**: the photos you keep are also saved as full-resolution PNG files, and the Pad shows them sharp.
 - **Options menu on F1**, drawn as the game's own dialog bubble, and a **performance overlay on F2**.
+- **Save sync between your devices** with a simple code: no account, and saves are encrypted before they leave your device.
 - **Automatic save backups**, a play time counter, **Discord Rich Presence** and an **update check** against the latest release.
 - Menu in **English, French, Spanish and Galician**.
 
@@ -155,6 +156,8 @@ The European version (`S2LP01`), the one sold in Europe and Australia. The setup
 <br>
 
 In the install folder, under `game`: `settings.ini` for the settings, `stats.ini` for the play time and `nand` for the saves. Backups of the saves are made automatically.
+
+To share a save between devices, open the **Saves** tab of the F1 menu and create a code, then type it on the other device. Keep the code private: anyone who has it can reach that save, and a lost code cannot be recovered.
 </details>
 
 <details>

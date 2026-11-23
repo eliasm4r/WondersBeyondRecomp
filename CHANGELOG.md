@@ -10,6 +10,16 @@ Every change to WondersBeyondRecomp, newest first.
 
 <br>
 
+## v0.5.0-alpha · 2026-11-23
+
+### Added
+- **Save sync between your devices**: create a code in the new **Saves** tab of the F1 menu, type it on your other devices, and the game gets your latest progress at launch and sends it after each save. No account, no password, no email.
+- **You choose when two saves differ**: the game shows the play time of each and asks which one to keep. The other stays in the backups.
+- Saves are encrypted on your device before they are sent. Photos stay on each device.
+
+### Changed
+- Growing water splashes vanish less often from the in-between pictures above 60 fps.
+
 ## v0.4.1-alpha · 2026-11-23
 
 ### Added
