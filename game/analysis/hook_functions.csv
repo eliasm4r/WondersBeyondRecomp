@@ -26,6 +26,11 @@ address,name
 0x800912a0,MotionStart
 0x800a07f0,EffectAt
 0x800a0c90,EffectOn
+0x800a1440,EffectStop0
+0x800a14a0,EffectStop1
+0x800a1870,EffectStop2
+0x800a18d0,EffectStop3
+0x800a1a00,EffectStop4
 0x800be140,SoundPlay
 0x800c3fc0,PlayerMove
 0x800b01c0,LifeDamage

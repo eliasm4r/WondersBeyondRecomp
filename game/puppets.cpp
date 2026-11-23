@@ -65,6 +65,9 @@ constexpr uint32_t kEventScale = 0x260;
 constexpr uint32_t kEffectManager = 0x800769e0;
 constexpr uint32_t kEffectGroups = 0x24;
 constexpr uint32_t kGroupMatches = 0x80062570;
+constexpr uint32_t kMostJoints = 0x100;
+constexpr std::array<uint32_t, 5> kStopSlots = {0xa4, 0xa8, 0x98, 0x9c, 0xc0};
+constexpr uint32_t kFirstPointer = 0x80000000;
 
 struct Puppet {
     uint32_t peer = 0;
@@ -160,7 +163,16 @@ void replay(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t accesso
         if (static_cast<int32_t>(event.serial - newest) > 0) {
             newest = event.serial;
         }
-        if (event.kind != 0 && !effect_loaded(c, event.id)) {
+        if (event.kind == 3) {
+            bool known = std::find(kStopSlots.begin(), kStopSlots.end(), event.a) != kStopSlots.end();
+            bool plain = (event.id < kFirstPointer || event.id == 0xffffffffu) && (event.b < kFirstPointer || event.b == 0xffffffffu);
+            if (known && plain) {
+                uint32_t effects = method(c, accessor, kEffectSlot);
+                guest(c, rd32(rd32(effects) + event.a), effects, event.id, event.b);
+            }
+            continue;
+        }
+        if (event.kind != 0 && (!effect_loaded(c, event.id) || (event.kind == 2 && event.a >= kMostJoints))) {
             continue;
         }
         uint32_t point = frame + kEventPoint;

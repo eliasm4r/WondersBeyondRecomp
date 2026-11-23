@@ -326,6 +326,17 @@ void effect_at(Cpu& c, HleFunction original) {
     original(c);
 }
 
+void note_effect_stop(Cpu& c, uint32_t slot) {
+    if (c.r[3] == g_effect_module && online::running()) {
+        presence::Event event;
+        event.kind = 3;
+        event.id = c.r[4];
+        event.a = slot;
+        event.b = c.r[5];
+        record(event);
+    }
+}
+
 void effect_on(Cpu& c, HleFunction original) {
     if (c.r[3] == g_effect_module && online::running()) {
         presence::Event event;

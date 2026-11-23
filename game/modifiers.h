@@ -14,6 +14,12 @@ void motion_start(Cpu& c, HleFunction original);
 void sound_play(Cpu& c, HleFunction original);
 void effect_at(Cpu& c, HleFunction original);
 void effect_on(Cpu& c, HleFunction original);
+void note_effect_stop(Cpu& c, uint32_t slot);
+template <uint32_t Slot>
+void effect_stop(Cpu& c, HleFunction original) {
+    note_effect_stop(c, Slot);
+    original(c);
+}
 void life_damage(Cpu& c, HleFunction original);
 
 }

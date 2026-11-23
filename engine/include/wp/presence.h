@@ -7,7 +7,7 @@
 
 namespace wp::presence {
 
-constexpr size_t kMostEvents = 8;
+constexpr size_t kMostEvents = 16;
 
 struct Event {
     uint32_t serial = 0;
