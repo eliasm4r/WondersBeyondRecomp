@@ -177,6 +177,9 @@ void note_field_camera(uint32_t camera) {
 }
 
 void player_move(Cpu& c, HleFunction original) {
+    if (hold_puppet(c.r[3])) {
+        return;
+    }
     static const settings::LiveNumber speed("cheats.run_speed", "WP_CHEAT_RUN_SPEED");
     static const settings::LiveNumber jump("cheats.jump", "WP_CHEAT_JUMP");
     static uint32_t last_player = 0;

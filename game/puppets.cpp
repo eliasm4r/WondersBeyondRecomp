@@ -38,8 +38,7 @@ constexpr uint32_t kRotationSlot = 0x60;
 constexpr uint32_t kShowSlot = 0x70;
 constexpr uint32_t kObjectHandle = 0x4;
 constexpr uint32_t kObjectState = 0x18;
-constexpr uint32_t kFirstHero = 204;
-constexpr uint32_t kHeroes = 4;
+constexpr std::array<uint32_t, 4> kHeroSpecies = {204, 207, 205, 206};
 constexpr uint32_t kCharacterKind = 4;
 constexpr uint32_t kFrameSize = 0x400;
 constexpr uint32_t kParameters = 0x100;
@@ -63,6 +62,7 @@ struct Puppet {
     uint32_t species = 0;
     uint32_t motion = 0;
     uint32_t serial = 0;
+    uint32_t position_address = 0;
     bool ready = false;
     int age = 0;
     int changed = 0;
@@ -129,6 +129,7 @@ void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) 
     uint32_t posture = method(c, accessor, kPostureSlot);
     uint32_t position = method(c, posture, kPositionSlot);
     uint32_t rotation = method(c, posture, kRotationSlot);
+    puppet.position_address = position;
     float distance = 0.0f;
     for (int i = 0; i < 3; i++) {
         float gap = peer.position[i] - puppet.position[i];
@@ -168,11 +169,11 @@ void step(Cpu& c, bool active, uint32_t frame) {
         return;
     }
     std::vector<presence::Peer> peers = online::running() ? online::peers() : std::vector<presence::Peer>{};
-    peers.erase(std::remove_if(peers.begin(), peers.end(), [&](const presence::Peer& peer) { return peer.zone == 0 || peer.zone != zone || peer.pose.character >= kHeroes; }), peers.end());
+    peers.erase(std::remove_if(peers.begin(), peers.end(), [&](const presence::Peer& peer) { return peer.zone == 0 || peer.zone != zone || peer.pose.character >= kHeroSpecies.size(); }), peers.end());
     for (auto puppet = g_puppets.begin(); puppet != g_puppets.end();) {
         auto peer = std::find_if(peers.begin(), peers.end(), [&](const presence::Peer& entry) { return entry.id == puppet->peer; });
         bool stale = !alive(*puppet);
-        puppet->changed = peer != peers.end() && kFirstHero + peer->pose.character != puppet->species ? puppet->changed + 1 : 0;
+        puppet->changed = peer != peers.end() && kHeroSpecies[peer->pose.character] != puppet->species ? puppet->changed + 1 : 0;
         bool wrong = peer == peers.end() || puppet->changed > kCharacterPatience || (!puppet->ready && ++puppet->age > kLoadPatience);
         if (stale || wrong) {
             if (!stale) {
@@ -199,7 +200,7 @@ void step(Cpu& c, bool active, uint32_t frame) {
         }
         Puppet puppet;
         puppet.peer = peer.id;
-        puppet.species = kFirstHero + peer.pose.character;
+        puppet.species = kHeroSpecies[peer.pose.character];
         puppet.object = guest(c, kCreate, rd32(c.r[13] - kManagerOffset), 1, puppet.species);
         if (puppet.object) {
             puppet.handle = rd32(puppet.object + kObjectHandle);
@@ -211,6 +212,18 @@ void step(Cpu& c, bool active, uint32_t frame) {
     }
 }
 
+}
+
+bool hold_puppet(uint32_t object) {
+    for (const Puppet& puppet : g_puppets) {
+        if (puppet.object == object && puppet.position_address && alive(puppet)) {
+            for (uint32_t i = 0; i < 3; i++) {
+                wrf32(puppet.position_address + 4 * i, puppet.position[i]);
+            }
+            return true;
+        }
+    }
+    return false;
 }
 
 void puppets_frame(Cpu& c, bool park, bool active) {
