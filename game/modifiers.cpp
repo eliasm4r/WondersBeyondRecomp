@@ -193,6 +193,18 @@ void report_ended_sounds(Cpu& c) {
 }
 
 void modifiers_frame(Cpu& c, bool park) {
+    if (!park) {
+        g_sound_module = 0;
+        g_effect_module = 0;
+        g_own_beam = 0xffffffffu;
+        g_playing.clear();
+        g_recent.clear();
+        g_shown.valid = false;
+        if (online::running()) {
+            online::update({}, 0, {});
+            ghosts::set_view({}, {});
+        }
+    }
     report_ended_sounds(c);
     publish_player();
     puppets_frame(c, park, g_player && rd32(g_player) == kPlayerTable && g_frames_since_move < kPlayerActiveFrames);
