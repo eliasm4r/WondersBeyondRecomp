@@ -312,6 +312,21 @@
       "defaults": { "audio/volume": "100" }
     },
     {
+      "id": "online_names", "label": "Show player names",
+      "help": "Multiplayer: shows the names above the other players.",
+      "choices": [
+        { "label": "Off", "set": { "online/names": "0" } },
+        { "label": "On", "set": { "online/names": "1" } }
+      ],
+      "defaults": { "online/names": "1" }
+    },
+    {
+      "id": "online_volume", "label": "Other players' volume",
+      "help": "Multiplayer: volume of the sounds made by the other players, in percent.",
+      "slider": { "key": "online/volume", "min": 0, "max": 100, "step": 5, "format": "%d" },
+      "defaults": { "online/volume": "100" }
+    },
+    {
       "id": "mute", "label": "Mute",
       "help": "Silences the game without changing the volume.",
       "choices": [

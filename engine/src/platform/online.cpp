@@ -35,12 +35,18 @@ constexpr int kRelayAfterAttempts = 2;
 constexpr int kNetworkRetries = 3;
 constexpr double kPunchSeconds = 25.0;
 constexpr double kDirectSeconds = 3600.0;
+constexpr auto kLostPatience = std::chrono::seconds(30);
+constexpr auto kWatchEvery = std::chrono::milliseconds(250);
+constexpr size_t kMostNotices = 16;
+constexpr std::array<uint32_t, 4> kPlayerColors = {0xFFD23F, 0x4FC3F7, 0x81E67B, 0xFF8A80};
 
 struct Session {
     presence::Link link;
     std::unique_ptr<relay::Socket> relay;
     std::mutex mutex;
     std::atomic<bool> stop{false};
+    std::atomic<bool> relay_kept{false};
+    bool hosting = false;
 };
 
 std::mutex g_mutex;
@@ -55,6 +61,11 @@ std::string g_local;
 std::atomic<State> g_state{State::Off};
 std::atomic<Problem> g_problem{Problem::None};
 std::atomic<uint64_t> g_version{1};
+std::atomic<bool> g_reconnecting{false};
+std::vector<Notice> g_notices;
+std::string g_other_version;
+uint32_t g_own_id = 0;
+std::string g_own_name;
 
 bool current(const std::shared_ptr<Session>& session) {
     std::lock_guard<std::mutex> lock(g_mutex);
@@ -73,8 +84,14 @@ void set_state(const std::shared_ptr<Session>& session, State state, Problem pro
 void clear_session() {
     if (g_session) {
         g_session->stop.store(true);
+        {
+            std::lock_guard<std::mutex> lock(g_session->mutex);
+            g_session->link.goodbye();
+        }
         g_session.reset();
     }
+    g_reconnecting.store(false);
+    g_own_id = 0;
     g_peers.clear();
     g_code.clear();
     g_local.clear();
@@ -90,6 +107,28 @@ void fail(const std::shared_ptr<Session>& session, Problem problem) {
     g_problem.store(problem);
     g_version++;
     log::write("online", "stopped, problem %d", static_cast<int>(problem));
+}
+
+void add_notice(Notice notice) {
+    if (g_notices.size() < kMostNotices) {
+        g_notices.push_back(std::move(notice));
+    }
+}
+
+void note_changes(const std::vector<presence::Peer>& before, const std::vector<presence::Peer>& after) {
+    for (const presence::Peer& peer : after) {
+        auto old = std::find_if(before.begin(), before.end(), [&](const presence::Peer& entry) { return entry.id == peer.id; });
+        if (old == before.end()) {
+            add_notice({Notice::Kind::Joined, peer.name, peer.zone});
+        } else if (peer.zone != old->zone && peer.zone != 0) {
+            add_notice({Notice::Kind::Zone, peer.name, peer.zone});
+        }
+    }
+    for (const presence::Peer& peer : before) {
+        if (std::none_of(after.begin(), after.end(), [&](const presence::Peer& entry) { return entry.id == peer.id; })) {
+            add_notice({Notice::Kind::Left, peer.name, peer.zone});
+        }
+    }
 }
 
 void pump_loop(std::shared_ptr<Session> session) {
@@ -108,6 +147,7 @@ void pump_loop(std::shared_ptr<Session> session) {
             updated = g_updated;
         }
         std::vector<presence::Peer> seen;
+        std::string other;
         Clock::time_point now = Clock::now();
         {
             std::lock_guard<std::mutex> lock(session->mutex);
@@ -122,12 +162,27 @@ void pump_loop(std::shared_ptr<Session> session) {
                 next_send = now + kSendEvery;
             }
             seen = session->link.peers();
+            other = session->link.other_version();
+        }
+        if (!other.empty() && !session->hosting && seen.empty()) {
+            {
+                std::lock_guard<std::mutex> lock(g_mutex);
+                g_other_version = other;
+            }
+            fail(session, Problem::Version);
+            return;
         }
         {
             std::lock_guard<std::mutex> lock(g_mutex);
             if (g_session != session) {
                 return;
             }
+            if (other != g_other_version) {
+                g_other_version = other;
+                add_notice({Notice::Kind::Version, other, 0});
+                g_version++;
+            }
+            note_changes(g_peers, seen);
             if (seen.size() != g_peers.size()) {
                 log::write("online", "%zu other player(s) connected", seen.size());
                 g_version++;
@@ -199,35 +254,133 @@ void add_targets(const std::shared_ptr<Session>& session, const std::string& tex
     }
 }
 
-void open_relay(const std::shared_ptr<Session>& session, const std::string& code) {
-    {
-        std::lock_guard<std::mutex> lock(session->mutex);
-        if (session->relay) {
+void keep_relay(std::shared_ptr<Session> session, std::string code) {
+    int pause = 1;
+    while (current(session)) {
+        auto socket = std::make_unique<relay::Socket>();
+        if (!socket->open(code)) {
+            int refused = socket->refused();
+            log::write("online", "relay not reachable");
+            if (refused == 404) {
+                session->relay_kept.store(false);
+                return;
+            }
+            socket.reset();
+            if (!wait(session, std::chrono::seconds(pause))) {
+                return;
+            }
+            pause = std::min(pause * 2, 8);
+            continue;
+        }
+        pause = 1;
+        {
+            std::lock_guard<std::mutex> lock(session->mutex);
+            relay::Socket* raw = socket.get();
+            session->relay = std::move(socket);
+            session->link.use_relay([raw](const uint8_t* data, size_t size) { raw->send(data, size); });
+        }
+        log::write("online", "using the relay");
+        while (wait(session, std::chrono::milliseconds(500))) {
+            std::lock_guard<std::mutex> lock(session->mutex);
+            if (!session->relay->alive()) {
+                break;
+            }
+        }
+        if (!current(session)) {
             return;
         }
+        std::unique_ptr<relay::Socket> old;
+        {
+            std::lock_guard<std::mutex> lock(session->mutex);
+            session->link.use_relay(nullptr);
+            old = std::move(session->relay);
+        }
+        old.reset();
+        log::write("online", "relay lost, reconnecting");
     }
-    auto socket = std::make_unique<relay::Socket>();
-    if (!socket->open(code)) {
-        log::write("online", "relay not reachable");
-        return;
+}
+
+void open_relay(const std::shared_ptr<Session>& session, const std::string& code) {
+    if (!session->relay_kept.exchange(true)) {
+        std::thread(keep_relay, session, code).detach();
     }
-    std::lock_guard<std::mutex> lock(session->mutex);
-    relay::Socket* raw = socket.get();
-    session->relay = std::move(socket);
-    session->link.use_relay([raw](const uint8_t* data, size_t size) { raw->send(data, size); });
-    log::write("online", "using the relay");
+}
+
+void watch_host(const std::shared_ptr<Session>& session, const std::string& code, const std::string& endpoints) {
+    bool losing = false;
+    Clock::time_point lost{};
+    Clock::time_point next_try{};
+    while (wait(session, kWatchEvery)) {
+        bool left = false;
+        bool present = false;
+        {
+            std::lock_guard<std::mutex> lock(session->mutex);
+            left = session->link.host_left();
+            present = session->link.host_present();
+        }
+        if (left) {
+            fail(session, Problem::HostLeft);
+            return;
+        }
+        if (present) {
+            if (losing) {
+                losing = false;
+                g_reconnecting.store(false);
+                g_version++;
+                log::write("online", "host is back");
+            }
+            continue;
+        }
+        Clock::time_point now = Clock::now();
+        if (!losing) {
+            losing = true;
+            lost = now;
+            next_try = now;
+            g_reconnecting.store(true);
+            g_version++;
+            log::write("online", "host lost, trying to reconnect");
+            std::lock_guard<std::mutex> lock(session->mutex);
+            session->link.reset_route();
+        }
+        if (now - lost > kLostPatience) {
+            fail(session, Problem::Lost);
+            return;
+        }
+        if (now < next_try) {
+            continue;
+        }
+        next_try = now + kJoinRetryEvery;
+        if (code.empty()) {
+            add_targets(session, endpoints);
+            continue;
+        }
+        int status = 0;
+        std::string reply;
+        if (cloud::room_request("POST", "/v1/rooms/" + code + "/join", endpoints, status, reply)) {
+            if (status == 404) {
+                fail(session, Problem::HostLeft);
+                return;
+            }
+            if (status == 200) {
+                add_targets(session, reply);
+                open_relay(session, code);
+            }
+        }
+    }
 }
 
 void run_host(std::shared_ptr<Session> session) {
     std::vector<std::string> servers = presence::Link::stun_servers();
     std::string endpoints = own_endpoints(session, servers);
     if (endpoints.empty()) {
+        log::write("online", "no answer from the address servers");
         set_state(session, State::Hosting, Problem::NoInternet);
         return;
     }
     int status = 0;
     std::string reply;
     if (!call(session, "POST", "/v1/rooms", endpoints, status, reply) || status != 201) {
+        log::write("online", "room not created, status %d", status);
         set_state(session, State::Hosting, Problem::Server);
         return;
     }
@@ -307,7 +460,11 @@ void run_join(std::shared_ptr<Session> session, std::string code) {
                 set_state(session, State::Joined);
             }
         }
-        if (!current(session) || wait_for_player(session, kJoinRetryEvery)) {
+        if (!current(session)) {
+            return;
+        }
+        if (wait_for_player(session, kJoinRetryEvery)) {
+            watch_host(session, code, endpoints);
             return;
         }
         if (reached && attempt + 1 >= kRelayAfterAttempts) {
@@ -317,18 +474,23 @@ void run_join(std::shared_ptr<Session> session, std::string code) {
     fail(session, reached ? Problem::Blocked : Problem::NoInternet);
 }
 
-void run_direct(std::shared_ptr<Session> session) {
-    if (!wait_for_player(session, kDirectPatience) && current(session)) {
+void run_direct(std::shared_ptr<Session> session, std::string endpoint) {
+    if (wait_for_player(session, kDirectPatience)) {
+        watch_host(session, "", endpoint);
+    } else if (current(session)) {
         fail(session, Problem::Blocked);
     }
 }
 
-std::shared_ptr<Session> install(std::shared_ptr<Session> session, State state, std::string local) {
+std::shared_ptr<Session> install(std::shared_ptr<Session> session, State state, std::string local, const std::string& name) {
     {
         std::lock_guard<std::mutex> lock(g_mutex);
         clear_session();
         g_session = session;
         g_local = std::move(local);
+        g_own_id = session->link.id();
+        g_own_name = name;
+        g_other_version.clear();
         g_state.store(state);
         g_problem.store(Problem::None);
         g_version++;
@@ -396,8 +558,9 @@ bool host(const std::string& name, uint16_t port, bool use_room) {
         refuse(Problem::Server);
         return false;
     }
+    session->hosting = true;
     log::write("online", "hosting as %s on port %u", name.c_str(), session->link.port());
-    install(session, use_room ? State::Connecting : State::Hosting, session->link.local());
+    install(session, use_room ? State::Connecting : State::Hosting, session->link.local(), name);
     if (use_room) {
         std::thread(run_host, session).detach();
     }
@@ -420,9 +583,9 @@ bool join(const std::string& target, const std::string& name, uint16_t port) {
     if (direct) {
         session->link.add_target(target + ":" + std::to_string(port), kDirectSeconds);
     }
-    install(session, direct ? State::Joined : State::Connecting, session->link.local());
+    install(session, direct ? State::Joined : State::Connecting, session->link.local(), name);
     if (direct) {
-        std::thread(run_direct, session).detach();
+        std::thread(run_direct, session, target + ":" + std::to_string(port)).detach();
     } else {
         std::thread(run_join, session, code).detach();
     }
@@ -504,6 +667,55 @@ std::string local_address() {
 
 uint64_t version() {
     return g_version.load();
+}
+
+std::vector<Notice> take_notices() {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    std::vector<Notice> notices;
+    notices.swap(g_notices);
+    return notices;
+}
+
+std::string other_version() {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    return g_other_version;
+}
+
+bool reconnecting() {
+    return g_reconnecting.load();
+}
+
+void say_goodbye() {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (!g_session) {
+        return;
+    }
+    std::lock_guard<std::mutex> session_lock(g_session->mutex);
+    g_session->link.goodbye();
+    if (g_session->relay) {
+        g_session->relay->flush();
+    }
+}
+
+uint32_t player_color(uint32_t id) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    size_t rank = id > g_own_id && g_own_id != 0 ? 1 : 0;
+    for (const presence::Peer& peer : g_peers) {
+        rank += peer.id < id ? 1 : 0;
+    }
+    return kPlayerColors[rank % kPlayerColors.size()];
+}
+
+uint32_t own_id() {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    return g_own_id;
+}
+
+void own_state(std::string& name, uint32_t& character, uint32_t& zone) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    name = g_own_name;
+    character = g_pose.character;
+    zone = g_zone;
 }
 
 }

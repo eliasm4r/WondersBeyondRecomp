@@ -37,6 +37,7 @@ enum class Action {
     Pointer,
     Overlay,
     FlyCamera,
+    PlayerList,
     Count,
 };
 

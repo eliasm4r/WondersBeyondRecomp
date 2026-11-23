@@ -28,9 +28,13 @@ namespace wp::presence {
 
 namespace {
 
-constexpr uint32_t kMagic = 0x57425232;
+constexpr uint32_t kMagic = 0x57425233;
+constexpr uint32_t kGoodbye = 0x57425258;
+constexpr size_t kGoodbyeBytes = 8;
+constexpr size_t kVersionAt = 28;
+constexpr size_t kVersionBytes = 16;
 constexpr size_t kNameBytes = 12;
-constexpr size_t kNameAt = 28;
+constexpr size_t kNameAt = kVersionAt + kVersionBytes;
 constexpr size_t kRotationAt = kNameAt + kNameBytes;
 constexpr size_t kCharacterAt = kRotationAt + 12;
 constexpr size_t kMotionAt = kCharacterAt + 4;
@@ -39,7 +43,14 @@ constexpr size_t kMotionFlagsAt = kMotionAt + kMotionBytes;
 constexpr size_t kMotionSerialAt = kMotionFlagsAt + 4;
 constexpr size_t kEventCountAt = kMotionSerialAt + 4;
 constexpr size_t kSentAt = kEventCountAt + 4;
-constexpr size_t kPacketBytes = kSentAt + 4;
+constexpr size_t kFlagsAt = kSentAt + 4;
+constexpr size_t kClockAt = kFlagsAt + 4;
+constexpr size_t kEchoIdAt = kClockAt + 4;
+constexpr size_t kEchoTimeAt = kEchoIdAt + 4;
+constexpr size_t kEchoHoldAt = kEchoTimeAt + 4;
+constexpr size_t kPacketBytes = kEchoHoldAt + 4;
+constexpr uint32_t kFlagHosting = 1;
+constexpr int kLongestPing = 10000;
 constexpr size_t kEventWords = 14;
 constexpr size_t kEventBytes = kEventWords * 4;
 constexpr uint32_t kEventKinds = 9;
@@ -67,9 +78,9 @@ uint32_t get32(const uint8_t* in) {
     return value;
 }
 
-std::string clean_name(const char* text, size_t size) {
+std::string clean_name(const char* text, size_t size, size_t limit = kNameBytes) {
     std::string name;
-    for (size_t i = 0; i < size && text[i] != 0 && name.size() < kNameBytes; i++) {
+    for (size_t i = 0; i < size && text[i] != 0 && name.size() < limit; i++) {
         unsigned char character = static_cast<unsigned char>(text[i]);
         name.push_back(character >= 0x20 && character < 0x7f ? static_cast<char>(character) : '?');
     }
@@ -109,6 +120,11 @@ bool decode(const uint8_t* data, size_t size, Peer& peer) {
     peer.pose.motion_flags = get32(data + kMotionFlagsAt);
     peer.pose.motion_serial = get32(data + kMotionSerialAt);
     peer.pose.sent_ms = get32(data + kSentAt);
+    peer.hosting = (get32(data + kFlagsAt) & kFlagHosting) != 0;
+    peer.clock = get32(data + kClockAt);
+    peer.echo_id = get32(data + kEchoIdAt);
+    peer.echo_time = get32(data + kEchoTimeAt);
+    peer.echo_hold = get32(data + kEchoHoldAt);
     uint32_t count = get32(data + kEventCountAt);
     if (count > kMostEvents || size != kPacketBytes + count * kEventBytes) {
         return false;
@@ -242,6 +258,16 @@ struct Link::Impl {
     uint8_t stun_id[11] = {};
     std::string mapped[kStunServers];
     std::function<void(const uint8_t*, size_t)> relay;
+    char version[kVersionBytes] = {};
+    std::string other_version;
+    bool host_left = false;
+    bool closing = false;
+    size_t echo_next = 0;
+
+    void set_version(const std::string& text) {
+        std::memset(version, 0, sizeof version);
+        std::memcpy(version, text.data(), std::min(text.size(), sizeof version));
+    }
 
     bool read_stun(const uint8_t* data, size_t size) {
         if (size < kStunHeader || big16(data) != 0x0101 || big32(data + 4) != kStunCookie || data[8] >= kStunServers || std::memcmp(data + 9, stun_id, sizeof stun_id) != 0) {
@@ -301,7 +327,50 @@ struct Link::Impl {
     }
 };
 
-Link::Link() : m_impl(new Impl) {}
+Link::Link() : m_impl(new Impl) {
+    m_impl->set_version(WP_VERSION);
+}
+
+uint32_t Link::id() const {
+    return m_impl->id;
+}
+
+void Link::set_version(const std::string& version) {
+    m_impl->set_version(version);
+}
+
+std::string Link::other_version() const {
+    return m_impl->other_version;
+}
+
+bool Link::host_left() const {
+    return m_impl->host_left;
+}
+
+bool Link::host_present() const {
+    return std::any_of(m_peers.begin(), m_peers.end(), [](const Peer& peer) { return peer.hosting; });
+}
+
+void Link::reset_route() {
+    m_impl->has_server = false;
+}
+
+void Link::goodbye() {
+    if (m_impl->socket == kNoSocket || m_impl->id == 0) {
+        return;
+    }
+    m_impl->closing = true;
+    uint8_t packet[kGoodbyeBytes];
+    put32(packet, kGoodbye);
+    put32(packet + 4, m_impl->id);
+    if (m_impl->hosting) {
+        for (const Client& client : m_impl->clients) {
+            m_impl->transmit(packet, sizeof packet, client.address);
+        }
+    } else if (m_impl->has_server) {
+        m_impl->transmit(packet, sizeof packet, m_impl->server);
+    }
+}
 
 Link::~Link() {
     if (m_impl->socket != kNoSocket) {
@@ -498,7 +567,7 @@ Snapshot snapshot_at(const std::vector<Snapshot>& snapshots, double time, float 
 }
 
 void Link::send(const std::array<float, 3>& position, uint32_t zone, const Pose& pose) {
-    if (m_impl->socket == kNoSocket) {
+    if (m_impl->socket == kNoSocket || m_impl->closing) {
         return;
     }
     uint8_t packet[kLargestDatagram] = {};
@@ -523,6 +592,15 @@ void Link::send(const std::array<float, 3>& position, uint32_t zone, const Pose&
     put32(packet + kMotionFlagsAt, pose.motion_flags);
     put32(packet + kMotionSerialAt, pose.motion_serial);
     put32(packet + kSentAt, pose.sent_ms);
+    std::memcpy(packet + kVersionAt, m_impl->version, kVersionBytes);
+    put32(packet + kFlagsAt, m_impl->hosting ? kFlagHosting : 0);
+    put32(packet + kClockAt, static_cast<uint32_t>(m_impl->now * 1000.0));
+    if (!m_peers.empty()) {
+        const Peer& echoed = m_peers[m_impl->echo_next++ % m_peers.size()];
+        put32(packet + kEchoIdAt, echoed.id);
+        put32(packet + kEchoTimeAt, echoed.clock);
+        put32(packet + kEchoHoldAt, static_cast<uint32_t>(std::max(0.0, m_impl->now - echoed.seen) * 1000.0));
+    }
     put32(packet + kEventCountAt, static_cast<uint32_t>(events));
     for (size_t i = 0; i < events; i++) {
         uint8_t* at = packet + kPacketBytes + i * kEventBytes;
@@ -589,6 +667,37 @@ void Link::accept(const uint8_t* data, size_t size, const void* source, bool rel
     if (!relayed && m_impl->read_stun(data, size)) {
         return;
     }
+    static const bool relay_only = std::getenv("WP_ONLINE_RELAY_ONLY") != nullptr;
+    if (relay_only && !relayed) {
+        return;
+    }
+    if (size == kGoodbyeBytes && get32(data) == kGoodbye) {
+        uint32_t leaving = get32(data + 4);
+        if (m_impl->hosting) {
+            auto client = std::find_if(m_impl->clients.begin(), m_impl->clients.end(), [&](const Client& c) { return c.id == leaving; });
+            if (client == m_impl->clients.end() || !same_address(client->address, from)) {
+                return;
+            }
+            m_impl->clients.erase(client);
+            for (const Client& other : m_impl->clients) {
+                if (!(relayed && other.address.ss_family == AF_UNSPEC)) {
+                    m_impl->transmit(data, size, other.address);
+                }
+            }
+        } else if (!m_impl->has_server || !same_address(m_impl->server, from)) {
+            return;
+        }
+        auto peer = std::find_if(m_peers.begin(), m_peers.end(), [&](const Peer& p) { return p.id == leaving; });
+        if (peer != m_peers.end()) {
+            m_impl->host_left = m_impl->host_left || peer->hosting;
+            m_peers.erase(peer);
+        }
+        return;
+    }
+    if (size >= kNameAt && get32(data) == kMagic && std::memcmp(data + kVersionAt, m_impl->version, kVersionBytes) != 0) {
+        m_impl->other_version = clean_name(reinterpret_cast<const char*>(data + kVersionAt), kVersionBytes, kVersionBytes);
+        return;
+    }
     Peer incoming;
     if (!decode(data, size, incoming) || incoming.id == m_impl->id) {
         return;
@@ -628,6 +737,13 @@ void Link::accept(const uint8_t* data, size_t size, const void* source, bool rel
         }
     }
     incoming.seen = now;
+    incoming.ping_ms = peer != m_peers.end() ? peer->ping_ms : -1;
+    if (incoming.echo_id == m_impl->id && incoming.echo_time != 0) {
+        int ping = static_cast<int>(static_cast<uint32_t>(now * 1000.0) - incoming.echo_time - incoming.echo_hold);
+        if (ping >= 0 && ping < kLongestPing) {
+            incoming.ping_ms = incoming.ping_ms < 0 ? ping : (incoming.ping_ms * 7 + ping) / 8;
+        }
+    }
     if (peer != m_peers.end()) {
         *peer = incoming;
     } else if (m_peers.size() < kMaxOthers) {

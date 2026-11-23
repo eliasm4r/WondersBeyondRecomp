@@ -53,6 +53,8 @@ bool type_code(const char* text);
 bool code_entry_open();
 bool text_field_open();
 bool take_keyboard_request();
+void paste_text(const std::string& text);
+void cancel_text_field();
 
 class Menu {
 public:

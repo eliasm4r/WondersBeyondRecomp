@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace wp::video {
@@ -18,6 +19,8 @@ bool image_point(long x, long y, long client_width, long client_height, float& o
 bool window_focused();
 bool client_size(int& width, int& height);
 bool key_down(int key);
+void set_clipboard(const std::string& text);
+std::string clipboard();
 bool cursor_position(long& x, long& y);
 bool cursor_on_image(float& x, float& y);
 

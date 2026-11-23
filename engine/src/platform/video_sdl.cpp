@@ -31,6 +31,7 @@
 #include "wp/free_camera.h"
 #include "wp/game.h"
 #include "wp/gx.h"
+#include "wp/ghosts.h"
 #include "wp/gx_render.h"
 #include "wp/host_stacks.h"
 #include "wp/input.h"
@@ -38,6 +39,7 @@
 #include "wp/log.h"
 #include "wp/memory.h"
 #include "wp/nand.h"
+#include "wp/online.h"
 #include "wp/options_window.h"
 #include "wp/perf_overlay.h"
 #include "wp/play_time.h"
@@ -203,6 +205,9 @@ void note_press(int code) {
     if (code != 0 && input::bindings().has(keymap::Action::FlyCamera, code)) {
         free_camera::toggle_fly();
     }
+    if (code != 0 && input::bindings().has(keymap::Action::PlayerList, code)) {
+        ghosts::toggle_list();
+    }
 }
 
 void apply_option(SDL_Window* window, const std::string& key) {
@@ -351,6 +356,7 @@ void handle_event(SDL_Window* window, const SDL_Event& event) {
     switch (event.type) {
     case SDL_EVENT_QUIT:
     case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+        online::say_goodbye();
         play_time::save();
         log::flush();
         std::_Exit(0);
@@ -399,6 +405,11 @@ void handle_event(SDL_Window* window, const SDL_Event& event) {
         touch::other_input();
         int vk = vk_for(event.key.scancode);
         bool repeat = event.key.repeat;
+        if (vk == 'V' && (event.key.mod & SDL_KMOD_CTRL) && options::menu_open() && options::text_field_open()) {
+            options::paste_text(clipboard());
+            options::refresh_menu(window);
+            return;
+        }
         if (options::menu_open() && options::code_entry_open() && ((vk >= '0' && vk <= '9') || (vk >= 'A' && vk <= 'Z') || (vk >= 0x60 && vk <= 0x69) || vk == 0x6E || vk == 0xBC || vk == 0xBE)) {
             return;
         }
@@ -902,6 +913,17 @@ bool window_focused() {
 bool client_size(int& width, int& height) {
     SDL_Window* window = g_window;
     return window && SDL_GetWindowSizeInPixels(window, &width, &height);
+}
+
+void set_clipboard(const std::string& text) {
+    SDL_SetClipboardText(text.c_str());
+}
+
+std::string clipboard() {
+    char* bytes = SDL_GetClipboardText();
+    std::string text = bytes ? bytes : "";
+    SDL_free(bytes);
+    return text;
 }
 
 bool key_down(int key) {

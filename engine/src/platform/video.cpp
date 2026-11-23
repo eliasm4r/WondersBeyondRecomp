@@ -23,12 +23,14 @@
 #include "wp/free_camera.h"
 #include "wp/game.h"
 #include "wp/gx.h"
+#include "wp/ghosts.h"
 #include "wp/gx_render.h"
 #include "wp/input.h"
 #include "wp/keymap.h"
 #include "wp/log.h"
 #include "wp/memory.h"
 #include "wp/nand.h"
+#include "wp/online.h"
 #include "wp/options_window.h"
 #include "wp/perf_overlay.h"
 #include "wp/play_time.h"
@@ -157,6 +159,9 @@ void note_press(int code, int side = 0) {
     if (keys.has(keymap::Action::FlyCamera, code) || (side != 0 && keys.has(keymap::Action::FlyCamera, side))) {
         free_camera::toggle_fly();
     }
+    if (keys.has(keymap::Action::PlayerList, code) || (side != 0 && keys.has(keymap::Action::PlayerList, side))) {
+        ghosts::toggle_list();
+    }
 }
 
 bool toggle_overlay(HWND window, WPARAM key, LPARAM lparam) {
@@ -197,6 +202,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
     switch (message) {
     case WM_CLOSE:
     case WM_DESTROY:
+        online::say_goodbye();
         play_time::save();
         log::flush();
         std::_Exit(0);
@@ -224,6 +230,11 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             return 0;
         }
         if (toggle_overlay(window, wparam, lparam)) {
+            return 0;
+        }
+        if (wparam == 'V' && GetKeyState(VK_CONTROL) < 0 && options::menu_open() && options::text_field_open()) {
+            options::paste_text(clipboard());
+            options::refresh_menu(window);
             return 0;
         }
         if (options::menu_open()) {
@@ -473,6 +484,40 @@ bool client_size(int& width, int& height) {
 
 bool key_down(int key) {
     return (GetAsyncKeyState(key) & 0x8000) != 0;
+}
+
+void set_clipboard(const std::string& text) {
+    if (!OpenClipboard(static_cast<HWND>(window_handle()))) {
+        return;
+    }
+    EmptyClipboard();
+    if (HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, text.size() + 1)) {
+        if (void* bytes = GlobalLock(memory)) {
+            std::memcpy(bytes, text.c_str(), text.size() + 1);
+            GlobalUnlock(memory);
+            if (!SetClipboardData(CF_TEXT, memory)) {
+                GlobalFree(memory);
+            }
+        } else {
+            GlobalFree(memory);
+        }
+    }
+    CloseClipboard();
+}
+
+std::string clipboard() {
+    std::string text;
+    if (!OpenClipboard(static_cast<HWND>(window_handle()))) {
+        return text;
+    }
+    if (HANDLE memory = GetClipboardData(CF_TEXT)) {
+        if (const char* bytes = static_cast<const char*>(GlobalLock(memory))) {
+            text.assign(bytes, strnlen(bytes, 256));
+            GlobalUnlock(memory);
+        }
+    }
+    CloseClipboard();
+    return text;
 }
 
 bool cursor_position(long& x, long& y) {

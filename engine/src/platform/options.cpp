@@ -21,7 +21,9 @@
 #include "wp/keymap.h"
 #include "wp/padmap.h"
 #include "wp/play_time.h"
+#include "wp/ghosts.h"
 #include "wp/online.h"
+#include "wp/video.h"
 #include "wp/save_cloud.h"
 #include "wp/settings.h"
 #include "wp/ui_text.h"
@@ -67,6 +69,7 @@ struct Slider {
 };
 
 constexpr Slider kSliders[] = {{"audio.volume", 0, 300, 5},
+                               {"online.volume", 0, 100, 5},
                                {"input.stick_deadzone", 10, 90, 5},
                                {"camera.mouse_speed", 10, 300, 10},
                                {"camera.stick_speed", 10, 300, 10},
@@ -238,10 +241,10 @@ constexpr const char* kOnlineLocal = "online.local";
 constexpr const char* kOnlineHost = "online.host";
 constexpr const char* kOnlineJoin = "online.join";
 constexpr const char* kOnlineLeave = "online.leave";
-constexpr const char* kOnlineText = "online.text";
-constexpr const char* kOnlineErase = "online.erase";
-constexpr const char* kOnlineDone = "online.done";
-constexpr const char* kOnlineCancel = "online.cancel";
+constexpr const char* kOnlineCopy = "online.copy";
+constexpr const char* kOnlinePlayers = "online.players";
+constexpr const char* kOnlineNames = "online.names";
+constexpr const char* kOnlineVolume = "online.volume";
 constexpr size_t kNameLength = 12;
 constexpr size_t kAddressLength = 15;
 
@@ -249,6 +252,9 @@ const char* g_field = nullptr;
 std::string g_field_text;
 size_t g_field_letter = 0;
 bool g_field_picking = false;
+std::string g_copied_code;
+
+void close_field();
 
 const char* field_letters() {
     return g_field == kOnlineAddress ? "0123456789ABCDEFGHJKMNPQRSTVWXYZ." : "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -259,21 +265,26 @@ size_t field_limit() {
 }
 
 std::vector<std::string> online_keys() {
-    if (g_field) {
-        return {kOnlineText, kOnlineErase, kOnlineDone, kOnlineCancel};
-    }
+    std::vector<std::string> keys = {kOnlineStatus};
     if (online::running()) {
-        std::vector<std::string> keys = {kOnlineStatus};
+        if (g_field) {
+            close_field();
+        }
         if (online::state() != online::State::Joined && !online::room_code().empty()) {
             keys.push_back(kOnlineCode);
+            keys.push_back(kOnlineCopy);
         }
         if (online::state() == online::State::Hosting) {
             keys.push_back(kOnlineLocal);
         }
+        keys.push_back(kOnlinePlayers);
         keys.push_back(kOnlineLeave);
-        return keys;
+    } else {
+        keys.insert(keys.end(), {kOnlineName, kOnlineAddress, kOnlineHost, kOnlineJoin});
     }
-    return {kOnlineStatus, kOnlineName, kOnlineAddress, kOnlineHost, kOnlineJoin};
+    keys.push_back(kOnlineNames);
+    keys.push_back(kOnlineVolume);
+    return keys;
 }
 
 std::string online_status_text() {
@@ -293,6 +304,12 @@ std::string online_status_text() {
             return ui::label("online.state.full");
         case online::Problem::Blocked:
             return ui::label("online.state.blocked");
+        case online::Problem::Version:
+            return std::string(ui::label("online.state.version")) + " (" + online::other_version() + ")";
+        case online::Problem::HostLeft:
+            return ui::label("online.state.host_left");
+        case online::Problem::Lost:
+            return ui::label("online.state.lost");
         default:
             return ui::label("online.state.failed");
         }
@@ -302,6 +319,9 @@ std::string online_status_text() {
         }
         break;
     case online::State::Joined:
+        if (online::reconnecting()) {
+            return ui::label("online.state.reconnecting");
+        }
         if (others == 0) {
             return ui::label("online.state.searching");
         }
@@ -340,33 +360,32 @@ void commit_field() {
     close_field();
 }
 
+void leave_field() {
+    commit_field();
+    if (g_field) {
+        close_field();
+    }
+}
+
 bool online_action(const std::string& key, Action action) {
-    if (key == kOnlineText && (action == Action::Previous || action == Action::Next)) {
-        size_t letters = std::strlen(field_letters());
-        if (g_field_picking) {
-            g_field_letter = (g_field_letter + (action == Action::Next ? 1 : letters - 1)) % letters;
+    if (g_field && key == g_field) {
+        if (action == Action::Previous || action == Action::Next) {
+            size_t letters = std::strlen(field_letters());
+            if (g_field_picking) {
+                g_field_letter = (g_field_letter + (action == Action::Next ? 1 : letters - 1)) % letters;
+            }
+            g_field_picking = true;
+        } else if (g_field_picking) {
+            add_field_character(field_letters()[g_field_letter]);
+        } else {
+            g_keyboard_wanted = true;
         }
-        g_field_picking = true;
         return true;
     }
     if (action != Action::Accept) {
         return false;
     }
-    if (key == kOnlineText) {
-        if (g_field_picking) {
-            add_field_character(field_letters()[g_field_letter]);
-        } else {
-            g_keyboard_wanted = true;
-        }
-    } else if (key == kOnlineErase) {
-        if (!g_field_text.empty()) {
-            g_field_text.pop_back();
-        }
-    } else if (key == kOnlineDone) {
-        commit_field();
-    } else if (key == kOnlineCancel) {
-        close_field();
-    } else if (key == kOnlineName || key == kOnlineAddress) {
+    if (key == kOnlineName || key == kOnlineAddress) {
         close_field();
         g_field = key == kOnlineName ? kOnlineName : kOnlineAddress;
         g_field_text = g_field == kOnlineName ? settings::text(g_field, nullptr) : "";
@@ -378,6 +397,7 @@ bool online_action(const std::string& key, Action action) {
         std::string target = settings::text(kOnlineAddress, nullptr);
         if (target.empty()) {
             g_field = kOnlineAddress;
+            g_field_text.clear();
             g_field_letter = 0;
             g_keyboard_wanted = true;
         } else {
@@ -385,6 +405,11 @@ bool online_action(const std::string& key, Action action) {
         }
     } else if (key == kOnlineLeave) {
         online::leave();
+    } else if (key == kOnlineCopy) {
+        g_copied_code = online::room_code();
+        video::set_clipboard(g_copied_code);
+    } else if (key == kOnlinePlayers) {
+        ghosts::toggle_list();
     } else {
         return false;
     }
@@ -570,10 +595,10 @@ std::vector<std::string> tab_keys(size_t tab, Device device) {
 Kind kind(const std::string& key) {
     if (key == kResetKeys || key == kResetPad || key == kResetColors || key == kHdTextures || key == kFlyCamera || key == kCloudCreate || key == kCloudEnter ||
         key == kCloudAdd || key == kCloudErase || key == kCloudCancel || key == kCloudKeepHere || key == kCloudKeepOther || key == kCloudOff || key == kOnlineName ||
-        key == kOnlineAddress || key == kOnlineHost || key == kOnlineJoin || key == kOnlineLeave || key == kOnlineErase || key == kOnlineDone || key == kOnlineCancel) {
+        key == kOnlineAddress || key == kOnlineHost || key == kOnlineJoin || key == kOnlineLeave || key == kOnlineCopy || key == kOnlinePlayers) {
         return Kind::Button;
     }
-    if (key == kPlayTime || key == kUpdate || key == kCloudStatus || key == kOnlineStatus || key == kOnlineCode || key == kOnlineLocal || key == kCloudCode || key == kOnlineText) {
+    if (key == kPlayTime || key == kUpdate || key == kCloudStatus || key == kOnlineStatus || key == kOnlineCode || key == kOnlineLocal || key == kCloudCode) {
         return Kind::Info;
     }
     if (starts_with(key, "keys.")) {
@@ -894,7 +919,7 @@ std::vector<Row> Menu::rows() const {
             row.value = online::room_code();
         } else if (key == kOnlineLocal) {
             row.value = online::local_address();
-        } else if (key == kOnlineText) {
+        } else if (g_field && key == g_field) {
             row.value = field_text();
         } else if (key == kOnlineName || key == kOnlineAddress) {
             row.value = settings::text(key.c_str(), nullptr);
@@ -907,12 +932,10 @@ std::vector<Row> Menu::rows() const {
             row.value = ui::label("online.do_join");
         } else if (key == kOnlineLeave) {
             row.value = ui::label("online.do_leave");
-        } else if (key == kOnlineErase) {
-            row.value = ui::label("saves.cloud.do_erase");
-        } else if (key == kOnlineDone) {
-            row.value = ui::label("saves.cloud.confirm");
-        } else if (key == kOnlineCancel) {
-            row.value = ui::label("saves.cloud_cancel");
+        } else if (key == kOnlineCopy) {
+            row.value = ui::label(!g_copied_code.empty() && g_copied_code == online::room_code() ? "online.do_copied" : "online.do_copy");
+        } else if (key == kOnlinePlayers) {
+            row.value = ui::label(ghosts::list_open() ? "online.do_hide" : "online.do_show");
         } else if (key == kCloudStatus) {
             row.value = cloud_status_text();
         } else if (key == kCloudCode) {
@@ -1021,10 +1044,24 @@ std::string Menu::handle(Action action) {
         update::open_page();
         return "";
     }
+    if (g_field && action == Action::Close) {
+        if (g_field_text.empty()) {
+            close_field();
+        } else {
+            g_field_text.pop_back();
+        }
+        return "";
+    }
+    if (g_field && key != g_field) {
+        leave_field();
+    } else if (g_field && (action == Action::Up || action == Action::Down || action == Action::TabPrevious || action == Action::TabNext)) {
+        leave_field();
+    }
     bool field_was_open = g_field != nullptr;
     if (changes_value && ((starts_with(key, "saves.cloud_") && cloud_action(key, action)) || (starts_with(key, "online.") && online_action(key, action)))) {
         std::vector<std::string> updated = this->keys();
-        selection_ = !field_was_open && g_field ? 0 : std::min(selection_, updated.size() - 1);
+        auto opened = g_field ? std::find(updated.begin(), updated.end(), g_field) : updated.end();
+        selection_ = !field_was_open && opened != updated.end() ? static_cast<size_t>(opened - updated.begin()) : std::min(selection_, updated.size() - 1);
         keep_visible();
         return "";
     }
@@ -1134,6 +1171,20 @@ bool text_field_open() {
 
 bool code_entry_open() {
     return g_code_entry || g_field;
+}
+
+void paste_text(const std::string& text) {
+    if (g_field) {
+        g_field_text.clear();
+        g_field_picking = false;
+    }
+    type_code(text.c_str());
+}
+
+void cancel_text_field() {
+    if (g_field) {
+        close_field();
+    }
 }
 
 bool take_keyboard_request() {

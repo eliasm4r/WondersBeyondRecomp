@@ -42,6 +42,8 @@
 #include "wp/ghosts.h"
 #include "wp/online.h"
 #include "wp/presence.h"
+#include "wp/discord.h"
+#include "wp/relay.h"
 #include "wp/save_backup.h"
 #include "wp/save_cloud.h"
 #include "wp/padmap.h"
@@ -374,6 +376,86 @@ void test_presence() {
     CHECK(wp::disc::field_in_path("Field/Fd") == 0);
 }
 
+void test_presence_session() {
+    using wp::presence::Link;
+    Link host;
+    CHECK(host.host(0, "Host"));
+    Link guest;
+    Link other;
+    CHECK(guest.join("127.0.0.1", host.port(), "Guest"));
+    CHECK(other.join("127.0.0.1", host.port(), "Other"));
+    double now = 1.0;
+    auto exchange = [&](int rounds) {
+        for (int round = 0; round < rounds; round++) {
+            now += 0.02;
+            guest.send({1.0f, 0.0f, 0.0f});
+            other.send({2.0f, 0.0f, 0.0f});
+            host.send({3.0f, 0.0f, 0.0f});
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            host.pump(now);
+            guest.pump(now);
+            other.pump(now);
+        }
+    };
+    exchange(30);
+    CHECK(guest.host_present() && other.host_present() && !host.host_present());
+    CHECK(guest.peers().size() == 2 && host.peers().size() == 2);
+    bool measured = false;
+    for (const auto& peer : guest.peers()) {
+        measured = measured || (peer.hosting && peer.ping_ms >= 0 && peer.ping_ms < 500);
+    }
+    CHECK(measured);
+    other.goodbye();
+    other.send({9.0f, 0.0f, 0.0f});
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    host.pump(now);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    guest.pump(now);
+    CHECK(host.peers().size() == 1 && guest.peers().size() == 1 && !guest.host_left());
+    host.goodbye();
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    guest.pump(now);
+    CHECK(guest.host_left() && !guest.host_present());
+
+    Link new_host;
+    CHECK(new_host.host(0, "Host"));
+    new_host.set_version("9.9.9-test");
+    Link old_guest;
+    CHECK(old_guest.join("127.0.0.1", new_host.port(), "Guest"));
+    old_guest.send({1.0f, 0.0f, 0.0f});
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    new_host.pump(1.0);
+    CHECK(new_host.peers().empty() && new_host.other_version() == wp::update::version());
+
+    const uint8_t mask[4] = {1, 2, 3, 4};
+    for (size_t size : {size_t{5}, size_t{125}, size_t{126}, size_t{1200}}) {
+        std::vector<uint8_t> payload(size);
+        for (size_t i = 0; i < size; i++) {
+            payload[i] = static_cast<uint8_t>(i * 7);
+        }
+        std::vector<uint8_t> stream = wp::relay::frame(payload.data(), size, mask);
+        std::vector<uint8_t> partial(stream.begin(), stream.end() - 1);
+        std::vector<uint8_t> message;
+        int opcode = 0;
+        CHECK(!wp::relay::unframe(partial, message, opcode));
+        CHECK(wp::relay::unframe(stream, message, opcode) && opcode == 2 && message == payload && stream.empty());
+    }
+    std::vector<uint8_t> huge = {0x82, 127, 0, 0, 0, 0, 0, 1, 0, 0};
+    std::vector<uint8_t> message;
+    int opcode = 0;
+    CHECK(wp::relay::unframe(huge, message, opcode) && opcode == 8);
+}
+
+void test_discord_invite() {
+    CHECK(wp::discord::party_json("", 2).empty());
+    std::string party = wp::discord::party_json("K7P01Z", 2);
+    CHECK(party.find("\"size\":[2,4]") != std::string::npos && party.find("\"join\":\"K7P01Z\"") != std::string::npos);
+    CHECK(wp::discord::join_secret("{\"cmd\":\"DISPATCH\",\"data\":{\"secret\":\"K7P01Z\"},\"evt\":\"ACTIVITY_JOIN\"}") == "K7P01Z");
+    CHECK(wp::discord::join_secret("{\"cmd\":\"DISPATCH\",\"data\":{\"secret\":\"../bad\"},\"evt\":\"ACTIVITY_JOIN\"}").empty());
+    CHECK(wp::discord::join_secret("{\"cmd\":\"SUBSCRIBE\",\"data\":{\"evt\":\"ACTIVITY_JOIN\"},\"evt\":null}").empty());
+    CHECK(wp::discord::join_secret("{\"cmd\":\"DISPATCH\",\"data\":{\"secret\":\"K7P01Z\"},\"evt\":\"READY\"}").empty());
+}
+
 void test_ghost_projection() {
     wp::ghosts::Projection p{1.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 2.0f * 228.0f / 528.0f, 1.0f - 456.0f / 528.0f, 0, 0};
     wp::ghosts::View view{1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
@@ -415,14 +497,15 @@ void test_online_menu() {
     wp::options::Menu menu;
     menu.set_open(true);
     menu.select_tab(8);
-    CHECK((wp::options::tab_keys(8) == std::vector<std::string>{"online.status", "online.name", "online.address", "online.host", "online.join"}));
+    CHECK((wp::options::tab_keys(8) == std::vector<std::string>{"online.status", "online.name", "online.address", "online.host", "online.join", "online.names", "online.volume"}));
     menu.select(1);
     menu.handle(wp::options::Action::Accept);
     CHECK(wp::options::code_entry_open() && wp::options::take_keyboard_request());
     for (int i = 0; i < 12; i++) {
         wp::options::code_entry_key(0x08);
     }
-    CHECK(wp::options::kind("online.text") == wp::options::Kind::Info && wp::options::kind("saves.cloud_code") == wp::options::Kind::Info);
+    CHECK(wp::options::kind("saves.cloud_code") == wp::options::Kind::Info);
+    CHECK(wp::options::kind("online.names") == wp::options::Kind::Toggle && wp::options::kind("online.volume") == wp::options::Kind::Slider);
     CHECK(wp::options::code_entry_key(0x25) && wp::options::code_entry_key(0x27));
     CHECK(wp::options::type_code("ab-1"));
     CHECK(wp::options::code_entry_key(0x0D) && !wp::options::code_entry_open());
@@ -436,9 +519,24 @@ void test_online_menu() {
     CHECK(wp::options::code_entry_key(0x0D) && !wp::options::code_entry_open());
     CHECK(wp::settings::text("online.address", nullptr) == "10.0.0.7");
     wp::options::take_keyboard_request();
+    menu.select(2);
+    menu.handle(wp::options::Action::Accept);
+    CHECK(wp::options::code_entry_open());
+    wp::options::paste_text(" k7-pol9 ");
+    menu.handle(wp::options::Action::Close);
+    CHECK(wp::options::code_entry_open());
+    menu.handle(wp::options::Action::Down);
+    CHECK(!wp::options::code_entry_open());
+    CHECK(wp::settings::text("online.address", nullptr) == "10.0.0.7");
+    menu.select(2);
+    menu.handle(wp::options::Action::Accept);
+    wp::options::paste_text(" k7-pol9 ");
+    menu.handle(wp::options::Action::Down);
+    CHECK(!wp::options::code_entry_open() && wp::settings::text("online.address", nullptr) == "K7P019");
+    wp::options::take_keyboard_request();
     CHECK(wp::online::clean_code("k7-pol") == "K7P01" && !wp::online::valid_code("K7P01") && wp::online::valid_code("K7P01Z"));
     CHECK(wp::online::host("Host", 0, false));
-    CHECK(wp::online::running() && (wp::options::tab_keys(8) == std::vector<std::string>{"online.status", "online.local", "online.leave"}));
+    CHECK(wp::online::running() && (wp::options::tab_keys(8) == std::vector<std::string>{"online.status", "online.local", "online.players", "online.leave", "online.names", "online.volume"}));
     wp::online::leave();
     CHECK(!wp::online::running() && wp::online::state() == wp::online::State::Off);
     CHECK(!wp::online::join("nope", "Guest", 1) && wp::online::state() == wp::online::State::Failed);
@@ -3154,6 +3252,8 @@ int main() {
     test_disc_drive();
     test_save_backups();
     test_presence();
+    test_presence_session();
+    test_discord_invite();
     test_ghost_projection();
     test_snapshot_blend();
     test_online_menu();

@@ -147,10 +147,11 @@ void publish_player() {
     if (!g_field_camera) {
         return;
     }
+    static const settings::LiveFlag names("online.names", "WP_ONLINE_NAMES");
     std::vector<ghosts::Marker> markers;
     for (const presence::Peer& peer : online::peers()) {
-        if (peer.zone != 0 && peer.zone == zone) {
-            markers.push_back({{peer.position[0], peer.position[1] + kMarkerHeight, peer.position[2]}, peer.name});
+        if (names() && peer.zone != 0 && peer.zone == zone) {
+            markers.push_back({{peer.position[0], peer.position[1] + kMarkerHeight, peer.position[2]}, peer.name, online::player_color(peer.id)});
         }
     }
     ghosts::View view;
@@ -339,6 +340,9 @@ void player_move(Cpu& c, HleFunction original) {
 }
 
 void motion_start(Cpu& c, HleFunction original) {
+    if (c.r[8] == kWholeBody && puppets_blocks_motion(c.r[4])) {
+        c.r[8] = 0;
+    }
     if (c.r[4] == g_controlled_accessor && c.r[6] && c.r[8] == kWholeBody) {
         std::string name;
         for (uint32_t i = 0; i < kLongestMotion && rd8(c.r[6] + i); i++) {
@@ -428,6 +432,10 @@ void minimap_update(Cpu& c, HleFunction original) {
     constexpr uint32_t kPaneY = 0x30;
     constexpr uint32_t kPaneFlags = 0xbb;
     constexpr uint8_t kPaneShown = 1;
+    constexpr uint32_t kPaneMaterial = 0x28;
+    constexpr uint32_t kDarkGreen = 0x12;
+    constexpr uint32_t kDarkBlue = 0x14;
+    constexpr uint32_t kBrightRed = 0x18;
     constexpr float kMapHalf = 80.0f;
     constexpr int kSlots = 5;
     static uint32_t marked_map = 0;
@@ -455,11 +463,17 @@ void minimap_update(Cpu& c, HleFunction original) {
     size_t next = 0;
     for (int slot = kSlots - 1; slot >= 0; slot--) {
         uint32_t entry = map + kSlotBytes * slot;
+        uint32_t pane = rd32(entry + kSlotPanes);
         if (rd16(entry + kSlotIds) != kFreeSlot) {
+            if (marked[slot] && pane) {
+                uint32_t material = rd32(pane + kPaneMaterial);
+                wr16(material + kBrightRed, 0xff);
+                wr16(material + kDarkGreen, 0);
+                wr16(material + kDarkBlue, 0);
+            }
             marked[slot] = false;
             continue;
         }
-        uint32_t pane = rd32(entry + kSlotPanes);
         if (!pane) {
             continue;
         }
@@ -468,9 +482,18 @@ void minimap_update(Cpu& c, HleFunction original) {
             wrf32(pane + kPaneX, -kMapHalf + (peer.position[0] - rdf32(zone_data + kZoneOriginX)) * rdf32(map + kMapScaleX));
             wrf32(pane + kPaneY, kMapHalf - (peer.position[2] - rdf32(zone_data + kZoneOriginZ)) * rdf32(map + kMapScaleZ));
             wr8(pane + kPaneFlags, rd8(pane + kPaneFlags) | kPaneShown);
+            uint32_t color = online::player_color(peer.id);
+            uint32_t material = rd32(pane + kPaneMaterial);
+            wr16(material + kBrightRed, (color >> 16) & 0xff);
+            wr16(material + kDarkGreen, (color >> 8) & 0xff);
+            wr16(material + kDarkBlue, color & 0xff);
             marked[slot] = true;
         } else if (marked[slot]) {
             wr8(pane + kPaneFlags, rd8(pane + kPaneFlags) & ~kPaneShown);
+            uint32_t material = rd32(pane + kPaneMaterial);
+            wr16(material + kBrightRed, 0xff);
+            wr16(material + kDarkGreen, 0);
+            wr16(material + kDarkBlue, 0);
             marked[slot] = false;
         }
     }

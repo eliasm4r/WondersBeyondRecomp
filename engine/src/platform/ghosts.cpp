@@ -4,10 +4,13 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <mutex>
 #include <utility>
 
 #include "wp/canvas.h"
+#include "wp/online.h"
+#include "wp/ui_text.h"
 
 namespace wp::ghosts {
 
@@ -20,6 +23,10 @@ constexpr float kNearest = 0.1f;
 constexpr uint32_t kBox = 0x9E080A0E;
 constexpr uint32_t kWhite = 0xFFFFFF;
 constexpr auto kStale = std::chrono::milliseconds(500);
+constexpr auto kToastTime = std::chrono::seconds(5);
+constexpr auto kListEvery = std::chrono::milliseconds(250);
+constexpr size_t kMostToasts = 5;
+constexpr const char* kHeroLabels[] = {"online.hero.0", "online.hero.1", "online.hero.2", "online.hero.3"};
 
 struct Label {
     int left = 0;
@@ -29,6 +36,26 @@ struct Label {
     int tip_x = 0;
     int tip_y = 0;
     std::string name;
+    uint32_t color = kWhite;
+};
+
+struct Line {
+    std::string text;
+    uint32_t color = kWhite;
+    bool operator==(const Line& other) const { return text == other.text && color == other.color; }
+};
+
+struct Toast {
+    Line line;
+    std::chrono::steady_clock::time_point until;
+};
+
+struct PanelBox {
+    int left = 0;
+    int top = 0;
+    int right = 0;
+    int bottom = 0;
+    const std::vector<Line>* lines = nullptr;
 };
 
 std::mutex g_mutex;
@@ -43,10 +70,130 @@ options::Rect g_placed;
 bool g_dirty = false;
 bool g_shown = false;
 uint64_t g_version = 0;
+bool g_markers_fresh = false;
+std::atomic<bool> g_list_open{false};
+std::vector<Toast> g_toasts;
+std::vector<Line> g_toast_lines;
+std::vector<Line> g_list_lines;
+std::chrono::steady_clock::time_point g_list_built{};
+online::Problem g_problem_shown = online::Problem::None;
+bool g_reconnecting_shown = false;
 
-options::Image render(options::Rect& placed) {
+std::string zone_text(uint32_t zone) {
+    if (zone == 0) {
+        return ui::label("online.list.away");
+    }
+    char digits[16];
+    std::snprintf(digits, sizeof digits, "%04u", zone);
+    return std::string(ui::label("online.list.zone")) + " " + digits;
+}
+
+const char* hero_text(uint32_t character) {
+    return character < std::size(kHeroLabels) ? ui::label(kHeroLabels[character]) : "?";
+}
+
+void add_toast(std::string text, uint32_t color) {
+    g_toasts.push_back({{std::move(text), color}, std::chrono::steady_clock::now() + kToastTime});
+    if (g_toasts.size() > kMostToasts) {
+        g_toasts.erase(g_toasts.begin());
+    }
+}
+
+void read_notices() {
+    std::vector<presence::Peer> peers = online::peers();
+    auto color_of = [&](const std::string& name) {
+        for (const presence::Peer& peer : peers) {
+            if (peer.name == name) {
+                return online::player_color(peer.id);
+            }
+        }
+        return kWhite;
+    };
+    for (const online::Notice& notice : online::take_notices()) {
+        switch (notice.kind) {
+        case online::Notice::Kind::Joined:
+            add_toast(notice.name + " " + ui::label("online.notice.joined"), color_of(notice.name));
+            break;
+        case online::Notice::Kind::Left:
+            add_toast(notice.name + " " + ui::label("online.notice.left"), kWhite);
+            break;
+        case online::Notice::Kind::Zone:
+            add_toast(notice.name + " : " + zone_text(notice.zone), color_of(notice.name));
+            break;
+        case online::Notice::Kind::Version:
+            if (!notice.name.empty()) {
+                add_toast(std::string(ui::label("online.notice.version")) + " " + notice.name, kWhite);
+            }
+            break;
+        }
+    }
+    online::Problem problem = online::state() == online::State::Failed ? online::problem() : online::Problem::None;
+    if (problem != g_problem_shown) {
+        g_problem_shown = problem;
+        if (problem == online::Problem::HostLeft) {
+            add_toast(ui::label("online.state.host_left"), kWhite);
+        } else if (problem == online::Problem::Lost) {
+            add_toast(ui::label("online.state.lost"), kWhite);
+        } else if (problem == online::Problem::Version) {
+            add_toast(std::string(ui::label("online.state.version")) + " (" + online::other_version() + ")", kWhite);
+        }
+    }
+    bool reconnecting = online::reconnecting();
+    if (reconnecting != g_reconnecting_shown) {
+        g_reconnecting_shown = reconnecting;
+        if (reconnecting) {
+            add_toast(ui::label("online.state.reconnecting"), kWhite);
+        }
+    }
+}
+
+std::vector<Line> build_list() {
+    std::vector<Line> lines;
+    if (!online::running()) {
+        return lines;
+    }
+    std::string name;
+    uint32_t character = 0;
+    uint32_t zone = 0;
+    online::own_state(name, character, zone);
+    lines.push_back({name + " (" + ui::label("online.you") + ") - " + hero_text(character) + " - " + zone_text(zone), online::player_color(online::own_id())});
+    for (const presence::Peer& peer : online::peers()) {
+        std::string ping = peer.ping_ms >= 0 ? std::to_string(peer.ping_ms) + " ms" : "...";
+        lines.push_back({peer.name + " - " + hero_text(peer.pose.character) + " - " + zone_text(peer.zone) + " - " + ping, online::player_color(peer.id)});
+    }
+    return lines;
+}
+
+void refresh_panels() {
+    read_notices();
+    auto now = std::chrono::steady_clock::now();
+    g_toasts.erase(std::remove_if(g_toasts.begin(), g_toasts.end(), [&](const Toast& toast) { return toast.until <= now; }), g_toasts.end());
+    std::vector<Line> toasts;
+    for (const Toast& toast : g_toasts) {
+        toasts.push_back(toast.line);
+    }
+    if (toasts != g_toast_lines) {
+        g_toast_lines = std::move(toasts);
+        g_dirty = true;
+    }
+    if (!g_list_open.load()) {
+        if (!g_list_lines.empty()) {
+            g_list_lines.clear();
+            g_dirty = true;
+        }
+    } else if (now - g_list_built >= kListEvery) {
+        g_list_built = now;
+        std::vector<Line> list = build_list();
+        if (list != g_list_lines) {
+            g_list_lines = std::move(list);
+            g_dirty = true;
+        }
+    }
+}
+
+options::Image render(options::Rect& placed, bool show_markers) {
     options::Image image;
-    if (!g_have_projection || g_picture.width <= 0 || g_picture.height <= 0 || !canvas::font_ok(canvas::FontId::Body)) {
+    if (g_picture.width <= 0 || g_picture.height <= 0 || !canvas::font_ok(canvas::FontId::Body)) {
         return image;
     }
     int text_height = std::max(10, g_picture.height / 40);
@@ -59,7 +206,8 @@ options::Image render(options::Rect& placed) {
     int top = g_picture.y + g_picture.height;
     int right = g_picture.x;
     int bottom = g_picture.y;
-    for (const Marker& marker : g_markers) {
+    static const std::vector<Marker> kNoMarkers;
+    for (const Marker& marker : show_markers && g_have_projection ? g_markers : kNoMarkers) {
         float u = 0.0f;
         float v = 0.0f;
         if (!to_picture(g_projection, g_view, marker.position, u, v)) {
@@ -77,13 +225,39 @@ options::Image render(options::Rect& placed) {
         label.tip_x = tip_x;
         label.tip_y = tip_y;
         label.name = marker.name;
+        label.color = marker.color;
         left = std::min(left, label.left);
         top = std::min(top, label.top);
         right = std::max(right, label.right);
         bottom = std::max(bottom, tip_y);
         labels.push_back(std::move(label));
     }
-    if (labels.empty() || right <= left || bottom <= top) {
+    std::vector<PanelBox> panels;
+    int margin = std::max(6, text_height);
+    auto add_panel = [&](const std::vector<Line>& lines, bool centered) {
+        if (lines.empty()) {
+            return;
+        }
+        int widest = 0;
+        for (const Line& line : lines) {
+            widest = std::max(widest, static_cast<int>(std::ceil(canvas::text_width(face, line.text))));
+        }
+        int panel_width = std::min(g_picture.width, widest + padding * 2);
+        PanelBox panel;
+        panel.left = centered ? g_picture.x + (g_picture.width - panel_width) / 2 : g_picture.x + std::min(margin, g_picture.width - panel_width);
+        panel.top = g_picture.y + margin;
+        panel.right = panel.left + panel_width;
+        panel.bottom = std::min(panel.top + box_height * static_cast<int>(lines.size()), g_picture.y + g_picture.height);
+        panel.lines = &lines;
+        left = std::min(left, panel.left);
+        top = std::min(top, panel.top);
+        right = std::max(right, panel.right);
+        bottom = std::max(bottom, panel.bottom);
+        panels.push_back(panel);
+    };
+    add_panel(g_toast_lines, false);
+    add_panel(g_list_lines, true);
+    if ((labels.empty() && panels.empty()) || right <= left || bottom <= top) {
         return image;
     }
     int width = right - left;
@@ -97,7 +271,18 @@ options::Image render(options::Rect& placed) {
         float x = static_cast<float>(std::clamp(label.tip_x - left, box_left + tip, std::max(box_left + tip, box_right - tip)));
         canvas.fill_round(box_left, box_top, box_right, box_bottom, std::max(3, box_height / 3), kBox);
         canvas.fill_polygon({{x - tip, static_cast<float>(box_bottom)}, {x + tip, static_cast<float>(box_bottom)}, {x, static_cast<float>(label.tip_y - top)}}, kBox);
-        canvas.text(face, kWhite, label.name, box_left + padding, box_top, box_right - padding, box_bottom, canvas::Align::Center, true);
+        canvas.text(face, label.color, label.name, box_left + padding, box_top, box_right - padding, box_bottom, canvas::Align::Center, true);
+    }
+    for (const PanelBox& panel : panels) {
+        canvas.fill_round(panel.left - left, panel.top - top, panel.right - left, panel.bottom - top, std::max(3, box_height / 3), kBox);
+        int y = panel.top - top;
+        for (const Line& line : *panel.lines) {
+            if (y + box_height > panel.bottom - top) {
+                break;
+            }
+            canvas.text(face, line.color, line.text, panel.left - left + padding, y, panel.right - left - padding, y + box_height, canvas::Align::Left, true);
+            y += box_height;
+        }
     }
     image.width = static_cast<uint32_t>(width);
     image.height = static_cast<uint32_t>(height);
@@ -152,11 +337,14 @@ void set_picture(const options::Rect& picture) {
 }
 
 bool take(uint64_t& version, options::Image& image, bool& visible) {
-    if (!active()) {
-        return false;
-    }
     std::lock_guard<std::mutex> lock(g_mutex);
-    bool live = !g_markers.empty() && std::chrono::steady_clock::now() - g_updated < kStale;
+    refresh_panels();
+    bool fresh = !g_markers.empty() && std::chrono::steady_clock::now() - g_updated < kStale;
+    if (fresh != g_markers_fresh) {
+        g_markers_fresh = fresh;
+        g_dirty = true;
+    }
+    bool live = fresh || !g_toast_lines.empty() || !g_list_lines.empty();
     if (!live) {
         g_dirty = false;
         if (g_shown) {
@@ -166,7 +354,7 @@ bool take(uint64_t& version, options::Image& image, bool& visible) {
     } else if (g_dirty) {
         g_dirty = false;
         options::Rect placed;
-        options::Image drawn = render(placed);
+        options::Image drawn = render(placed, fresh);
         bool shown = !drawn.pixels.empty();
         if (shown || g_shown) {
             g_shown = shown;
@@ -186,6 +374,16 @@ bool take(uint64_t& version, options::Image& image, bool& visible) {
 options::Rect place() {
     std::lock_guard<std::mutex> lock(g_mutex);
     return g_placed;
+}
+
+void toggle_list() {
+    g_list_open.store(!g_list_open.load());
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_list_built = {};
+}
+
+bool list_open() {
+    return g_list_open.load();
 }
 
 }

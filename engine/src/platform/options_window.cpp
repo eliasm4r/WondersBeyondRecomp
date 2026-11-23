@@ -208,6 +208,7 @@ std::string menu_click(void* window, int x, int y, bool right) {
         return capture(window, right ? "MouseRight" : "MouseLeft");
     }
     if (right) {
+        cancel_text_field();
         return act(window, Action::Close);
     }
     Layout frame;
@@ -217,6 +218,7 @@ std::string menu_click(void* window, int x, int y, bool right) {
         return "";
     }
     if (target.part == Part::Close) {
+        cancel_text_field();
         return act(window, Action::Close);
     }
     if (target.part == Part::Tab) {

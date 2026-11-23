@@ -1834,3 +1834,14 @@ phone never did it.
 Players whose router blocks direct UDP fall back to a WebSocket relay held by the room's Durable Object. A joiner opens it after two failed join attempts, and the host opens it when a room poll reports a relay user. Each client sends at most one packet per player every 66 ms, because incoming WebSocket messages count against the Workers Free daily limit. Past that limit the relay fails and nothing is billed. The relay is Windows only for now.
 
 Puppets must be removed as soon as the scene manager's changing flag (0x804bae98 + 0x2c) is set. The check runs before the scene manager's own step: one step with the flag set is enough to make removing them crash. If they stay alive, the old field never finishes unloading and the game stays on a black screen. Puppets are shown again every frame because cutscenes can hide them.
+
+## Online sessions: relay, version, leaving, overlays
+
+- The relay is a WebSocket per room. Windows uses WinHTTP over HTTPS. Linux, macOS and Android use one plain socket client on port 80, because they have no shared TLS library here and the packets are the same ones sent in clear over UDP.
+- A relay thread reconnects with a growing pause, and treats 10 seconds of silence after traffic as a dead socket. A 404 means the room is gone.
+- Packets carry the game version at a fixed offset, so a mismatch can be reported whatever the rest of the layout becomes. Clients refuse a host of another version; a host keeps playing and shows a notice.
+- A goodbye packet announces a clean exit. A client that loses the host retries for 30 seconds, and a 404 on the room means the host closed it.
+- `WP_ONLINE_RELAY_ONLY` drops direct packets to test the relay path.
+- A puppet's own state machine keeps starting `Fall0` and `NorIdle0` on the whole body, which replaced the synced run. `MotionStart` now clears the part mask of those starts (r8 = 0), so only synced motions reach the model.
+- Map icons are red in their texture and ignore vertex colors. The tint uses the material's TEV colors: register 1 red at +0x18, register 0 green and blue at +0x12 and +0x14. They must be restored when the game takes the slot back.
+- Sound replay scales f1, which goes to parameter 0 of the CRI player. That parameter is volume in the usual CRI numbering, but the binary has no names to prove it.

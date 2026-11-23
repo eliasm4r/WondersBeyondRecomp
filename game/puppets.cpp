@@ -11,6 +11,7 @@
 #include "wp/log.h"
 #include "wp/memory.h"
 #include "wp/online.h"
+#include "wp/settings.h"
 
 namespace wp::game {
 
@@ -118,11 +119,13 @@ struct Puppet {
     int age = 0;
     int changed = 0;
     std::array<float, 3> position{};
+    uint32_t accessor = 0;
 };
 
 std::vector<Puppet> g_puppets;
 uint32_t g_zone = 0;
 int g_cooldown = 0;
+bool g_starting_motion = false;
 
 uint32_t guest(Cpu& c, uint32_t function, uint32_t a, uint32_t b = 0, uint32_t d = 0, uint32_t e = 0) {
     c.r[3] = a;
@@ -192,7 +195,9 @@ void play(Cpu& c, Puppet& puppet, uint32_t motion, uint32_t frame) {
     }
     uint32_t handle = frame + kHandleSpace;
     guest(c, kMakeHandle, handle, rd32(c.r[13] - kManagerOffset), puppet.handle, 0);
+    g_starting_motion = true;
     guest(c, kPlayMotion, handle, motion, 0);
+    g_starting_motion = false;
     guest(c, kFreeHandle, handle, 0xffffffffu);
     puppet.motion = motion;
 }
@@ -312,7 +317,12 @@ void replay(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t accesso
         if (event.kind == 0) {
             c.r[7] = 0;
             c.r[8] = 0;
-            c.f[1] = event.f1;
+            static const settings::LiveNumber volume("online.volume", "WP_ONLINE_VOLUME");
+            int percent = volume();
+            if (percent <= 0) {
+                continue;
+            }
+            c.f[1] = event.f1 * percent / 100.0f;
             c.f[2] = event.f2;
             guest(c, rd32(table + kPlaySound), module, accessor, event.id, 0xffffffffu);
         } else if (event.kind == 1) {
@@ -333,6 +343,7 @@ void replay(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t accesso
 
 void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) {
     uint32_t accessor = guest(c, kAccessor, puppet.object);
+    puppet.accessor = accessor;
     method(c, method(c, accessor, kModelSlot), kShowSlot, 1);
     uint32_t posture = method(c, accessor, kPostureSlot);
     uint32_t position = method(c, posture, kPositionSlot);
@@ -388,7 +399,9 @@ void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) 
         }
         uint32_t handle = frame + kHandleSpace;
         guest(c, kMakeHandle, handle, rd32(c.r[13] - kManagerOffset), puppet.handle, 0);
+        g_starting_motion = true;
         guest(c, kPlayMotion, handle, name, peer.pose.motion_flags);
+        g_starting_motion = false;
         guest(c, kFreeHandle, handle, 0xffffffffu);
         puppet.motion = 0;
     }
@@ -450,6 +463,10 @@ void step(Cpu& c, bool active, uint32_t frame) {
     }
 }
 
+}
+
+bool puppets_blocks_motion(uint32_t accessor) {
+    return !g_starting_motion && std::any_of(g_puppets.begin(), g_puppets.end(), [&](const Puppet& puppet) { return puppet.ready && puppet.accessor == accessor; });
 }
 
 void puppets_free_beam(Cpu& c) {

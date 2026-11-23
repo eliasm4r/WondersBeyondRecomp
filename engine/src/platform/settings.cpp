@@ -104,6 +104,8 @@ const Option kBaseOptions[] = {
     {"saves.backups", "5"},
     {"online.name", "Player"},
     {"online.address", ""},
+    {"online.names", "1"},
+    {"online.volume", "100"},
     {"overlay.show", "0"},
     {"overlay.level", "full"},
     {"overlay.corner", "top_left"},
