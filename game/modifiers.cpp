@@ -76,6 +76,11 @@ constexpr int kEventFrames = 20;
 uint32_t g_sound_module = 0;
 uint32_t g_effect_module = 0;
 std::array<float, 3> g_controlled_position{};
+constexpr uint32_t kDrawnPosition = 0x48;
+constexpr uint32_t kDrawnRow = 4;
+constexpr float kDrawnReach = 40.0f;
+std::array<float, 3> g_drawn{};
+bool g_drawn_valid = false;
 uint32_t g_event_serial = 0;
 int g_event_frame = 0;
 
@@ -348,6 +353,12 @@ void player_move(Cpu& c, HleFunction original) {
             g_sound_module = module_at(g_controlled_accessor, kSoundSlot);
             g_effect_module = module_at(g_controlled_accessor, kEffectSlot);
             g_controlled_position = vector_at(now);
+            uint32_t model = puppets_model_object(c, g_controlled_accessor);
+            g_drawn_valid = model >= kFirstPointer;
+            for (uint32_t i = 0; g_drawn_valid && i < 3; i++) {
+                g_drawn[i] = rdf32(model + kDrawnPosition + 4 * kDrawnRow * i);
+                g_drawn_valid = std::fabs(g_drawn[i] - g_controlled_position[i]) < kDrawnReach;
+            }
         } else if (g_field_camera) {
             uint32_t target = g_field_camera + kCameraTarget;
             for (uint32_t i = 0; i < 3; i++) {
@@ -357,7 +368,8 @@ void player_move(Cpu& c, HleFunction original) {
         }
         if (!g_shown.valid || distance < g_shown.distance) {
             uint32_t turned = body + kBodyRotation;
-            g_shown = {true, distance, {rdf32(now), rdf32(now + 4), rdf32(now + 8)}, {rdf32(turned), rdf32(turned + 4), rdf32(turned + 8)}, rd16(player + kPlayerCharacter)};
+            std::array<float, 3> place = distance < 0.0f && g_drawn_valid ? g_drawn : vector_at(now);
+            g_shown = {true, distance, place, {rdf32(turned), rdf32(turned + 4), rdf32(turned + 8)}, rd16(player + kPlayerCharacter)};
         }
     }
     int run = speed();

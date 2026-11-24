@@ -172,6 +172,7 @@ struct Puppet {
     int changed = 0;
     std::array<float, 3> position{};
     uint32_t accessor = 0;
+    float ground = NAN;
 };
 
 std::vector<Puppet> g_puppets;
@@ -531,8 +532,13 @@ void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) 
         log::write("online", "%s shown at %.1f %.1f %.1f, packet %u", peer.name.c_str(), shown.position[0], shown.position[1], shown.position[2], peer.sequence);
     }
     uint32_t model_object = rd32(method(c, accessor, kModelSlot) + kModelObject);
-    float ground = rdf32(model_object + kWorldHeight) - rdf32(model_object + kLocalHeight);
-    wrf32(model_object + kLocalHeight, std::max(0.0f, shown.position[1] - ground));
+    float world = rdf32(model_object + kWorldHeight);
+    if (world != 0.0f && std::isfinite(world)) {
+        puppet.ground = world - rdf32(model_object + kLocalHeight);
+    }
+    if (std::isfinite(puppet.ground)) {
+        wrf32(model_object + kLocalHeight, std::max(0.0f, shown.position[1] - puppet.ground));
+    }
     replay(c, puppet, peer, accessor, frame);
     if (puppet.beam != kNoBeam && ++puppet.beam_age > kBeamPatience) {
         stop_beam(c, puppet);
@@ -708,6 +714,21 @@ bool puppets_shot_starting(uint32_t accessor) {
 
 bool puppets_blocks_motion(uint32_t accessor) {
     return !g_starting_motion && std::any_of(g_puppets.begin(), g_puppets.end(), [&](const Puppet& puppet) { return puppet.ready && puppet.accessor == accessor; });
+}
+
+uint32_t puppets_model_object(Cpu& c, uint32_t accessor) {
+    Cpu saved = c;
+    uint32_t stack = c.r[1];
+    c.r[1] = stack - kFrameSize;
+    wr32(c.r[1], stack);
+    uint32_t model_object = rd32(method(c, accessor, kModelSlot) + kModelObject);
+    std::memcpy(c.r, saved.r, sizeof c.r);
+    std::memcpy(c.f, saved.f, sizeof c.f);
+    std::memcpy(c.ps1, saved.ps1, sizeof c.ps1);
+    std::memcpy(c.cr, saved.cr, sizeof c.cr);
+    c.lr = saved.lr;
+    c.ctr = saved.ctr;
+    return model_object;
 }
 
 void puppets_skip_in_search(Cpu& c, HleFunction original) {
