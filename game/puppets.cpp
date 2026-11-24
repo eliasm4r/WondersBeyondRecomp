@@ -533,8 +533,9 @@ void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) 
     }
     uint32_t model_object = rd32(method(c, accessor, kModelSlot) + kModelObject);
     float world = rdf32(model_object + kWorldHeight);
-    if (world != 0.0f && std::isfinite(world)) {
-        puppet.ground = world - rdf32(model_object + kLocalHeight);
+    float local = rdf32(model_object + kLocalHeight);
+    if (world != 0.0f && world != local && std::isfinite(world)) {
+        puppet.ground = world - local;
     }
     if (std::isfinite(puppet.ground)) {
         wrf32(model_object + kLocalHeight, std::max(0.0f, shown.position[1] - puppet.ground));

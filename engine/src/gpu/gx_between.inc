@@ -568,11 +568,11 @@ constexpr float kFarthestStep = 0.1f;
 constexpr float kTeleportStep = 0.75f;
 constexpr uint32_t kMostCopies = 4;
 
-float run_distance(const RecordedRun& before, const RecordedRun& run) {
+float run_distance(const RecordedRun& before, const RecordedRun& run, bool with_camera = true) {
     const Row* a = &g_previous.rows[before.draw.matrix];
     const Row* b = &g_record.rows[run.draw.matrix];
     float distance = 0.0f;
-    if (g_run_camera.valid && run_perspective(g_previous, before) && run_perspective(g_record, run)) {
+    if (with_camera && g_run_camera.valid && run_perspective(g_previous, before) && run_perspective(g_record, run)) {
         for (int i = 0; i < 3; i++) {
             const float* r = g_run_camera.move[i];
             distance += std::fabs(r[0] * a[0][3] + r[1] * a[1][3] + r[2] * a[2][3] + r[3] - b[i][3]);
@@ -592,6 +592,10 @@ bool same_object(const RecordedRun& before, const RecordedRun& run, float distan
     const Row* b = &g_record.rows[run.draw.matrix];
     float away = std::sqrt(b[0][3] * b[0][3] + b[1][3] * b[1][3] + b[2][3] * b[2][3]);
     return distance <= step * away;
+}
+
+float copy_distance(const RecordedRun& before, const RecordedRun& run) {
+    return std::min(run_distance(before, run), run_distance(before, run, false));
 }
 
 void pair_runs() {
@@ -706,7 +710,7 @@ void pair_runs() {
             RecordedRun& run = runs[now_copies[k]];
             uint32_t then = then_copies[best_order[k]];
             settled[now_copies[k]] = 1;
-            if (!same_object(before[then], run, run_distance(before[then], run), kFarthestStep)) {
+            if (!same_object(before[then], run, copy_distance(before[then], run), kFarthestStep)) {
                 g_run_counts[4]++;
                 continue;
             }
@@ -786,7 +790,7 @@ void pair_runs() {
                 best_distance = distance;
             }
         }
-        if (best == left.size() || !same_object(before[left[best]], run, best_distance, kFarthestStep)) {
+        if (best == left.size() || !same_object(before[left[best]], run, copy_distance(before[left[best]], run), kFarthestStep)) {
             continue;
         }
         run.match = left[best];
