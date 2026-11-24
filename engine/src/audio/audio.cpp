@@ -42,6 +42,7 @@ constexpr double kMaxLatency = 0.2;
 constexpr REFERENCE_TIME kBufferDuration = 400000;
 #endif
 constexpr double kMaxRateCorrection = 0.005;
+constexpr size_t kRefillBelow = 4;
 constexpr double kFadeSeconds = 0.004;
 constexpr int kTaps = 16;
 constexpr int kPhases = 512;
@@ -135,6 +136,10 @@ public:
                 gain_ = 0.0f;
                 trims_++;
             }
+            if (primed_ && g_queue.size() < target / kRefillBelow) {
+                primed_ = false;
+                refills_++;
+            }
             if (!primed_ && g_queue.size() >= target) {
                 primed_ = true;
             }
@@ -193,10 +198,11 @@ public:
         }
         Clock::time_point now = Clock::now();
         if (now - report_ >= std::chrono::seconds(1)) {
-            log::write("output", "device %.0f Hz, queue %.1f-%.1f ms, %u frames missing, %u trims", device_rate_, lowest_ * 1000.0 / g_source_rate,
-                       highest_ * 1000.0 / g_source_rate, missing_, trims_);
+            log::write("output", "device %.0f Hz, queue %.1f-%.1f ms, %u frames missing, %u trims, %u refills", device_rate_, lowest_ * 1000.0 / g_source_rate,
+                       highest_ * 1000.0 / g_source_rate, missing_, trims_, refills_);
             missing_ = 0;
             trims_ = 0;
+            refills_ = 0;
             lowest_ = SIZE_MAX;
             highest_ = 0;
             report_ = now;
@@ -209,6 +215,7 @@ private:
     double position_ = 0.0;
     uint32_t missing_ = 0;
     uint32_t trims_ = 0;
+    uint32_t refills_ = 0;
     size_t lowest_ = SIZE_MAX;
     size_t highest_ = 0;
     Clock::time_point report_ = Clock::now();
