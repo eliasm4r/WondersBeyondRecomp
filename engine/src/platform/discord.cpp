@@ -200,6 +200,9 @@ bool read_events(Pipe& pipe) {
         if (!pipe.receive(&frame)) {
             return false;
         }
+        if (frame.find("\"evt\":\"ERROR\"") != std::string::npos) {
+            log::write("discord", "Discord refused: %s", frame.substr(0, 300).c_str());
+        }
         std::string code = join_secret(frame);
         if (!code.empty() && code != online::room_code()) {
             log::write("discord", "joining a room from an invitation");
