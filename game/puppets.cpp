@@ -39,6 +39,7 @@ constexpr uint32_t kPositionSlot = 0x54;
 constexpr uint32_t kRotationSlot = 0x60;
 constexpr uint32_t kShowSlot = 0x70;
 constexpr uint32_t kHideReasons = 0x81;
+constexpr uint32_t kCameraTest = 0x82;
 constexpr uint32_t kShowForReason = 0xcc;
 constexpr uint32_t kReasonCount = 8;
 constexpr uint32_t kObjectHandle = 0x4;
@@ -490,6 +491,7 @@ void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) 
             guest(c, rd32(rd32(shown_model) + kShowForReason), shown_model, 1, reason);
         }
     }
+    wr8(shown_model + kCameraTest, 0);
     uint32_t posture = method(c, accessor, kPostureSlot);
     uint32_t position = method(c, posture, kPositionSlot);
     uint32_t rotation = method(c, posture, kRotationSlot);
