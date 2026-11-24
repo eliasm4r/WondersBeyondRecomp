@@ -635,10 +635,13 @@ void step(Cpu& c, bool active, uint32_t frame) {
         g_idle++;
         return;
     }
-    if (g_idle > kIdleForget) {
+    if (g_idle > kIdleForget && !g_puppets.empty()) {
+        log::write("online", "player back after %d frames, showing the other players again", g_idle);
         for (Puppet& puppet : g_puppets) {
-            puppet.heard = false;
+            remove(c, puppet);
         }
+        g_puppets.clear();
+        g_cooldown = kRemoveCooldown;
     }
     g_idle = 0;
     std::vector<presence::Peer> peers = online::running() ? online::peers() : std::vector<presence::Peer>{};
@@ -649,6 +652,8 @@ void step(Cpu& c, bool active, uint32_t frame) {
         puppet->changed = peer != peers.end() && kHeroSpecies[peer->pose.character] != puppet->species ? puppet->changed + 1 : 0;
         bool wrong = peer == peers.end() || puppet->changed > kCharacterPatience || (!puppet->ready && ++puppet->age > kLoadPatience);
         if (stale || wrong) {
+            const char* reason = stale ? "its object was replaced" : peer == peers.end() ? "it left this zone" : puppet->changed > kCharacterPatience ? "it changed hero" : "its model did not load";
+            log::write("online", "removing a player: %s", reason);
             if (!stale) {
                 remove(c, *puppet);
                 g_cooldown = kRemoveCooldown;
