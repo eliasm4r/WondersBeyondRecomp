@@ -38,6 +38,9 @@ constexpr uint32_t kPostureSlot = 0x40;
 constexpr uint32_t kPositionSlot = 0x54;
 constexpr uint32_t kRotationSlot = 0x60;
 constexpr uint32_t kShowSlot = 0x70;
+constexpr uint32_t kHideReasons = 0x81;
+constexpr uint32_t kShowForReason = 0xcc;
+constexpr uint32_t kReasonCount = 2;
 constexpr uint32_t kObjectHandle = 0x4;
 constexpr uint32_t kObjectState = 0x18;
 constexpr std::array<uint32_t, 4> kHeroSpecies = {204, 207, 205, 206};
@@ -357,7 +360,13 @@ void replay(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t accesso
 void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) {
     uint32_t accessor = guest(c, kAccessor, puppet.object);
     puppet.accessor = accessor;
-    method(c, method(c, accessor, kModelSlot), kShowSlot, 1);
+    uint32_t shown_model = method(c, accessor, kModelSlot);
+    method(c, shown_model, kShowSlot, 1);
+    for (uint32_t reason = 0; reason < kReasonCount; reason++) {
+        if (rd8(shown_model + kHideReasons) >> reason & 1) {
+            guest(c, rd32(rd32(shown_model) + kShowForReason), shown_model, 1, reason);
+        }
+    }
     uint32_t posture = method(c, accessor, kPostureSlot);
     uint32_t position = method(c, posture, kPositionSlot);
     uint32_t rotation = method(c, posture, kRotationSlot);
