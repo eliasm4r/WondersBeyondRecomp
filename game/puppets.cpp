@@ -50,7 +50,19 @@ constexpr uint32_t kHandleSpace = 0x20;
 constexpr int kLoadPatience = 900;
 constexpr int kCharacterPatience = 3;
 constexpr int kRemoveCooldown = 2;
-constexpr double kLoadQuietSeconds = 1.5;
+constexpr int kMissingCooldown = 60;
+constexpr uint32_t kModelNames = 0x800fcef0;
+constexpr uint32_t kResources = 0x80072700;
+constexpr uint32_t kCopyText = 0x804065b4;
+constexpr uint32_t kResourcePools = 4;
+constexpr uint32_t kPoolSize = 0x24;
+constexpr uint32_t kPoolLookup = 0x14;
+constexpr uint32_t kFindSlot = 0x24;
+constexpr uint32_t kResourceKey = 0x30;
+constexpr uint32_t kResourceKeyName = 0x38;
+constexpr uint32_t kFindOnDisc = 0x802abf00;
+constexpr uint32_t kModelNameSize = 0x2a;
+constexpr uint32_t kModelNameCount = 4;
 constexpr int kReportEvery = 1200;
 constexpr double kShownBehind = 0.08;
 constexpr double kClockRelax = 0.0002;
@@ -408,6 +420,38 @@ void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) 
     }
 }
 
+bool model_files_present(Cpu& c, uint32_t species, uint32_t frame, uint32_t zone) {
+    static uint32_t told_zone = 0;
+    uint32_t names = frame + kNameSpace;
+    guest(c, kModelNames, species, names, 0);
+    uint32_t resources = guest(c, kResources, 0);
+    for (uint32_t i = 0; i < kModelNameCount; i++) {
+        uint32_t name = names + i * kModelNameSize;
+        if (rd8(name) == 0 || static_cast<int32_t>(guest(c, kFindOnDisc, name)) >= 0) {
+            continue;
+        }
+        guest(c, kCopyText, resources + kResourceKeyName, name);
+        bool loaded = false;
+        for (uint32_t pool = 0; pool < kResourcePools && !loaded; pool++) {
+            uint32_t lookup = rd32(resources) + pool * kPoolSize + kPoolLookup;
+            loaded = guest(c, rd32(rd32(lookup) + kFindSlot), lookup, resources + kResourceKey) != 0;
+        }
+        if (loaded) {
+            continue;
+        }
+        if (told_zone != zone) {
+            told_zone = zone;
+            std::string missing;
+            for (uint32_t at = name; rd8(at) != 0 && at < name + kModelNameSize; at++) {
+                missing += static_cast<char>(rd8(at));
+            }
+            log::write("online", "field %04u has no %s, other players stay hidden here", zone, missing.c_str());
+        }
+        return false;
+    }
+    return true;
+}
+
 void step(Cpu& c, bool active, uint32_t frame) {
     if (rd8(kSceneManager + kSceneChanging) != 0) {
         return;
@@ -446,9 +490,6 @@ void step(Cpu& c, bool active, uint32_t frame) {
         g_cooldown--;
         return;
     }
-    if (disc::seconds_since_load() < kLoadQuietSeconds) {
-        return;
-    }
     for (const presence::Peer& peer : peers) {
         if (std::any_of(g_puppets.begin(), g_puppets.end(), [&](const Puppet& puppet) { return puppet.peer == peer.id; })) {
             continue;
@@ -456,6 +497,10 @@ void step(Cpu& c, bool active, uint32_t frame) {
         Puppet puppet;
         puppet.peer = peer.id;
         puppet.species = kHeroSpecies[peer.pose.character];
+        if (!model_files_present(c, puppet.species, frame, zone)) {
+            g_cooldown = kMissingCooldown;
+            break;
+        }
         puppet.object = guest(c, kCreate, rd32(c.r[13] - kManagerOffset), 1, puppet.species);
         if (puppet.object) {
             puppet.handle = rd32(puppet.object + kObjectHandle);

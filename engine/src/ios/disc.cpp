@@ -146,8 +146,6 @@ double seconds_since_read(const char* path_part) {
     return static_cast<double>(now_nanoseconds() - g_watched_read.load()) * 1e-9;
 }
 
-std::atomic<std::chrono::steady_clock::time_point> g_last_load{};
-
 uint32_t field_in_path(const std::string& path) {
     static const std::string kStart = "Field/Fd";
     static const std::string kEnd = "Res.dac";
@@ -169,10 +167,6 @@ uint32_t current_field() {
     return g_field.load(std::memory_order_relaxed);
 }
 
-double seconds_since_load() {
-    return std::chrono::duration<double>(std::chrono::steady_clock::now() - g_last_load.load(std::memory_order_relaxed)).count();
-}
-
 void read(uint64_t offset, uint32_t length, uint32_t destination) {
     static const bool logging = std::getenv("WP_LOG_DISC") != nullptr;
     uint8_t* output = host(destination);
@@ -191,9 +185,6 @@ void read(uint64_t offset, uint32_t length, uint32_t destination) {
         uint64_t start = std::max(offset, it->offset);
         uint64_t stop = std::min(end, file_end);
         auto began = std::chrono::steady_clock::now();
-        if (it->path.find("/Sound/") == std::string::npos) {
-            g_last_load.store(began, std::memory_order_relaxed);
-        }
         if (uint32_t field = field_in_path(it->path)) {
             g_field.store(field, std::memory_order_relaxed);
         }
