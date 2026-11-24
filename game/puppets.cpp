@@ -44,6 +44,8 @@ constexpr uint32_t kShowForReason = 0xcc;
 constexpr uint32_t kReasonCount = 8;
 constexpr uint32_t kObjectHandle = 0x4;
 constexpr uint32_t kObjectState = 0x18;
+constexpr uint8_t kSearchable = 4;
+constexpr uint8_t kNotSearchable = 3;
 constexpr std::array<uint32_t, 4> kHeroSpecies = {204, 207, 205, 206};
 constexpr uint32_t kCharacterKind = 4;
 constexpr uint32_t kSceneManager = 0x804bae98;
@@ -88,6 +90,7 @@ constexpr double kClockRelax = 0.0002;
 constexpr size_t kKeptSnapshots = 32;
 constexpr float kTeleport = 30.0f;
 constexpr float kRunning = 0.06f;
+constexpr float kGroundLift = 1.0f;
 constexpr uint32_t kNameSpace = 0x200;
 constexpr uint32_t kHitSlot = 0x68;
 constexpr uint32_t kJostleSlot = 0x5c;
@@ -521,7 +524,7 @@ void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) 
     distance = std::sqrt(distance);
     for (uint32_t i = 0; i < 3; i++) {
         puppet.position[i] = shown.position[i];
-        wrf32(position + 4 * i, puppet.position[i]);
+        wrf32(position + 4 * i, puppet.position[i] + (i == 1 ? kGroundLift : 0.0f));
         wrf32(rotation + 4 * i, shown.rotation[i]);
     }
     if (++puppet.age % kReportEvery == 1) {
@@ -705,6 +708,20 @@ bool puppets_shot_starting(uint32_t accessor) {
 
 bool puppets_blocks_motion(uint32_t accessor) {
     return !g_starting_motion && std::any_of(g_puppets.begin(), g_puppets.end(), [&](const Puppet& puppet) { return puppet.ready && puppet.accessor == accessor; });
+}
+
+void puppets_skip_in_search(Cpu& c, HleFunction original) {
+    std::vector<uint32_t> hidden;
+    for (const Puppet& puppet : g_puppets) {
+        if (alive(puppet) && rd8(puppet.object + kObjectState) == kSearchable) {
+            wr8(puppet.object + kObjectState, kNotSearchable);
+            hidden.push_back(puppet.object);
+        }
+    }
+    original(c);
+    for (uint32_t object : hidden) {
+        wr8(object + kObjectState, kSearchable);
+    }
 }
 
 void puppets_free_beam(Cpu& c) {

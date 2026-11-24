@@ -58,3 +58,7 @@ address,name
 0x802b4ed0,AiInitDma
 0x802b4f50,AiStartDma
 0x802b4f70,AiStopDma
+0x801fc5a0,TargetFirst
+0x801fc9e0,TargetNext
+0x801fcf70,TargetNearest
+0x801fd570,TargetAround
