@@ -202,6 +202,19 @@ bool texture_jumped(const Row* a, const Row* b) {
     return false;
 }
 
+constexpr float kTextureSlide = 1e-4f;
+
+bool texture_slid(const Row* a, const Row* b) {
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            if (a[i][j] != b[i][j]) {
+                return false;
+            }
+        }
+    }
+    return std::fabs(b[0][3] - a[0][3]) > kTextureSlide || std::fabs(b[1][3] - a[1][3]) > kTextureSlide;
+}
+
 struct TextureScroll {
     uint64_t frame = 0;
     float now[2] = {};
@@ -249,7 +262,7 @@ void blend_texture_matrix(Row* out, const Row* a, const Row* b, float t, bool fr
         }
         return;
     }
-    MatrixChange change = from_coordinates && texture_jumped(a, b) ? kOtherMatrix : matrix_change(a, b);
+    MatrixChange change = from_coordinates && (texture_jumped(a, b) || (!steady && texture_slid(a, b))) ? kOtherMatrix : matrix_change(a, b);
     if (change == kNearMatrix) {
         lerp_rows(out, a, b, 3, t);
     } else if (change == kOtherMatrix && t < 0.5f) {
