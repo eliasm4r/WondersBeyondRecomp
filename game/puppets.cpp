@@ -66,6 +66,21 @@ constexpr uint32_t kResourceKeyName = 0x38;
 constexpr uint32_t kFindOnDisc = 0x802abf00;
 constexpr uint32_t kModelNameSize = 0x2a;
 constexpr uint32_t kModelNameCount = 4;
+constexpr uint32_t kLoadFile = 0x800169f0;
+constexpr uint32_t kFileReady = 0x80017290;
+constexpr uint32_t kReleaseFile = 0x80017a30;
+constexpr uint32_t kReactionSystem = 0x3618;
+constexpr uint32_t kReactionsWaiting = 0x40;
+constexpr uint32_t kReactionsActive = 0x48;
+constexpr uint32_t kReactionHandle = 0x4;
+constexpr uint32_t kReactionNodes = 0x50;
+constexpr uint32_t kReactionFreeSlots = 0x54;
+constexpr uint32_t kReactionFreeHead = 0x5c;
+constexpr uint32_t kReactionUsed = 0x5e;
+constexpr uint32_t kReactionNodeSize = 0x24;
+constexpr uint32_t kFieldPool = 3;
+constexpr uint32_t kLoadStackFirst = 0x8;
+constexpr uint32_t kLoadStackSecond = 0xc;
 constexpr int kReportEvery = 1200;
 constexpr double kShownBehind = 0.08;
 constexpr double kClockRelax = 0.0002;
@@ -238,6 +253,27 @@ void stop_beam(Cpu& c, Puppet& puppet, uint32_t how = 0) {
     puppet.beam = kNoBeam;
 }
 
+void forget_reactions(Cpu& c, uint32_t handle) {
+    uint32_t reactions = rd32(c.r[13] - kReactionSystem);
+    if (reactions < kFirstPointer) {
+        return;
+    }
+    for (uint32_t list : {kReactionsWaiting, kReactionsActive}) {
+        uint32_t link = reactions + list;
+        while (uint32_t node = rd32(link)) {
+            if (rd32(node + kReactionHandle) != handle) {
+                link = node;
+                continue;
+            }
+            wr32(link, rd32(node));
+            uint32_t index = (node - rd32(reactions + kReactionNodes)) / kReactionNodeSize;
+            wr16(rd32(reactions + kReactionFreeSlots) + index * 2, rd16(reactions + kReactionFreeHead));
+            wr16(reactions + kReactionFreeHead, static_cast<uint16_t>(index));
+            wr16(reactions + kReactionUsed, static_cast<uint16_t>(rd16(reactions + kReactionUsed) - 1));
+        }
+    }
+}
+
 void remove(Cpu& c, Puppet& puppet) {
     if (alive(puppet)) {
         stop_beam(c, puppet);
@@ -245,6 +281,7 @@ void remove(Cpu& c, Puppet& puppet) {
         guest(c, rd32(rd32(sounds) + kStopAllSounds), sounds, 0);
         uint32_t manager = rd32(c.r[13] - kManagerOffset);
         guest(c, kUnregister, manager, puppet.handle);
+        forget_reactions(c, puppet.handle);
         guest(c, kDestroy, manager, puppet.handle);
     }
 }
@@ -513,8 +550,31 @@ void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) 
     }
 }
 
+struct Requested {
+    std::string name;
+    uint32_t handle;
+};
+
+std::vector<Requested> g_requested;
+
+std::vector<uint32_t> g_releasing;
+
+void release_requested(Cpu& c) {
+    for (const Requested& request : g_requested) {
+        g_releasing.push_back(request.handle);
+    }
+    g_requested.clear();
+    uint32_t resources = guest(c, kResources, 0);
+    g_releasing.erase(std::remove_if(g_releasing.begin(), g_releasing.end(), [&](uint32_t handle) {
+        if (guest(c, kFileReady, resources, handle) != 1) {
+            return false;
+        }
+        guest(c, kReleaseFile, resources, handle, 1, 0);
+        return true;
+    }), g_releasing.end());
+}
+
 bool model_files_present(Cpu& c, uint32_t species, uint32_t frame, uint32_t zone) {
-    static uint32_t told_zone = 0;
     uint32_t names = frame + kNameSpace;
     guest(c, kModelNames, species, names, 0);
     uint32_t resources = guest(c, kResources, 0);
@@ -529,16 +589,28 @@ bool model_files_present(Cpu& c, uint32_t species, uint32_t frame, uint32_t zone
             uint32_t lookup = rd32(resources) + pool * kPoolSize + kPoolLookup;
             loaded = guest(c, rd32(rd32(lookup) + kFindSlot), lookup, resources + kResourceKey) != 0;
         }
-        if (loaded) {
+        std::string missing;
+        for (uint32_t at = name; rd8(at) != 0 && at < name + kModelNameSize; at++) {
+            missing += static_cast<char>(rd8(at));
+        }
+        auto request = std::find_if(g_requested.begin(), g_requested.end(), [&](const Requested& r) { return r.name == missing; });
+        if (request == g_requested.end() && loaded) {
             continue;
         }
-        if (told_zone != zone) {
-            told_zone = zone;
-            std::string missing;
-            for (uint32_t at = name; rd8(at) != 0 && at < name + kModelNameSize; at++) {
-                missing += static_cast<char>(rd8(at));
-            }
-            log::write("online", "field %04u has no %s, other players stay hidden here", zone, missing.c_str());
+        if (request == g_requested.end()) {
+            wr32(c.r[1] + kLoadStackFirst, 0);
+            wr32(c.r[1] + kLoadStackSecond, 0);
+            c.r[7] = 1;
+            c.r[8] = 1;
+            c.r[9] = 0;
+            c.r[10] = 0;
+            uint32_t handle = guest(c, kLoadFile, resources, name, kFieldPool, 1);
+            g_requested.push_back({missing, handle});
+            log::write("online", "field %04u loads %s for other players (%08x)", zone, missing.c_str(), handle);
+            return false;
+        }
+        if (guest(c, kFileReady, resources, request->handle) == 1) {
+            continue;
         }
         return false;
     }
@@ -554,6 +626,7 @@ void step(Cpu& c, bool active, uint32_t frame) {
     uint32_t zone = disc::current_field();
     if (zone != g_zone) {
         g_puppets.clear();
+        g_requested.clear();
         g_zone = zone;
     }
     if (!active) {
@@ -636,7 +709,7 @@ void puppets_free_beam(Cpu& c) {
 }
 
 void puppets_scene_change(Cpu& c) {
-    if (g_puppets.empty() || rd8(kSceneManager + kSceneChanging) == 0) {
+    if ((g_puppets.empty() && g_requested.empty() && g_releasing.empty()) || rd8(kSceneManager + kSceneChanging) == 0) {
         return;
     }
     Cpu saved = c;
@@ -647,6 +720,7 @@ void puppets_scene_change(Cpu& c) {
         remove(c, puppet);
     }
     g_puppets.clear();
+    release_requested(c);
     g_cooldown = kRemoveCooldown;
     std::memcpy(c.r, saved.r, sizeof c.r);
     std::memcpy(c.f, saved.f, sizeof c.f);
