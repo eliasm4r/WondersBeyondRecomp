@@ -50,6 +50,7 @@ constexpr uint32_t kHandleSpace = 0x20;
 constexpr int kLoadPatience = 900;
 constexpr int kCharacterPatience = 3;
 constexpr int kRemoveCooldown = 2;
+constexpr double kLoadQuietSeconds = 1.5;
 constexpr int kReportEvery = 1200;
 constexpr double kShownBehind = 0.08;
 constexpr double kClockRelax = 0.0002;
@@ -443,6 +444,9 @@ void step(Cpu& c, bool active, uint32_t frame) {
     }
     if (g_cooldown > 0) {
         g_cooldown--;
+        return;
+    }
+    if (disc::seconds_since_load() < kLoadQuietSeconds) {
         return;
     }
     for (const presence::Peer& peer : peers) {

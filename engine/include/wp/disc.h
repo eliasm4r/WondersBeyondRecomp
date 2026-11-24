@@ -11,5 +11,6 @@ void read(uint64_t offset, uint32_t length, uint32_t destination);
 double seconds_since_read(const char* path_part);
 uint32_t field_in_path(const std::string& path);
 uint32_t current_field();
+double seconds_since_load();
 
 }

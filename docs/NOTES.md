@@ -1844,4 +1844,5 @@ Puppets must be removed as soon as the scene manager's changing flag (0x804bae98
 - `WP_ONLINE_RELAY_ONLY` drops direct packets to test the relay path.
 - A puppet's own state machine keeps starting `Fall0` and `NorIdle0` on the whole body, which replaced the synced run. `MotionStart` now clears the part mask of those starts (r8 = 0), so only synced motions reach the model.
 - Map icons are red in their texture and ignore vertex colors. The tint uses the material's TEV colors: register 1 red at +0x18, register 0 green and blue at +0x12 and +0x14. They must be restored when the game takes the slot back.
+- A puppet must not be created while a field is still loading: the zone number changes first, and the model loader then finds no open file and calls through a null object at 0x800158e8. Creation waits for 1.5 seconds without disc reads, sound streams excluded because they never stop.
 - Sound replay scales f1, which goes to parameter 0 of the CRI player. That parameter is volume in the usual CRI numbering, but the binary has no names to prove it.
