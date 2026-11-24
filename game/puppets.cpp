@@ -40,7 +40,7 @@ constexpr uint32_t kRotationSlot = 0x60;
 constexpr uint32_t kShowSlot = 0x70;
 constexpr uint32_t kHideReasons = 0x81;
 constexpr uint32_t kShowForReason = 0xcc;
-constexpr uint32_t kReasonCount = 2;
+constexpr uint32_t kReasonCount = 8;
 constexpr uint32_t kObjectHandle = 0x4;
 constexpr uint32_t kObjectState = 0x18;
 constexpr std::array<uint32_t, 4> kHeroSpecies = {204, 207, 205, 206};
@@ -173,6 +173,8 @@ struct Puppet {
 std::vector<Puppet> g_puppets;
 uint32_t g_zone = 0;
 int g_cooldown = 0;
+int g_idle = 0;
+constexpr int kIdleForget = 30;
 bool g_starting_motion = false;
 
 uint32_t guest(Cpu& c, uint32_t function, uint32_t a, uint32_t b = 0, uint32_t d = 0, uint32_t e = 0) {
@@ -630,8 +632,15 @@ void step(Cpu& c, bool active, uint32_t frame) {
         g_zone = zone;
     }
     if (!active) {
+        g_idle++;
         return;
     }
+    if (g_idle > kIdleForget) {
+        for (Puppet& puppet : g_puppets) {
+            puppet.heard = false;
+        }
+    }
+    g_idle = 0;
     std::vector<presence::Peer> peers = online::running() ? online::peers() : std::vector<presence::Peer>{};
     peers.erase(std::remove_if(peers.begin(), peers.end(), [&](const presence::Peer& peer) { return peer.zone == 0 || peer.zone != zone || peer.pose.character >= kHeroSpecies.size(); }), peers.end());
     for (auto puppet = g_puppets.begin(); puppet != g_puppets.end();) {

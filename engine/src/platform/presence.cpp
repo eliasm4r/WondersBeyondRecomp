@@ -55,6 +55,7 @@ constexpr size_t kEventWords = 14;
 constexpr size_t kEventBytes = kEventWords * 4;
 constexpr uint32_t kEventKinds = 11;
 constexpr size_t kMaxOthers = 3;
+constexpr size_t kKeptEvents = kMostEvents * 4;
 constexpr double kPeerTimeout = 5.0;
 constexpr float kLargestCoordinate = 1e6f;
 constexpr int kMaxPacketsPerPump = 64;
@@ -745,6 +746,17 @@ void Link::accept(const uint8_t* data, size_t size, const void* source, bool rel
         }
     }
     if (peer != m_peers.end()) {
+        std::vector<Event> events;
+        for (const Event& old : peer->pose.events) {
+            if (std::none_of(incoming.pose.events.begin(), incoming.pose.events.end(), [&](const Event& event) { return event.serial == old.serial; })) {
+                events.push_back(old);
+            }
+        }
+        events.insert(events.end(), incoming.pose.events.begin(), incoming.pose.events.end());
+        if (events.size() > kKeptEvents) {
+            events.erase(events.begin(), events.end() - kKeptEvents);
+        }
+        incoming.pose.events = std::move(events);
         *peer = incoming;
     } else if (m_peers.size() < kMaxOthers) {
         m_peers.push_back(incoming);

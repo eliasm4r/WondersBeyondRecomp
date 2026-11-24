@@ -366,6 +366,19 @@ void test_presence() {
         got_events = got_events || (peer.name == "First" && peer.pose.events.size() == 2 && peer.pose.events[1].id == 0x20010003 && peer.pose.events[1].a == 13 && peer.pose.events[1].offset[2] == 3.0f);
     }
     CHECK(got_events);
+    sent.serial = 10;
+    pose.events = {sent};
+    first.send({1.5f, 2.0f, 3.0f}, 0, pose);
+    sent.serial = 11;
+    pose.events = {sent};
+    first.send({1.5f, 2.0f, 3.0f}, 0, pose);
+    settle(1.3);
+    bool kept_both = false;
+    for (const auto& peer : host.peers()) {
+        bool ten = std::any_of(peer.pose.events.begin(), peer.pose.events.end(), [](const auto& event) { return event.serial == 10; });
+        kept_both = kept_both || (peer.name == "First" && ten && peer.pose.events.back().serial == 11);
+    }
+    CHECK(kept_both);
     settle(7.0);
     CHECK(host.peers().empty());
     CHECK(first.peers().empty());
