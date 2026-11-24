@@ -43,6 +43,14 @@ constexpr float kMarkerHeight = 5.0f;
 
 uint32_t g_player = 0;
 uint32_t g_field_camera = 0;
+uint32_t g_render_camera = 0;
+constexpr uint32_t kCameraManager = 0x80074cf0;
+constexpr uint32_t kCameraList = 0x1c;
+constexpr uint32_t kCameraListRoom = 0x20;
+constexpr uint32_t kCameraListFirst = 0x24;
+constexpr uint32_t kCameraListCount = 0x28;
+constexpr uint32_t kScreenCameraId = 0x58;
+constexpr uint32_t kFirstPointer = 0x80000000;
 int g_frames_since_move = 1000;
 constexpr int kPlayerActiveFrames = 4;
 constexpr uint32_t kPlacedFlag = 0xb;
@@ -150,7 +158,8 @@ void publish_player() {
     }
     online::update(g_shown.position, zone, {g_shown.rotation, g_shown.character, g_motion, g_motion_flags, g_motion_serial, std::move(events)});
     g_shown.valid = false;
-    if (!g_field_camera) {
+    uint32_t camera = g_render_camera ? g_render_camera : g_field_camera;
+    if (!camera) {
         return;
     }
     static const settings::LiveFlag names("online.names", "WP_ONLINE_NAMES");
@@ -162,7 +171,7 @@ void publish_player() {
     }
     ghosts::View view;
     for (uint32_t i = 0; i < view.size(); i++) {
-        view[i] = rdf32(g_field_camera + kCameraView + 4 * i);
+        view[i] = rdf32(camera + kCameraView + 4 * i);
     }
     ghosts::set_view(view, std::move(markers));
 }
@@ -199,7 +208,44 @@ void report_ended_sounds(Cpu& c) {
     c.ctr = saved.ctr;
 }
 
+uint32_t screen_camera(Cpu& c) {
+    if (!online::running()) {
+        return 0;
+    }
+    Cpu saved = c;
+    uint32_t stack = c.r[1];
+    c.r[1] = stack - kMoveFrame;
+    wr32(c.r[1], stack);
+    call(c, kCameraManager);
+    uint32_t manager = c.r[3];
+    std::memcpy(c.r, saved.r, sizeof c.r);
+    std::memcpy(c.f, saved.f, sizeof c.f);
+    std::memcpy(c.ps1, saved.ps1, sizeof c.ps1);
+    std::memcpy(c.cr, saved.cr, sizeof c.cr);
+    c.lr = saved.lr;
+    c.ctr = saved.ctr;
+    if (manager < kFirstPointer) {
+        return 0;
+    }
+    uint32_t cameras = rd32(manager + kCameraList);
+    uint32_t room = rd32(manager + kCameraListRoom);
+    uint32_t first = rd32(manager + kCameraListFirst);
+    uint32_t count = rd32(manager + kCameraListCount);
+    uint32_t wanted = rd32(manager + kScreenCameraId);
+    if (cameras < kFirstPointer || room == 0 || count > room) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t camera = rd32(cameras + (first + i) % room * 4);
+        if (camera >= kFirstPointer && rd32(camera + kObjectHandle) == wanted) {
+            return camera;
+        }
+    }
+    return 0;
+}
+
 void modifiers_frame(Cpu& c, bool park) {
+    g_render_camera = park ? screen_camera(c) : 0;
     if (!park) {
         g_sound_module = 0;
         g_effect_module = 0;
