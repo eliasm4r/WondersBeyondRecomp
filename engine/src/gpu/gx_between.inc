@@ -553,6 +553,7 @@ void find_run_camera(const std::vector<uint32_t>& unique) {
 
 constexpr float kFarthestStep = 0.1f;
 constexpr float kTeleportStep = 0.75f;
+constexpr uint32_t kMostCopies = 4;
 
 float run_distance(const RecordedRun& before, const RecordedRun& run) {
     const Row* a = &g_previous.rows[before.draw.matrix];
@@ -645,10 +646,67 @@ void pair_runs() {
     find_run_camera(unique);
     uint32_t paired = 0;
     uint32_t rejected = 0;
+    static std::vector<uint8_t> settled;
+    settled.assign(runs.size(), 0);
+    for (size_t i = 0; i < runs.size(); i++) {
+        uint64_t key = runs[i].draw.key;
+        size_t slot = key != 0 ? slot_of(key) : 0;
+        if (key == 0 || keys[slot] != key || last[slot] != i || later[i] == kUnmatched) {
+            continue;
+        }
+        std::array<uint32_t, kMostCopies> now_copies{};
+        std::array<uint32_t, kMostCopies> then_copies{};
+        uint32_t count = 0;
+        uint32_t then_count = 0;
+        for (uint32_t k = static_cast<uint32_t>(i); k != kUnmatched && count <= kMostCopies; k = later[k]) {
+            if (count < kMostCopies) {
+                now_copies[count] = k;
+            }
+            count++;
+        }
+        for (uint32_t k = head[slot]; k != kUnmatched && then_count <= kMostCopies; k = next[k]) {
+            if (then_count < kMostCopies) {
+                then_copies[then_count] = k;
+            }
+            then_count++;
+        }
+        if (count != then_count || count > kMostCopies) {
+            continue;
+        }
+        std::array<uint32_t, kMostCopies> order{};
+        std::array<uint32_t, kMostCopies> best_order{};
+        for (uint32_t k = 0; k < count; k++) {
+            order[k] = k;
+        }
+        float best_total = -1.0f;
+        do {
+            float total = 0.0f;
+            for (uint32_t k = 0; k < count; k++) {
+                total += run_distance(before[then_copies[order[k]]], runs[now_copies[k]]);
+            }
+            if (best_total < 0.0f || total < best_total) {
+                best_total = total;
+                best_order = order;
+            }
+        } while (std::next_permutation(order.begin(), order.begin() + count));
+        for (uint32_t k = 0; k < count; k++) {
+            RecordedRun& run = runs[now_copies[k]];
+            uint32_t then = then_copies[best_order[k]];
+            settled[now_copies[k]] = 1;
+            if (!same_object(before[then], run, run_distance(before[then], run), kFarthestStep)) {
+                g_run_counts[4]++;
+                continue;
+            }
+            run.match = then;
+            paired++;
+            rejected += matrix_change(&g_previous.rows[before[then].draw.matrix], &g_record.rows[run.draw.matrix]) == kOtherMatrix;
+        }
+        head[slot] = kUnmatched;
+    }
     for (size_t i = 0; i < runs.size(); i++) {
         RecordedRun& run = runs[i];
         uint64_t key = run.draw.key;
-        if (key == 0) {
+        if (key == 0 || settled[i]) {
             continue;
         }
         size_t slot = slot_of(key);
