@@ -30,6 +30,9 @@ address,name
 0x800a0720,BeamStart
 0x800a07f0,EffectAt
 0x800a0c90,EffectOn
+0x800a10a0,EffectPlaced
+0x8009d920,ShotStart
+0x801184b0,ShotEffectAt
 0x800a1440,EffectStop0
 0x800a14a0,EffectStop1
 0x800a1870,EffectStop2

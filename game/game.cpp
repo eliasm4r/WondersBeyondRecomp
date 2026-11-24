@@ -1040,7 +1040,7 @@ HookFunction hook(const char* name) {
                    {"FindResourceByName", find_resource_by_name},
                    {"FindResourceByNameOther", find_resource_by_name},
                    {"FindResourceByNumber", find_resource_by_number},
-                   {"AddSceneParameter", add_scene_parameter}, {"PickScene", pick_scene}, {"SceneManagerRunBegin", scene_manager_run_begin},
+                   {"EffectPlaced", effect_placed}, {"ShotStart", shot_start}, {"ShotEffectAt", shot_effect_at}, {"AddSceneParameter", add_scene_parameter}, {"PickScene", pick_scene}, {"SceneManagerRunBegin", scene_manager_run_begin},
                    {"DanceFrame", dance_frame}, {"DanceFrameSecondPart", dance_frame_second_part},
                    {"DanceJudge", dance_judge}, {"CullingFrustum", culling_frustum}, {"CameraView", camera_view},
                    {"DialogueWriterStep", dialogue_writer_step}, {"MovieSceneUpdate", movie_scene_update},

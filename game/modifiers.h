@@ -20,6 +20,9 @@ void minimap_update(Cpu& c, HleFunction original);
 void sound_stop(Cpu& c, HleFunction original);
 void sound_stop_all(Cpu& c, HleFunction original);
 void effect_at(Cpu& c, HleFunction original);
+void effect_placed(Cpu& c, HleFunction original);
+void shot_start(Cpu& c, HleFunction original);
+void shot_effect_at(Cpu& c, HleFunction original);
 void effect_on(Cpu& c, HleFunction original);
 void note_effect_stop(Cpu& c, uint32_t slot);
 template <uint32_t Slot>

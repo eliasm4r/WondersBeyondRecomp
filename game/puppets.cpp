@@ -82,6 +82,23 @@ constexpr uint32_t kEffectSlot = 0x3c;
 constexpr uint32_t kPlaySound = 0x60;
 constexpr uint32_t kEffectAt = 0x60;
 constexpr uint32_t kEffectOn = 0x70;
+constexpr uint32_t kEffectPlaced = 0x78;
+constexpr uint32_t kShotSlot = 0xa0;
+constexpr uint32_t kShotStart = 0x8009d920;
+constexpr uint32_t kShotModes = 6;
+constexpr uint32_t kShotTable = 0x74;
+constexpr uint32_t kShotTableRoom = 0x78;
+constexpr uint32_t kShotTableFirst = 0x7c;
+constexpr uint32_t kShotTableCount = 0x80;
+constexpr uint32_t kShotEntrySize = 12;
+constexpr uint32_t kShotsAtOnce = 4;
+constexpr uint32_t kNoShot = 0xffffffffu;
+constexpr uint32_t kFindObject = 0x800d4c30;
+constexpr uint32_t kObjectManager = 0xffffc9d0;
+constexpr uint32_t kPlacedFlag = 0xb;
+constexpr uint32_t kPlacedExtra = 0xc;
+constexpr uint32_t kPlacedFlagShift = 16;
+constexpr uint32_t kPlacedJoint = 0xffff;
 constexpr uint32_t kEventPoint = 0x240;
 constexpr uint32_t kEventVector = 0x250;
 constexpr uint32_t kEventScale = 0x260;
@@ -150,6 +167,33 @@ uint32_t guest(Cpu& c, uint32_t function, uint32_t a, uint32_t b = 0, uint32_t d
     c.r[6] = e;
     call(c, function);
     return c.r[3];
+}
+
+std::vector<uint32_t> g_new_shots;
+std::vector<uint32_t> g_starting_shots;
+
+bool knows_shot(uint32_t shots, uint32_t id) {
+    uint32_t table = rd32(shots + kShotTable);
+    uint32_t room = rd32(shots + kShotTableRoom);
+    uint32_t first = rd32(shots + kShotTableFirst);
+    uint32_t count = rd32(shots + kShotTableCount);
+    if (table < kFirstPointer || room == 0 || count > room) {
+        return false;
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        if (rd32(table + (first + i) % room * kShotEntrySize) == id) {
+            return true;
+        }
+    }
+    if (count == room) {
+        return false;
+    }
+    uint32_t entry = table + (first + count) % room * kShotEntrySize;
+    wr32(entry, id);
+    wr32(entry + 4, kShotsAtOnce);
+    wr32(entry + 8, 0);
+    wr32(shots + kShotTableCount, count + 1);
+    return true;
 }
 
 uint32_t method(Cpu& c, uint32_t object, uint32_t slot, uint32_t b = 0) {
@@ -255,6 +299,46 @@ void replay(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t accesso
         }
         if (static_cast<int32_t>(event.serial - newest) > 0) {
             newest = event.serial;
+        }
+        if (event.kind == 10) {
+            uint32_t shots = method(c, accessor, kShotSlot);
+            if (shots && event.a < kShotModes && knows_shot(shots, event.id) && room_for_effect(guest(c, kEffectManager, 0))) {
+                uint32_t point = frame + kEventPoint;
+                uint32_t way = frame + kEventVector;
+                for (uint32_t i = 0; i < 3; i++) {
+                    wrf32(point + 4 * i, puppet.position[i] + event.offset[i]);
+                    wrf32(way + 4 * i, event.vector[i]);
+                }
+                c.r[7] = event.a;
+                uint32_t shot = guest(c, kShotStart, shots, event.id, point, way);
+                uint32_t shot_object = shot == kNoShot ? 0 : guest(c, kFindObject, rd32(c.r[13] + kObjectManager), shot);
+                if (shot_object) {
+                    g_new_shots.push_back(guest(c, kAccessor, shot_object));
+                }
+            }
+            continue;
+        }
+        if (event.kind == 9) {
+            uint32_t joint = event.a & kPlacedJoint;
+            if (joint < kMostJoints && event.c < kFirstPointer && effect_loaded(c, event.id) && room_for_effect(guest(c, kEffectManager, 0))) {
+                uint32_t point = frame + kEventPoint;
+                uint32_t turn = frame + kEventVector;
+                uint32_t scale = frame + kEventScale;
+                for (uint32_t i = 0; i < 3; i++) {
+                    wrf32(point + 4 * i, event.offset[i]);
+                    wrf32(turn + 4 * i, event.vector[i]);
+                    wrf32(scale + 4 * i, i == 0 ? event.f1 : event.f2);
+                }
+                uint32_t effects = method(c, accessor, kEffectSlot);
+                wr8(frame + kPlacedFlag, static_cast<uint8_t>(event.a >> kPlacedFlagShift));
+                wr32(frame + kPlacedExtra, event.c);
+                c.r[7] = point;
+                c.r[8] = turn;
+                c.r[9] = scale;
+                c.r[10] = event.b < kFirstPointer ? event.b : 0;
+                guest(c, rd32(rd32(effects) + kEffectPlaced), effects, event.id, method(c, accessor, kModelSlot), joint);
+            }
+            continue;
         }
         if (event.kind >= 6) {
             puppet.beam_age = 0;
@@ -462,6 +546,8 @@ bool model_files_present(Cpu& c, uint32_t species, uint32_t frame, uint32_t zone
 }
 
 void step(Cpu& c, bool active, uint32_t frame) {
+    g_starting_shots.swap(g_new_shots);
+    g_new_shots.clear();
     if (rd8(kSceneManager + kSceneChanging) != 0) {
         return;
     }
@@ -521,6 +607,11 @@ void step(Cpu& c, bool active, uint32_t frame) {
     }
 }
 
+}
+
+bool puppets_shot_starting(uint32_t accessor) {
+    return std::find(g_starting_shots.begin(), g_starting_shots.end(), accessor) != g_starting_shots.end() ||
+           std::find(g_new_shots.begin(), g_new_shots.end(), accessor) != g_new_shots.end();
 }
 
 bool puppets_blocks_motion(uint32_t accessor) {

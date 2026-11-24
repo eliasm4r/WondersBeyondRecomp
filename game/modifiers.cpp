@@ -45,6 +45,9 @@ uint32_t g_player = 0;
 uint32_t g_field_camera = 0;
 int g_frames_since_move = 1000;
 constexpr int kPlayerActiveFrames = 4;
+constexpr uint32_t kPlacedFlag = 0xb;
+constexpr uint32_t kPlacedExtra = 0xc;
+constexpr uint32_t kPlacedFlagShift = 16;
 constexpr uint32_t kBodyRotation = 0x14;
 constexpr uint32_t kPlayerCharacter = 0xa;
 constexpr uint32_t kCameraFollowed = 0xb8;
@@ -57,6 +60,9 @@ uint32_t g_motion_flags = 0;
 uint32_t g_motion_serial = 0;
 constexpr uint32_t kSoundSlot = 0x38;
 constexpr uint32_t kEffectSlot = 0x3c;
+constexpr uint32_t kShotSlot = 0xa0;
+constexpr uint32_t kShotAge = 0x20;
+constexpr uint32_t kShotEffectAge = 4;
 constexpr uint32_t kSoundOwner = 0x8;
 constexpr int kEventFrames = 20;
 uint32_t g_sound_module = 0;
@@ -557,6 +563,48 @@ void effect_on(Cpu& c, HleFunction original) {
         record(event);
     }
     original(c);
+}
+
+void effect_placed(Cpu& c, HleFunction original) {
+    if (c.r[3] == g_effect_module && online::running()) {
+        std::array<float, 3> scale = vector_at(c.r[9]);
+        presence::Event event;
+        event.kind = 9;
+        event.id = c.r[4];
+        event.a = c.r[6] | rd8(c.r[1] + kPlacedFlag) << kPlacedFlagShift;
+        event.b = c.r[10];
+        event.c = rd32(c.r[1] + kPlacedExtra);
+        event.offset = vector_at(c.r[7]);
+        event.vector = vector_at(c.r[8]);
+        event.f1 = scale[0];
+        event.f2 = scale[1];
+        record(event);
+    }
+    original(c);
+}
+
+void shot_start(Cpu& c, HleFunction original) {
+    if (g_controlled_accessor && c.r[3] == module_at(g_controlled_accessor, kShotSlot) && online::running()) {
+        presence::Event event;
+        event.kind = 10;
+        event.id = c.r[4];
+        event.a = c.r[7];
+        event.offset = from_player(vector_at(c.r[5]));
+        event.vector = vector_at(c.r[6]);
+        record(event);
+    }
+    original(c);
+}
+
+void shot_effect_at(Cpu& c, HleFunction original) {
+    uint32_t age = c.r[3] + kShotAge;
+    if (rd32(c.r[4] + kShotEffectAge) != 0 || rd32(age) != 1 || !puppets_shot_starting(c.r[5])) {
+        original(c);
+        return;
+    }
+    wr32(age, 0);
+    original(c);
+    wr32(age, 1);
 }
 
 void life_damage(Cpu& c, HleFunction original) {
