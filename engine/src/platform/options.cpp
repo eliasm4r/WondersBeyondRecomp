@@ -54,7 +54,8 @@ struct Language {
 constexpr Language kLanguages[] = {{"auto", nullptr}, {"en", "English"},  {"de", "Deutsch"},   {"fr", "Français"},
                                    {"es", "Español"}, {"it", "Italiano"}, {"nl", "Nederlands"}};
 
-constexpr Language kInterfaceLanguages[] = {{"fr", "Français"}, {"en", "English"}, {"es", "Español"}, {"gl", "Galego"}};
+constexpr Language kInterfaceLanguages[] = {{"fr", "Français"}, {"en", "English"}, {"es", "Español"}, {"gl", "Galego"},
+                                            {"de", "Deutsch"},  {"it", "Italiano"}, {"nl", "Nederlands"}};
 
 constexpr int kMaxScale = 6;
 constexpr int kMaxPhoneScale = 3;
@@ -708,7 +709,11 @@ std::vector<std::string> choices(const std::string& key) {
         return values;
     }
     if (key == "system.interface_language") {
-        return {"fr", "en", "es", "gl"};
+        std::vector<std::string> codes;
+        for (const Language& language : kInterfaceLanguages) {
+            codes.push_back(language.code);
+        }
+        return codes;
     }
     if (key == "system.language") {
         std::vector<std::string> codes;

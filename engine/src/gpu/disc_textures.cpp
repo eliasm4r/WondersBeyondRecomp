@@ -212,6 +212,10 @@ void walk(Export& job, Bytes file, int depth) {
 
 }
 
+bool unpack_lz11(const std::vector<uint8_t>& in, std::vector<uint8_t>& out) {
+    return in.size() >= 4 && in[0] == 0x11 && unpack_lz11(Bytes{in.data(), in.size()}, out);
+}
+
 size_t export_flat(const std::filesystem::path& files, const std::filesystem::path& folder) {
     Export job{folder, {}};
     std::error_code error;

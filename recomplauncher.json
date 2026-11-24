@@ -428,7 +428,10 @@
         { "label": "English", "set": { "system/interface_language": "en" } },
         { "label": "Français", "set": { "system/interface_language": "fr" } },
         { "label": "Español", "set": { "system/interface_language": "es" } },
-        { "label": "Galego", "set": { "system/interface_language": "gl" } }
+        { "label": "Galego", "set": { "system/interface_language": "gl" } },
+        { "label": "Deutsch", "set": { "system/interface_language": "de" } },
+        { "label": "Italiano", "set": { "system/interface_language": "it" } },
+        { "label": "Nederlands", "set": { "system/interface_language": "nl" } }
       ],
       "defaults": { "system/interface_language": "en" }
     },

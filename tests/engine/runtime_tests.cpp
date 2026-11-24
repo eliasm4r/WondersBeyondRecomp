@@ -387,6 +387,29 @@ void test_presence() {
     CHECK(wp::disc::field_in_path("game/extracted/files/Field/FdAB02Res.dac") == 0);
     CHECK(wp::disc::field_in_path("game/extracted/files/Archive/MenuField.dac") == 0);
     CHECK(wp::disc::field_in_path("Field/Fd") == 0);
+    std::vector<uint8_t> msbt(0x20);
+    std::memcpy(msbt.data(), "MsgStdBn", 8);
+    msbt[0xf] = 2;
+    auto put = [&](std::initializer_list<uint32_t> words) {
+        for (uint32_t word : words) {
+            for (int shift = 24; shift >= 0; shift -= 8) {
+                msbt.push_back(static_cast<uint8_t>(word >> shift));
+            }
+        }
+    };
+    auto section = [&](const char* magic, std::vector<uint8_t> body) {
+        msbt.insert(msbt.end(), magic, magic + 4);
+        put({static_cast<uint32_t>(body.size()), 0, 0});
+        body.resize((body.size() + 15) & ~size_t{15});
+        msbt.insert(msbt.end(), body.begin(), body.end());
+    };
+    section("LBL1", {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 12, 6, 'F', 'd', '0', '1', '0', '1', 0, 0, 0, 0});
+    section("TXT2", {0, 0, 0, 1, 0, 0, 0, 8, 0, 'B', 0, 0x0e, 0, 0, 0, 3, 0, 2, 0, 1, 0, 0xe9, 0, 0});
+    std::vector<uint8_t> archive(7, 0);
+    archive.insert(archive.end(), msbt.begin(), msbt.end());
+    std::map<std::string, std::string> texts = wp::disc::message_texts(archive);
+    CHECK(texts.size() == 1 && texts["Fd0101"] == "B\xC3\xA9");
+    CHECK(wp::disc::field_name(101).empty());
 }
 
 void test_presence_session() {
@@ -937,7 +960,7 @@ void test_control_names() {
     wp::ui::set_language(wp::ui::Language::French);
     CHECK(wp::control_names::pad_button(wp::padmap::kSouth, Family::PlayStation4) == "Croix");
     CHECK(wp::control_names::pad_button(wp::padmap::kDpadUp, Family::PlayStation4).find("Croix dir") == 0);
-    for (wp::ui::Language language : {wp::ui::Language::English, wp::ui::Language::French, wp::ui::Language::Spanish, wp::ui::Language::Galician}) {
+    for (wp::ui::Language language : {wp::ui::Language::English, wp::ui::Language::French, wp::ui::Language::Spanish, wp::ui::Language::Galician, wp::ui::Language::German, wp::ui::Language::Italian, wp::ui::Language::Dutch}) {
         wp::ui::set_language(language);
         for (Family family : {Family::Xbox, Family::Xbox360, Family::PlayStation3, Family::PlayStation4, Family::PlayStation5, Family::Switch}) {
             for (int physical = 0; physical < wp::padmap::kPhysicalCount; physical++) {
@@ -963,7 +986,7 @@ void test_control_names() {
     CHECK(wp::control_names::key(0x01, azerty) == "Clic gauche");
     CHECK(wp::control_names::key(0x08, azerty) == "Retour arrière");
     CHECK(wp::control_names::key(0x20, azerty) == "Espace");
-    for (wp::ui::Language language : {wp::ui::Language::English, wp::ui::Language::French, wp::ui::Language::Spanish, wp::ui::Language::Galician}) {
+    for (wp::ui::Language language : {wp::ui::Language::English, wp::ui::Language::French, wp::ui::Language::Spanish, wp::ui::Language::Galician, wp::ui::Language::German, wp::ui::Language::Italian, wp::ui::Language::Dutch}) {
         wp::ui::set_language(language);
         for (int code = 0; code < 0x200; code++) {
             if (!wp::keymap::key_name(code).empty()) {
@@ -1101,7 +1124,7 @@ std::vector<uint8_t> lz11_runs(const std::vector<uint8_t>& data) {
 }
 
 void test_hd_progress_text() {
-    for (wp::ui::Language language : {wp::ui::Language::English, wp::ui::Language::French, wp::ui::Language::Spanish, wp::ui::Language::Galician}) {
+    for (wp::ui::Language language : {wp::ui::Language::English, wp::ui::Language::French, wp::ui::Language::Spanish, wp::ui::Language::Galician, wp::ui::Language::German, wp::ui::Language::Italian, wp::ui::Language::Dutch}) {
         wp::ui::set_language(language);
         for (wp::hd_textures::State state : {wp::hd_textures::State::Reading, wp::hd_textures::State::Downloading, wp::hd_textures::State::Enlarging,
                                              wp::hd_textures::State::Retrying, wp::hd_textures::State::Checking, wp::hd_textures::State::Done,
@@ -2037,7 +2060,7 @@ void test_pad_motion() {
     list = wp::padmap::toggled(list, "Xbox 360 Controller#2");
     CHECK(list == "Pad B#1");
     CHECK(wp::padmap::toggled(list, "Pad B#1").empty());
-    for (wp::ui::Language language : {wp::ui::Language::English, wp::ui::Language::Spanish, wp::ui::Language::Galician}) {
+    for (wp::ui::Language language : {wp::ui::Language::English, wp::ui::Language::Spanish, wp::ui::Language::Galician, wp::ui::Language::German, wp::ui::Language::Italian, wp::ui::Language::Dutch}) {
         for (const char* key : {"input.player1_keyboard_only", "pad.use", "pad.view_title", "pad.view_none", "pad.cross", "pad.circle", "pad.square", "pad.triangle", "pad.right_stick_up", "pad.right_stick_down", "pad.right_stick_left", "pad.right_stick_right",
                                 "pad.motion_help"}) {
             CHECK(std::string(key) != wp::ui::label(key, language));
@@ -2267,7 +2290,7 @@ void test_phone_options() {
 
 void test_options_menu() {
     wp::settings::load("");
-    for (wp::ui::Language language : {wp::ui::Language::English, wp::ui::Language::French, wp::ui::Language::Spanish, wp::ui::Language::Galician}) {
+    for (wp::ui::Language language : {wp::ui::Language::English, wp::ui::Language::French, wp::ui::Language::Spanish, wp::ui::Language::Galician, wp::ui::Language::German, wp::ui::Language::Italian, wp::ui::Language::Dutch}) {
         wp::ui::set_language(language);
         for (size_t tab = 0; tab < wp::options::kTabCount; tab++) {
             CHECK(std::string(wp::options::tab_label(tab)).rfind("tab.", 0) != 0);
@@ -2288,7 +2311,7 @@ void test_options_menu() {
             }
         }
     }
-    for (wp::ui::Language language : {wp::ui::Language::English, wp::ui::Language::French, wp::ui::Language::Spanish, wp::ui::Language::Galician}) {
+    for (wp::ui::Language language : {wp::ui::Language::English, wp::ui::Language::French, wp::ui::Language::Spanish, wp::ui::Language::Galician, wp::ui::Language::German, wp::ui::Language::Italian, wp::ui::Language::Dutch}) {
         wp::ui::set_language(language);
         wp::options::Menu controls;
         controls.set_open(true);
@@ -2360,7 +2383,7 @@ void test_options_menu() {
     CHECK(wp::options::shown_value("keys.up", "Up,W") == "Up, W");
     CHECK(wp::options::shown_value("pad.a", "auto") == "A, RB");
     CHECK(wp::options::shown_value("pad.a", "south") == "A");
-    for (wp::ui::Language language : {wp::ui::Language::English, wp::ui::Language::French, wp::ui::Language::Spanish, wp::ui::Language::Galician}) {
+    for (wp::ui::Language language : {wp::ui::Language::English, wp::ui::Language::French, wp::ui::Language::Spanish, wp::ui::Language::Galician, wp::ui::Language::German, wp::ui::Language::Italian, wp::ui::Language::Dutch}) {
         wp::ui::set_language(language);
         for (size_t i = 0; i < wp::padmap::kActionCount; i++) {
             std::string shown = wp::options::shown_value(wp::padmap::setting_key(i), "auto");
@@ -2877,7 +2900,7 @@ void test_frame_pacing() {
         CHECK((wp::options::choices("video.fps") == std::vector<std::string>{"30", "45", "60"}));
     }
 #endif
-    for (auto language : {wp::ui::Language::English, wp::ui::Language::French, wp::ui::Language::Spanish, wp::ui::Language::Galician}) {
+    for (auto language : {wp::ui::Language::English, wp::ui::Language::French, wp::ui::Language::Spanish, wp::ui::Language::Galician, wp::ui::Language::German, wp::ui::Language::Italian, wp::ui::Language::Dutch}) {
         std::string help = wp::ui::label("help.video.fps_without_between", language);
         CHECK(help.find("45") != std::string::npos && help.find("90") == std::string::npos);
     }
@@ -2885,7 +2908,8 @@ void test_frame_pacing() {
     CHECK(std::string(wp::ui::label("help.video.fps", wp::ui::Language::French)).find("90") != std::string::npos);
     const std::pair<wp::ui::Language, const char*> experimental[] = {
         {wp::ui::Language::English, "experimental"}, {wp::ui::Language::French, "expérimentaux"},
-        {wp::ui::Language::Spanish, "experimentales"}, {wp::ui::Language::Galician, "experimentais"}};
+        {wp::ui::Language::Spanish, "experimentales"}, {wp::ui::Language::Galician, "experimentais"},
+        {wp::ui::Language::German, "experimentell"}, {wp::ui::Language::Italian, "sperimental"}, {wp::ui::Language::Dutch, "experimente"}};
     for (const auto& [language, word] : experimental) {
         std::string help = wp::ui::label("help.video.fps", language);
         CHECK(help.find(word) != std::string::npos && help.find("60") != std::string::npos && help.find("240") != std::string::npos);
@@ -2997,7 +3021,7 @@ void test_options_render() {
             menu.handle(wp::options::Action::Accept);
         }
         for (int height : {480, 720, 1080}) {
-            for (wp::ui::Language language : {wp::ui::Language::French, wp::ui::Language::English, wp::ui::Language::Spanish, wp::ui::Language::Galician}) {
+            for (wp::ui::Language language : {wp::ui::Language::French, wp::ui::Language::English, wp::ui::Language::Spanish, wp::ui::Language::Galician, wp::ui::Language::German, wp::ui::Language::Italian, wp::ui::Language::Dutch}) {
                 wp::ui::set_language(language);
                 wp::options::Image image = wp::options::render(menu, height);
                 wp::options::Layout frame = wp::options::layout(height, menu.rows().size(), menu.scroll());

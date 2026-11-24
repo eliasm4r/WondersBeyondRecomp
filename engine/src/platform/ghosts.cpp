@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "wp/canvas.h"
+#include "wp/disc.h"
 #include "wp/online.h"
 #include "wp/ui_text.h"
 
@@ -79,17 +80,26 @@ std::chrono::steady_clock::time_point g_list_built{};
 online::Problem g_problem_shown = online::Problem::None;
 bool g_reconnecting_shown = false;
 
+const char* game_label(const char* key) {
+    std::string language = disc::game_language();
+    return language.empty() ? ui::label(key) : ui::label(key, ui::language_of(language));
+}
+
 std::string zone_text(uint32_t zone) {
     if (zone == 0) {
-        return ui::label("online.list.away");
+        return game_label("online.list.away");
+    }
+    std::string name = disc::field_name(zone);
+    if (!name.empty()) {
+        return name;
     }
     char digits[16];
     std::snprintf(digits, sizeof digits, "%04u", zone);
-    return std::string(ui::label("online.list.zone")) + " " + digits;
+    return std::string(game_label("online.list.zone")) + " " + digits;
 }
 
 const char* hero_text(uint32_t character) {
-    return character < std::size(kHeroLabels) ? ui::label(kHeroLabels[character]) : "?";
+    return character < std::size(kHeroLabels) ? game_label(kHeroLabels[character]) : "?";
 }
 
 void add_toast(std::string text, uint32_t color) {
@@ -112,17 +122,17 @@ void read_notices() {
     for (const online::Notice& notice : online::take_notices()) {
         switch (notice.kind) {
         case online::Notice::Kind::Joined:
-            add_toast(notice.name + " " + ui::label("online.notice.joined"), color_of(notice.name));
+            add_toast(notice.name + " " + game_label("online.notice.joined"), color_of(notice.name));
             break;
         case online::Notice::Kind::Left:
-            add_toast(notice.name + " " + ui::label("online.notice.left"), kWhite);
+            add_toast(notice.name + " " + game_label("online.notice.left"), kWhite);
             break;
         case online::Notice::Kind::Zone:
             add_toast(notice.name + " : " + zone_text(notice.zone), color_of(notice.name));
             break;
         case online::Notice::Kind::Version:
             if (!notice.name.empty()) {
-                add_toast(std::string(ui::label("online.notice.version")) + " " + notice.name, kWhite);
+                add_toast(std::string(game_label("online.notice.version")) + " " + notice.name, kWhite);
             }
             break;
         }
@@ -131,18 +141,18 @@ void read_notices() {
     if (problem != g_problem_shown) {
         g_problem_shown = problem;
         if (problem == online::Problem::HostLeft) {
-            add_toast(ui::label("online.state.host_left"), kWhite);
+            add_toast(game_label("online.state.host_left"), kWhite);
         } else if (problem == online::Problem::Lost) {
-            add_toast(ui::label("online.state.lost"), kWhite);
+            add_toast(game_label("online.state.lost"), kWhite);
         } else if (problem == online::Problem::Version) {
-            add_toast(std::string(ui::label("online.state.version")) + " (" + online::other_version() + ")", kWhite);
+            add_toast(std::string(game_label("online.state.version")) + " (" + online::other_version() + ")", kWhite);
         }
     }
     bool reconnecting = online::reconnecting();
     if (reconnecting != g_reconnecting_shown) {
         g_reconnecting_shown = reconnecting;
         if (reconnecting) {
-            add_toast(ui::label("online.state.reconnecting"), kWhite);
+            add_toast(game_label("online.state.reconnecting"), kWhite);
         }
     }
 }
@@ -156,7 +166,7 @@ std::vector<Line> build_list() {
     uint32_t character = 0;
     uint32_t zone = 0;
     online::own_state(name, character, zone);
-    lines.push_back({name + " (" + ui::label("online.you") + ") - " + hero_text(character) + " - " + zone_text(zone), online::player_color(online::own_id())});
+    lines.push_back({name + " (" + game_label("online.you") + ") - " + hero_text(character) + " - " + zone_text(zone), online::player_color(online::own_id())});
     for (const presence::Peer& peer : online::peers()) {
         std::string ping = peer.ping_ms >= 0 ? std::to_string(peer.ping_ms) + " ms" : "...";
         lines.push_back({peer.name + " - " + hero_text(peer.pose.character) + " - " + zone_text(peer.zone) + " - " + ping, online::player_color(peer.id)});

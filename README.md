@@ -49,7 +49,7 @@ No emulator, up to 240 fps, high resolutions, wide screens, keyboard, mouse and 
 - **Options menu on F1**, drawn as the game's own dialog bubble, and a **performance overlay on F2**.
 - **Save sync between your devices** with a simple code: no account, and saves are encrypted before they leave your device.
 - **Automatic save backups**, a play time counter, **Discord Rich Presence** and an **update check** against the latest release.
-- Menu in **English, French, Spanish and Galician**.
+- Menu in **English, French, German, Spanish, Italian, Dutch and Galician**.
 
 <br>
 

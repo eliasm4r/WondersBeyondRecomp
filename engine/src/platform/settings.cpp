@@ -122,7 +122,7 @@ const std::vector<Option>& options() {
         }
         std::string system = system_language();
         for (Option& option : result) {
-            if (option.key == "system.interface_language" && (system == "fr" || system == "es" || system == "gl")) {
+            if (option.key == "system.interface_language" && (system == "fr" || system == "es" || system == "gl" || system == "de" || system == "it" || system == "nl")) {
                 option.fallback = system;
             }
         }

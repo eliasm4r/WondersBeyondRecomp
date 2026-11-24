@@ -5,7 +5,7 @@
 
 namespace wp::ui {
 
-enum class Language { English, Spanish, Galician, French };
+enum class Language { English, Spanish, Galician, French, German, Italian, Dutch };
 
 struct Label {
     const char* key;
