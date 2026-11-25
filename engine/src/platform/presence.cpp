@@ -448,6 +448,8 @@ void Link::add_target(const std::string& endpoint, double seconds) {
             return;
         }
     }
+    double now = m_impl->now;
+    m_impl->targets.erase(std::remove_if(m_impl->targets.begin(), m_impl->targets.end(), [now](const Target& target) { return target.until < now; }), m_impl->targets.end());
     if (m_impl->targets.size() < 16) {
         m_impl->targets.push_back({address, until});
     }
@@ -695,7 +697,12 @@ void Link::accept(const uint8_t* data, size_t size, const void* source, bool rel
         }
         return;
     }
+    bool expected = m_impl->hosting || (m_impl->has_server ? same_address(m_impl->server, from)
+                                                           : relayed || std::any_of(m_impl->targets.begin(), m_impl->targets.end(), [&](const Target& target) { return same_host(target.address, from); }));
     if (size >= kNameAt && get32(data) == kMagic && std::memcmp(data + kVersionAt, m_impl->version, kVersionBytes) != 0) {
+        if (!expected) {
+            return;
+        }
         m_impl->other_version = clean_name(reinterpret_cast<const char*>(data + kVersionAt), kVersionBytes, kVersionBytes);
         return;
     }
@@ -716,7 +723,6 @@ void Link::accept(const uint8_t* data, size_t size, const void* source, bool rel
         }
         client->seen = now;
     } else if (!m_impl->has_server) {
-        bool expected = relayed || std::any_of(m_impl->targets.begin(), m_impl->targets.end(), [&](const Target& target) { return same_host(target.address, from); });
         if (!expected) {
             return;
         }

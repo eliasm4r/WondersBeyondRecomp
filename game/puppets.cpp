@@ -532,13 +532,15 @@ void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) 
         log::write("online", "%s shown at %.1f %.1f %.1f, packet %u", peer.name.c_str(), shown.position[0], shown.position[1], shown.position[2], peer.sequence);
     }
     uint32_t model_object = rd32(method(c, accessor, kModelSlot) + kModelObject);
-    float world = rdf32(model_object + kWorldHeight);
-    float local = rdf32(model_object + kLocalHeight);
-    if (world != 0.0f && world != local && std::isfinite(world)) {
-        puppet.ground = world - local;
-    }
-    if (std::isfinite(puppet.ground)) {
-        wrf32(model_object + kLocalHeight, std::max(0.0f, shown.position[1] - puppet.ground));
+    if (model_object != 0) {
+        float world = rdf32(model_object + kWorldHeight);
+        float local = rdf32(model_object + kLocalHeight);
+        if (world != 0.0f && world != local && std::isfinite(world)) {
+            puppet.ground = world - local;
+        }
+        if (std::isfinite(puppet.ground)) {
+            wrf32(model_object + kLocalHeight, std::max(0.0f, shown.position[1] - puppet.ground));
+        }
     }
     replay(c, puppet, peer, accessor, frame);
     if (puppet.beam != kNoBeam && ++puppet.beam_age > kBeamPatience) {
@@ -639,7 +641,13 @@ void step(Cpu& c, bool active, uint32_t frame) {
     }
     uint32_t zone = disc::current_field();
     if (zone != g_zone) {
+        for (Puppet& puppet : g_puppets) {
+            remove(c, puppet);
+        }
         g_puppets.clear();
+        for (const Requested& request : g_requested) {
+            g_releasing.push_back(request.handle);
+        }
         g_requested.clear();
         g_zone = zone;
     }
@@ -693,7 +701,7 @@ void step(Cpu& c, bool active, uint32_t frame) {
         puppet.species = kHeroSpecies[peer.pose.character];
         if (!model_files_present(c, puppet.species, frame, zone)) {
             g_cooldown = kMissingCooldown;
-            break;
+            continue;
         }
         puppet.object = guest(c, kCreate, rd32(c.r[13] - kManagerOffset), 1, puppet.species);
         if (puppet.object) {
@@ -701,6 +709,8 @@ void step(Cpu& c, bool active, uint32_t frame) {
             guest(c, kLoadModel, puppet.object, puppet.species, 0);
             guest(c, kSetKind, puppet.object, kCharacterKind);
             g_puppets.push_back(puppet);
+        } else {
+            g_cooldown = kMissingCooldown;
         }
         break;
     }
@@ -788,6 +798,8 @@ void puppets_scene_change(Cpu& c) {
 void puppets_frame(Cpu& c, bool park, bool active) {
     if (!park) {
         g_puppets.clear();
+        g_new_shots.clear();
+        g_starting_shots.clear();
         g_zone = 0;
         return;
     }

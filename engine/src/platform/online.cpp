@@ -272,7 +272,7 @@ void keep_relay(std::shared_ptr<Session> session, std::string code) {
             pause = std::min(pause * 2, 8);
             continue;
         }
-        pause = 1;
+        auto opened = std::chrono::steady_clock::now();
         {
             std::lock_guard<std::mutex> lock(session->mutex);
             relay::Socket* raw = socket.get();
@@ -297,6 +297,14 @@ void keep_relay(std::shared_ptr<Session> session, std::string code) {
         }
         old.reset();
         log::write("online", "relay lost, reconnecting");
+        if (std::chrono::steady_clock::now() - opened > std::chrono::seconds(30)) {
+            pause = 1;
+        } else {
+            if (!wait(session, std::chrono::seconds(pause))) {
+                return;
+            }
+            pause = std::min(pause * 2, 8);
+        }
     }
 }
 
