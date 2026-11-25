@@ -602,6 +602,9 @@ void compose_affine(const float (&a)[3][4], const float (&b)[3][4], float (&out)
 }
 
 constexpr float kSmallestTurn = 0.1f;
+constexpr float kTurnMiss = 0.01f;
+
+const float (&turn_at(float t))[3][4];
 
 void prepare_turn() {
     g_turn.ready = false;
@@ -619,13 +622,12 @@ void prepare_turn() {
     if (!invert_affine(m, g_turn.inverse)) {
         return;
     }
-    float w = std::sqrt(std::max(0.0f, 1.0f + m[0][0] + m[1][1] + m[2][2])) / 2;
-    float x = std::copysign(std::sqrt(std::max(0.0f, 1.0f + m[0][0] - m[1][1] - m[2][2])) / 2, m[2][1] - m[1][2]);
-    float y = std::copysign(std::sqrt(std::max(0.0f, 1.0f - m[0][0] + m[1][1] - m[2][2])) / 2, m[0][2] - m[2][0]);
-    float z = std::copysign(std::sqrt(std::max(0.0f, 1.0f - m[0][0] - m[1][1] + m[2][2])) / 2, m[1][0] - m[0][1]);
+    float x = m[2][1] - m[1][2];
+    float y = m[0][2] - m[2][0];
+    float z = m[1][0] - m[0][1];
     float sine = std::sqrt(x * x + y * y + z * z);
     float shift[3] = {m[0][3], m[1][3], m[2][3]};
-    g_turn.angle = 2.0f * std::atan2(sine, w);
+    g_turn.angle = std::atan2(sine, m[0][0] + m[1][1] + m[2][2] - 1.0f);
     if (!std::isfinite(g_turn.angle) || g_turn.angle > 3.0f) {
         return;
     }
@@ -643,6 +645,20 @@ void prepare_turn() {
     }
     g_turn.slide = slide;
     g_turn.ready = std::isfinite(g_turn.pivot[0]) && std::isfinite(g_turn.pivot[1]) && std::isfinite(g_turn.pivot[2]);
+    if (!g_turn.ready) {
+        return;
+    }
+    const float (&whole)[3][4] = turn_at(1.0f);
+    float reach = std::max(1.0f, std::sqrt(shift[0] * shift[0] + shift[1] * shift[1] + shift[2] * shift[2]));
+    for (int r = 0; r < 3; r++) {
+        for (int c = 0; c < 4; c++) {
+            float off = std::fabs(whole[r][c] - (r == c ? 1.0f : 0.0f));
+            if (!(off <= (c == 3 ? kTurnMiss * reach : kTurnMiss))) {
+                g_turn.ready = false;
+            }
+        }
+    }
+    g_turn.at = -1.0f;
 }
 
 const float (&turn_at(float t))[3][4] {
