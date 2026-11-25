@@ -429,6 +429,9 @@ void field_camera(Cpu& c, HleFunction original) {
     auto now = std::chrono::steady_clock::now();
     note_field_camera(camera);
     bool fresh = camera != owner || now - last > kCameraIdle;
+    if (fresh && owner != 0) {
+        puppets_camera_back();
+    }
     if (wrote && !fresh && same_vector(camera + kCameraEye, our_eye) && same_vector(camera + kCameraTarget, our_target)) {
         write_vector(camera + kCameraEye, game_eye);
         write_vector(camera + kCameraShownEye, game_eye);

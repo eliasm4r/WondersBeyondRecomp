@@ -184,6 +184,8 @@ uint32_t g_zone = 0;
 int g_cooldown = 0;
 int g_idle = 0;
 constexpr int kIdleForget = 30;
+int g_camera_back = -1;
+constexpr int kCameraSettle = 10;
 bool g_starting_motion = false;
 
 uint32_t guest(Cpu& c, uint32_t function, uint32_t a, uint32_t b = 0, uint32_t d = 0, uint32_t e = 0) {
@@ -703,6 +705,17 @@ void step(Cpu& c, bool active, uint32_t frame) {
         g_puppets.clear();
         g_cooldown = kRemoveCooldown;
     }
+    if (g_camera_back >= 0 && ++g_camera_back > kCameraSettle) {
+        g_camera_back = -1;
+        if (!g_puppets.empty()) {
+            log::write("online", "field camera back after a scene, showing the other players again");
+            for (Puppet& puppet : g_puppets) {
+                remove(c, puppet);
+            }
+            g_puppets.clear();
+            g_cooldown = kRemoveCooldown;
+        }
+    }
     g_idle = 0;
     std::vector<presence::Peer> peers = online::running() ? online::peers() : std::vector<presence::Peer>{};
     peers.erase(std::remove_if(peers.begin(), peers.end(), [&](const presence::Peer& peer) { return peer.zone == 0 || peer.zone != zone || peer.pose.character >= kHeroSpecies.size(); }), peers.end());
@@ -833,6 +846,12 @@ void puppets_scene_change(Cpu& c) {
     std::memcpy(c.cr, saved.cr, sizeof c.cr);
     c.lr = saved.lr;
     c.ctr = saved.ctr;
+}
+
+void puppets_camera_back() {
+    if (!g_puppets.empty()) {
+        g_camera_back = 0;
+    }
 }
 
 void puppets_frame(Cpu& c, bool park, bool active) {
