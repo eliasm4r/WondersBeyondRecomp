@@ -40,6 +40,8 @@ constexpr uint32_t kRotationSlot = 0x60;
 constexpr uint32_t kShowSlot = 0x70;
 constexpr uint32_t kHideReasons = 0x81;
 constexpr uint32_t kCameraTest = 0x82;
+constexpr uint32_t kCameraHidden = 0x83;
+constexpr uint32_t kRefreshSlot = 0xd0;
 constexpr uint32_t kShowForReason = 0xcc;
 constexpr uint32_t kReasonCount = 8;
 constexpr uint32_t kObjectHandle = 0x4;
@@ -173,6 +175,8 @@ struct Puppet {
     std::array<float, 3> position{};
     uint32_t accessor = 0;
     float ground = NAN;
+    std::array<uint8_t, 0x100> watched{};
+    bool watching = false;
 };
 
 std::vector<Puppet> g_puppets;
@@ -485,10 +489,34 @@ void replay(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t accesso
     puppet.heard = true;
 }
 
+void note_changes(Puppet& puppet, uint32_t model) {
+    static std::array<uint8_t, 0x100> notes{};
+    static int lines = 0;
+    std::array<uint8_t, 0x100> now{};
+    for (uint32_t i = 0; i < 0x40; i++) {
+        now[i] = rd8(puppet.object + i);
+    }
+    for (uint32_t i = 0x40; i < 0x100; i++) {
+        now[i] = rd8(model + 0x40 + i);
+    }
+    if (puppet.watching) {
+        for (uint32_t i = 0; i < 0x100 && lines < 400; i++) {
+            if (now[i] != puppet.watched[i] && notes[i] < 6) {
+                notes[i]++;
+                lines++;
+                log::write("online", "player %s %+#x: %02x -> %02x", i < 0x40 ? "object" : "model", i < 0x40 ? i : 0x40 + i, puppet.watched[i], now[i]);
+            }
+        }
+    }
+    puppet.watched = now;
+    puppet.watching = true;
+}
+
 void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) {
     uint32_t accessor = guest(c, kAccessor, puppet.object);
     puppet.accessor = accessor;
     uint32_t shown_model = method(c, accessor, kModelSlot);
+    note_changes(puppet, shown_model);
     method(c, shown_model, kShowSlot, 1);
     for (uint32_t reason = 0; reason < kReasonCount; reason++) {
         if (rd8(shown_model + kHideReasons) >> reason & 1) {
@@ -496,6 +524,11 @@ void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) 
         }
     }
     wr8(shown_model + kCameraTest, 0);
+    if (rd8(shown_model + kHideReasons) != 0 || rd8(shown_model + kCameraHidden) != 0) {
+        wr8(shown_model + kHideReasons, 0);
+        wr8(shown_model + kCameraHidden, 0);
+        method(c, shown_model, kRefreshSlot);
+    }
     uint32_t posture = method(c, accessor, kPostureSlot);
     uint32_t position = method(c, posture, kPositionSlot);
     uint32_t rotation = method(c, posture, kRotationSlot);
@@ -651,6 +684,13 @@ void step(Cpu& c, bool active, uint32_t frame) {
         g_requested.clear();
         g_zone = zone;
     }
+    static bool was_active = true;
+    static int active_notes = 0;
+    if (active != was_active && !g_puppets.empty() && active_notes < 100) {
+        active_notes++;
+        log::write("online", active ? "player moves again after %d frames" : "player stopped moving", g_idle);
+    }
+    was_active = active;
     if (!active) {
         g_idle++;
         return;
