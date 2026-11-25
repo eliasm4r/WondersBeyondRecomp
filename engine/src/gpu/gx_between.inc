@@ -769,6 +769,7 @@ std::vector<uint8_t> g_run_turns;
 
 constexpr float kSameObject = 0.15f;
 constexpr float kOrderSlack = 0.05f;
+constexpr float kTwinsApart = 0.1f;
 
 bool same_object(const RecordedRun& first, const RecordedRun& run) {
     if (first.draw.camera != run.draw.camera) {
@@ -1000,7 +1001,15 @@ void pair_runs() {
         } while (std::next_permutation(order.begin(), order.begin() + count));
         const Row* first_rows = &g_record.rows[runs[now_copies[0]].draw.matrix];
         float away = std::sqrt(first_rows[0][3] * first_rows[0][3] + first_rows[1][3] * first_rows[1][3] + first_rows[2][3] * first_rows[2][3]);
-        if (drawn_total - best_total <= kOrderSlack * away * static_cast<float>(count)) {
+        float apart = 1e30f;
+        for (uint32_t a = 0; a < count; a++) {
+            for (uint32_t b = a + 1; b < count; b++) {
+                const Row* x = &g_record.rows[runs[now_copies[a]].draw.matrix];
+                const Row* y = &g_record.rows[runs[now_copies[b]].draw.matrix];
+                apart = std::min(apart, std::fabs(x[0][3] - y[0][3]) + std::fabs(x[1][3] - y[1][3]) + std::fabs(x[2][3] - y[2][3]));
+            }
+        }
+        if (apart <= kTwinsApart * away && drawn_total - best_total <= kOrderSlack * away * static_cast<float>(count)) {
             for (uint32_t k = 0; k < count; k++) {
                 best_order[k] = k;
             }
