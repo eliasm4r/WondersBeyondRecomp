@@ -768,6 +768,7 @@ bool turn_applies(const RecordedRun& before, const RecordedRun& run) {
 std::vector<uint8_t> g_run_turns;
 
 constexpr float kSameObject = 0.15f;
+constexpr float kOrderSlack = 0.05f;
 
 bool same_object(const RecordedRun& first, const RecordedRun& run) {
     if (first.draw.camera != run.draw.camera) {
@@ -983,16 +984,27 @@ void pair_runs() {
             order[k] = k;
         }
         float best_total = -1.0f;
+        float drawn_total = 0.0f;
         do {
             float total = 0.0f;
             for (uint32_t k = 0; k < count; k++) {
                 total += run_distance(before[then_copies[order[k]]], runs[now_copies[k]]);
+            }
+            if (best_total < 0.0f) {
+                drawn_total = total;
             }
             if (best_total < 0.0f || total < best_total) {
                 best_total = total;
                 best_order = order;
             }
         } while (std::next_permutation(order.begin(), order.begin() + count));
+        const Row* first_rows = &g_record.rows[runs[now_copies[0]].draw.matrix];
+        float away = std::sqrt(first_rows[0][3] * first_rows[0][3] + first_rows[1][3] * first_rows[1][3] + first_rows[2][3] * first_rows[2][3]);
+        if (drawn_total - best_total <= kOrderSlack * away * static_cast<float>(count)) {
+            for (uint32_t k = 0; k < count; k++) {
+                best_order[k] = k;
+            }
+        }
         for (uint32_t k = 0; k < count; k++) {
             RecordedRun& run = runs[now_copies[k]];
             uint32_t then = then_copies[best_order[k]];
