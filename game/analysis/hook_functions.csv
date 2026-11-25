@@ -62,3 +62,4 @@ address,name
 0x801fc9e0,TargetNext
 0x801fcf70,TargetNearest
 0x801fd570,TargetAround
+0x800bb3f0,SlotSearch

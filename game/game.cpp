@@ -1043,7 +1043,7 @@ HookFunction hook(const char* name) {
                    {"FindResourceByNumber", find_resource_by_number},
                    {"EffectPlaced", effect_placed}, {"ShotStart", shot_start}, {"ShotEffectAt", shot_effect_at}, {"AddSceneParameter", add_scene_parameter}, {"PickScene", pick_scene}, {"SceneManagerRunBegin", scene_manager_run_begin},
                    {"DanceFrame", dance_frame}, {"DanceFrameSecondPart", dance_frame_second_part},
-                   {"TargetFirst", puppets_skip_in_search}, {"TargetNext", puppets_skip_in_search}, {"TargetNearest", puppets_skip_in_search}, {"TargetAround", puppets_skip_in_search},
+                   {"TargetFirst", puppets_skip_in_search}, {"TargetNext", puppets_skip_in_search}, {"TargetNearest", puppets_skip_in_search}, {"TargetAround", puppets_skip_in_search}, {"SlotSearch", puppets_skip_in_search},
                    {"DanceJudge", dance_judge}, {"CullingFrustum", culling_frustum}, {"CameraView", camera_view},
                    {"DialogueWriterStep", dialogue_writer_step}, {"MovieSceneUpdate", movie_scene_update},
                    {"FontResource", font_resource}, {"TextureBind", texture_bind}, {"MessageUpdate", message_update}, {"LayoutDraw", layout_draw},
