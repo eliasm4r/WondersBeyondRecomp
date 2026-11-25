@@ -429,9 +429,6 @@ void field_camera(Cpu& c, HleFunction original) {
     auto now = std::chrono::steady_clock::now();
     note_field_camera(camera);
     bool fresh = camera != owner || now - last > kCameraIdle;
-    if (fresh && owner != 0) {
-        puppets_camera_back();
-    }
     if (wrote && !fresh && same_vector(camera + kCameraEye, our_eye) && same_vector(camera + kCameraTarget, our_target)) {
         write_vector(camera + kCameraEye, game_eye);
         write_vector(camera + kCameraShownEye, game_eye);
@@ -1046,7 +1043,7 @@ HookFunction hook(const char* name) {
                    {"FindResourceByNumber", find_resource_by_number},
                    {"EffectPlaced", effect_placed}, {"ShotStart", shot_start}, {"ShotEffectAt", shot_effect_at}, {"AddSceneParameter", add_scene_parameter}, {"PickScene", pick_scene}, {"SceneManagerRunBegin", scene_manager_run_begin},
                    {"DanceFrame", dance_frame}, {"DanceFrameSecondPart", dance_frame_second_part},
-                   {"TargetFirst", puppets_skip_in_search}, {"TargetNext", puppets_skip_in_search}, {"TargetNearest", puppets_skip_in_search}, {"TargetAround", puppets_skip_in_search}, {"SlotSearch", puppets_skip_in_search},
+                   {"TargetFirst", puppets_skip_in_search}, {"TargetNext", puppets_skip_in_search}, {"TargetNearest", puppets_skip_in_search}, {"TargetAround", puppets_skip_in_search}, {"SlotSearch", puppets_skip_in_search}, {"VisibilityStep", puppets_visibility_step},
                    {"DanceJudge", dance_judge}, {"CullingFrustum", culling_frustum}, {"CameraView", camera_view},
                    {"DialogueWriterStep", dialogue_writer_step}, {"MovieSceneUpdate", movie_scene_update},
                    {"FontResource", font_resource}, {"TextureBind", texture_bind}, {"MessageUpdate", message_update}, {"LayoutDraw", layout_draw},

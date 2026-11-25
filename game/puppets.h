@@ -12,6 +12,6 @@ void puppets_free_beam(Cpu& c);
 void puppets_skip_in_search(Cpu& c, HleFunction original);
 uint32_t puppets_model_object(Cpu& c, uint32_t accessor);
 void puppets_scene_change(Cpu& c);
-void puppets_camera_back();
+void puppets_visibility_step(Cpu& c, HleFunction original);
 
 }

@@ -175,6 +175,8 @@ struct Puppet {
     std::array<float, 3> position{};
     uint32_t accessor = 0;
     float ground = NAN;
+    int unstepped = 0;
+    bool stepped = false;
     std::array<uint8_t, 0x100> watched{};
     bool watching = false;
 };
@@ -184,8 +186,8 @@ uint32_t g_zone = 0;
 int g_cooldown = 0;
 int g_idle = 0;
 constexpr int kIdleForget = 30;
-int g_camera_back = -1;
-constexpr int kCameraSettle = 10;
+constexpr int kPausedFrames = 10;
+constexpr int kNeverStepped = 180;
 bool g_starting_motion = false;
 
 uint32_t guest(Cpu& c, uint32_t function, uint32_t a, uint32_t b = 0, uint32_t d = 0, uint32_t e = 0) {
@@ -705,17 +707,6 @@ void step(Cpu& c, bool active, uint32_t frame) {
         g_puppets.clear();
         g_cooldown = kRemoveCooldown;
     }
-    if (g_camera_back >= 0 && ++g_camera_back > kCameraSettle) {
-        g_camera_back = -1;
-        if (!g_puppets.empty()) {
-            log::write("online", "field camera back after a scene, showing the other players again");
-            for (Puppet& puppet : g_puppets) {
-                remove(c, puppet);
-            }
-            g_puppets.clear();
-            g_cooldown = kRemoveCooldown;
-        }
-    }
     g_idle = 0;
     std::vector<presence::Peer> peers = online::running() ? online::peers() : std::vector<presence::Peer>{};
     peers.erase(std::remove_if(peers.begin(), peers.end(), [&](const presence::Peer& peer) { return peer.zone == 0 || peer.zone != zone || peer.pose.character >= kHeroSpecies.size(); }), peers.end());
@@ -724,8 +715,10 @@ void step(Cpu& c, bool active, uint32_t frame) {
         bool stale = !alive(*puppet);
         puppet->changed = peer != peers.end() && kHeroSpecies[peer->pose.character] != puppet->species ? puppet->changed + 1 : 0;
         bool wrong = peer == peers.end() || puppet->changed > kCharacterPatience || (!puppet->ready && ++puppet->age > kLoadPatience);
+        bool paused = puppet->ready && ++puppet->unstepped > (puppet->stepped ? kPausedFrames : kNeverStepped);
+        wrong = wrong || paused;
         if (stale || wrong) {
-            const char* reason = stale ? "its object was replaced" : peer == peers.end() ? "it left this zone" : puppet->changed > kCharacterPatience ? "it changed hero" : "its model did not load";
+            const char* reason = stale ? "its object was replaced" : peer == peers.end() ? "it left this zone" : puppet->changed > kCharacterPatience ? "it changed hero" : paused ? "the game stopped updating it" : "its model did not load";
             log::write("online", "removing a player: %s", reason);
             if (!stale) {
                 remove(c, *puppet);
@@ -848,10 +841,14 @@ void puppets_scene_change(Cpu& c) {
     c.ctr = saved.ctr;
 }
 
-void puppets_camera_back() {
-    if (!g_puppets.empty()) {
-        g_camera_back = 0;
+void puppets_visibility_step(Cpu& c, HleFunction original) {
+    for (Puppet& puppet : g_puppets) {
+        if (puppet.object == c.r[3]) {
+            puppet.unstepped = 0;
+            puppet.stepped = true;
+        }
     }
+    original(c);
 }
 
 void puppets_frame(Cpu& c, bool park, bool active) {
