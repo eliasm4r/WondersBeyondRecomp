@@ -747,7 +747,7 @@ void move_palette(const float (&m)[3][4], Row* palette) {
     }
 }
 
-bool turn_applies(const RecordedRun& before, const RecordedRun& run) {
+bool turn_scores(const RecordedRun& before, const RecordedRun& run, float& still, float& turned) {
     if (!g_turn.ready || before.draw.camera != g_run_camera.mover || run.draw.camera != g_run_camera.mover || !run_perspective(g_previous, before) ||
         !run_perspective(g_record, run)) {
         return false;
@@ -759,8 +759,6 @@ bool turn_applies(const RecordedRun& before, const RecordedRun& run) {
     const Row* a = &g_previous.rows[before.draw.matrix];
     const Row* b = &g_record.rows[run.draw.matrix];
     const float (&m)[3][4] = g_run_camera.move;
-    float still = 0.0f;
-    float turned = 0.0f;
     for (int r = 0; r < 3; r++) {
         for (int c = 0; c < 4; c++) {
             float moved = m[r][0] * a[0][c] + m[r][1] * a[1][c] + m[r][2] * a[2][c] + (c == 3 ? m[r][3] : 0.0f);
@@ -768,7 +766,85 @@ bool turn_applies(const RecordedRun& before, const RecordedRun& run) {
             turned += std::fabs(b[r][c] - moved);
         }
     }
-    return turned < still;
+    return true;
+}
+
+bool turn_applies(const RecordedRun& before, const RecordedRun& run) {
+    float still = 0.0f;
+    float turned = 0.0f;
+    return turn_scores(before, run, still, turned) && turned < still;
+}
+
+std::vector<uint8_t> g_run_turns;
+
+constexpr float kSameObject = 0.15f;
+
+bool same_object(const RecordedRun& first, const RecordedRun& run) {
+    if (first.draw.camera != run.draw.camera) {
+        return false;
+    }
+    const Row* a = &g_record.rows[first.draw.matrix];
+    const Row* b = &g_record.rows[run.draw.matrix];
+    float dx = a[0][3] - b[0][3];
+    float dy = a[1][3] - b[1][3];
+    float dz = a[2][3] - b[2][3];
+    float reach = kSameObject * std::max(std::fabs(a[2][3]), std::fabs(b[2][3]));
+    return dx * dx + dy * dy + dz * dz <= reach * reach;
+}
+
+void decide_turns() {
+    const std::vector<RecordedRun>& runs = g_record.runs;
+    g_run_turns.assign(runs.size(), 0);
+    if (!g_turn.ready) {
+        return;
+    }
+    uint32_t explained = 0;
+    uint32_t unexplained = 0;
+    size_t start = 0;
+    while (start < runs.size()) {
+        size_t end = start + 1;
+        while (end < runs.size() && same_object(runs[start], runs[end])) {
+            end++;
+        }
+        float still = 0.0f;
+        float turned = 0.0f;
+        bool scored = false;
+        for (size_t i = start; i < end; i++) {
+            if (runs[i].match != kUnmatched && turn_scores(g_previous.runs[runs[i].match], runs[i], still, turned)) {
+                scored = true;
+            }
+        }
+        if (scored && turned < still) {
+            explained++;
+            for (size_t i = start; i < end; i++) {
+                g_run_turns[i] = 1;
+            }
+        } else if (scored) {
+            unexplained++;
+        }
+        start = end;
+    }
+    if (explained < 2 || explained <= unexplained) {
+        std::fill(g_run_turns.begin(), g_run_turns.end(), 0);
+    }
+}
+
+constexpr float kStillShare = 1e-4f;
+
+bool turns_with_camera(size_t index, const RecordedRun& before, const RecordedRun& run) {
+    float still = 0.0f;
+    float turned = 0.0f;
+    if (index >= g_run_turns.size() || !g_run_turns[index] || !turn_scores(before, run, still, turned)) {
+        return false;
+    }
+    const Row* a = &g_previous.rows[before.draw.matrix];
+    float size = 0.0f;
+    for (int r = 0; r < 3; r++) {
+        for (int c = 0; c < 4; c++) {
+            size += std::fabs(a[r][c]);
+        }
+    }
+    return still > kStillShare * size;
 }
 
 bool run_rejected(const RecordedRun& before, const RecordedRun& run) {
@@ -824,6 +900,7 @@ void pair_runs() {
     g_run_camera.valid = false;
     g_run_camera.known = false;
     g_turn.ready = false;
+    g_run_turns.clear();
     for (RecordedRun& run : runs) {
         run.match = kUnmatched;
     }
@@ -1047,6 +1124,7 @@ void pair_runs() {
             note += part;
         }
     }
+    decide_turns();
     g_run_counts[0] += static_cast<uint32_t>(runs.size());
     g_run_counts[1] += paired;
     g_run_counts[2] += rejected;
@@ -1089,7 +1167,7 @@ bool replay_runs(const RecordedCommand& command, float t) {
         if (before && !same_shape(before->draw, run.draw, then, now)) {
             before = nullptr;
         }
-        bool turning = before && turn_applies(*before, run);
+        bool turning = before && turns_with_camera(i, *before, run);
         if (g_replay_rows.size() + run.draw.rows + kPaletteRows + kNormalRows > kRunRowBatch) {
             if (!send_replayed()) {
                 return false;
