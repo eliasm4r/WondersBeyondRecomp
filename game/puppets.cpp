@@ -90,7 +90,7 @@ constexpr double kClockRelax = 0.0002;
 constexpr size_t kKeptSnapshots = 32;
 constexpr float kTeleport = 30.0f;
 constexpr float kRunning = 0.06f;
-constexpr float kGroundLift = 1.0f;
+constexpr float kGroundLift = 0.5f;
 constexpr uint32_t kNameSpace = 0x200;
 constexpr uint32_t kHitSlot = 0x68;
 constexpr uint32_t kJostleSlot = 0x5c;
@@ -539,7 +539,7 @@ void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) 
             puppet.ground = world - local;
         }
         if (std::isfinite(puppet.ground)) {
-            wrf32(model_object + kLocalHeight, std::max(0.0f, shown.position[1] - puppet.ground));
+            wrf32(model_object + kLocalHeight, shown.position[1] - puppet.ground);
         }
     }
     replay(c, puppet, peer, accessor, frame);
