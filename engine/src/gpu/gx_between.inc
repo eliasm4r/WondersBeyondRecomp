@@ -752,6 +752,10 @@ bool turn_applies(const RecordedRun& before, const RecordedRun& run) {
         !run_perspective(g_record, run)) {
         return false;
     }
+    if ((run.draw.palette != kNoPalette && run.draw.matrix - run.draw.palette > kLastPositionMatrix) ||
+        (before.draw.palette != kNoPalette && before.draw.matrix - before.draw.palette > kLastPositionMatrix)) {
+        return false;
+    }
     const Row* a = &g_previous.rows[before.draw.matrix];
     const Row* b = &g_record.rows[run.draw.matrix];
     const float (&m)[3][4] = g_run_camera.move;
