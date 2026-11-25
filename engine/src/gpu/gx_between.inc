@@ -7,16 +7,6 @@ bool close_enough(const std::array<float, 4>& a, const std::array<float, 4>& b) 
     return std::fabs(b[0] / b[3] - a[0] / a[3]) <= kMaxStep && std::fabs(b[1] / b[3] - a[1] / a[3]) <= kMaxStep;
 }
 
-bool close_draw(const RecordedDraw& before, const RecordedDraw& draw) {
-    uint32_t step = std::max(1u, draw.positions / 8);
-    for (uint32_t i = 0; i < draw.positions; i += step) {
-        if (!close_enough(g_previous.positions[before.first_position + i], g_record.positions[draw.first_position + i])) {
-            return false;
-        }
-    }
-    return true;
-}
-
 constexpr uint32_t kUnmatched = ~0u;
 constexpr uint32_t kRejected = ~0u - 1;
 constexpr uint32_t kByCamera = 0xFFFFFF00u;
@@ -120,10 +110,35 @@ struct RunCamera {
     float move[3][4] = {};
     bool known = false;
     uint32_t id = 0;
+    uint32_t mover = 0;
     float back[4][4] = {};
 };
 
 RunCamera g_run_camera;
+
+bool close_draw(const RecordedDraw& before, const RecordedDraw& draw) {
+    uint32_t step = std::max(1u, draw.positions / 8);
+    bool raw = true;
+    for (uint32_t i = 0; i < draw.positions && raw; i += step) {
+        raw = close_enough(g_previous.positions[before.first_position + i], g_record.positions[draw.first_position + i]);
+    }
+    if (raw || !g_run_camera.known || draw.camera != g_run_camera.id || before.camera != g_run_camera.id) {
+        return raw;
+    }
+    for (uint32_t i = 0; i < draw.positions; i += step) {
+        const std::array<float, 4>& b = g_record.positions[draw.first_position + i];
+        std::array<float, 4> back = b;
+        if (!std::isnan(b[0])) {
+            for (int r = 0; r < 4; r++) {
+                back[r] = g_run_camera.back[r][0] * b[0] + g_run_camera.back[r][1] * b[1] + g_run_camera.back[r][2] * b[2] + g_run_camera.back[r][3] * b[3];
+            }
+        }
+        if (!close_enough(g_previous.positions[before.first_position + i], back)) {
+            return false;
+        }
+    }
+    return true;
+}
 bool g_run_cut = false;
 std::array<std::string, 256> g_pair_notes;
 bool g_pair_notes_wanted = false;
@@ -544,6 +559,7 @@ void find_run_camera(const std::vector<uint32_t>& unique) {
     }
     std::memcpy(g_run_camera.move, moves[best], sizeof g_run_camera.move);
     const RecordedRun& run = g_record.runs[sampled[best]];
+    g_run_camera.mover = run.draw.camera;
     const RecordedRun& before = g_previous.runs[unique[sampled[best]]];
     float now[4][4];
     float then[4][4];
@@ -562,6 +578,204 @@ void find_run_camera(const std::vector<uint32_t>& unique) {
             }
         }
     }
+}
+
+struct CameraTurn {
+    bool ready = false;
+    float inverse[3][4] = {};
+    float axis[3] = {};
+    float angle = 0.0f;
+    float pivot[3] = {};
+    float slide = 0.0f;
+    float shift[3] = {};
+    float at = -1.0f;
+    float now[3][4] = {};
+};
+
+CameraTurn g_turn;
+
+void compose_affine(const float (&a)[3][4], const float (&b)[3][4], float (&out)[3][4]) {
+    for (int r = 0; r < 3; r++) {
+        for (int c = 0; c < 4; c++) {
+            out[r][c] = a[r][0] * b[0][c] + a[r][1] * b[1][c] + a[r][2] * b[2][c] + (c == 3 ? a[r][3] : 0.0f);
+        }
+    }
+}
+
+void prepare_turn() {
+    g_turn.ready = false;
+    g_turn.at = -1.0f;
+    if (!g_run_camera.valid) {
+        return;
+    }
+    const float (&m)[3][4] = g_run_camera.move;
+    for (int j = 0; j < 3; j++) {
+        float length = std::sqrt(m[0][j] * m[0][j] + m[1][j] * m[1][j] + m[2][j] * m[2][j]);
+        if (!std::isfinite(length) || std::fabs(length - 1.0f) > 0.02f) {
+            return;
+        }
+    }
+    if (!invert_affine(m, g_turn.inverse)) {
+        return;
+    }
+    float w = std::sqrt(std::max(0.0f, 1.0f + m[0][0] + m[1][1] + m[2][2])) / 2;
+    float x = std::copysign(std::sqrt(std::max(0.0f, 1.0f + m[0][0] - m[1][1] - m[2][2])) / 2, m[2][1] - m[1][2]);
+    float y = std::copysign(std::sqrt(std::max(0.0f, 1.0f - m[0][0] + m[1][1] - m[2][2])) / 2, m[0][2] - m[2][0]);
+    float z = std::copysign(std::sqrt(std::max(0.0f, 1.0f - m[0][0] - m[1][1] + m[2][2])) / 2, m[1][0] - m[0][1]);
+    float sine = std::sqrt(x * x + y * y + z * z);
+    float shift[3] = {m[0][3], m[1][3], m[2][3]};
+    std::copy(shift, shift + 3, g_turn.shift);
+    g_turn.angle = 2.0f * std::atan2(sine, w);
+    if (!std::isfinite(g_turn.angle) || g_turn.angle > 3.0f) {
+        return;
+    }
+    if (g_turn.angle < 1e-3f) {
+        g_turn.angle = 0.0f;
+        g_turn.ready = true;
+        return;
+    }
+    float u[3] = {x / sine, y / sine, z / sine};
+    float slide = u[0] * shift[0] + u[1] * shift[1] + u[2] * shift[2];
+    float flat[3] = {shift[0] - slide * u[0], shift[1] - slide * u[1], shift[2] - slide * u[2]};
+    float cross[3] = {u[1] * flat[2] - u[2] * flat[1], u[2] * flat[0] - u[0] * flat[2], u[0] * flat[1] - u[1] * flat[0]};
+    float cotangent = 1.0f / std::tan(g_turn.angle / 2.0f);
+    for (int i = 0; i < 3; i++) {
+        g_turn.axis[i] = u[i];
+        g_turn.pivot[i] = 0.5f * (flat[i] + cotangent * cross[i]);
+    }
+    g_turn.slide = slide;
+    g_turn.ready = std::isfinite(g_turn.pivot[0]) && std::isfinite(g_turn.pivot[1]) && std::isfinite(g_turn.pivot[2]);
+}
+
+const float (&turn_at(float t))[3][4] {
+    if (t == g_turn.at) {
+        return g_turn.now;
+    }
+    float moved[3][4];
+    if (g_turn.angle == 0.0f) {
+        for (int r = 0; r < 3; r++) {
+            for (int c = 0; c < 4; c++) {
+                moved[r][c] = (r == c ? 1.0f : 0.0f) + (c == 3 ? g_turn.shift[r] * t : 0.0f);
+            }
+        }
+    } else {
+        const float* u = g_turn.axis;
+        float angle = g_turn.angle * t;
+        float cosine = std::cos(angle);
+        float sine = std::sin(angle);
+        float rest = 1.0f - cosine;
+        float r[3][3] = {{cosine + u[0] * u[0] * rest, u[0] * u[1] * rest - u[2] * sine, u[0] * u[2] * rest + u[1] * sine},
+                         {u[1] * u[0] * rest + u[2] * sine, cosine + u[1] * u[1] * rest, u[1] * u[2] * rest - u[0] * sine},
+                         {u[2] * u[0] * rest - u[1] * sine, u[2] * u[1] * rest + u[0] * sine, cosine + u[2] * u[2] * rest}};
+        const float* c = g_turn.pivot;
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 3; j++) {
+                moved[i][j] = r[i][j];
+            }
+            moved[i][3] = c[i] - (r[i][0] * c[0] + r[i][1] * c[1] + r[i][2] * c[2]) + t * g_turn.slide * u[i];
+        }
+    }
+    compose_affine(moved, g_turn.inverse, g_turn.now);
+    g_turn.at = t;
+    return g_turn.now;
+}
+
+constexpr uint32_t kLastPositionMatrix = 27;
+
+void move_matrix(const float (&m)[3][4], Row* rows) {
+    float a[3][4];
+    for (int r = 0; r < 3; r++) {
+        for (int c = 0; c < 4; c++) {
+            a[r][c] = rows[r][c];
+        }
+    }
+    float out[3][4];
+    compose_affine(m, a, out);
+    for (int r = 0; r < 3; r++) {
+        for (int c = 0; c < 4; c++) {
+            rows[r][c] = out[r][c];
+        }
+    }
+}
+
+void turn_normal(const float (&m)[3][4], float* n) {
+    float out[9];
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            out[i * 3 + j] = m[i][0] * n[j] + m[i][1] * n[3 + j] + m[i][2] * n[6 + j];
+        }
+    }
+    std::copy(out, out + 9, n);
+}
+
+void move_point(const float (&m)[3][4], float* x, float* y, float* z, bool direction) {
+    float p[3] = {*x, *y, *z};
+    float q[3];
+    for (int i = 0; i < 3; i++) {
+        q[i] = m[i][0] * p[0] + m[i][1] * p[1] + m[i][2] * p[2] + (direction ? 0.0f : m[i][3]);
+    }
+    *x = q[0];
+    *y = q[1];
+    *z = q[2];
+}
+
+void move_run(const float (&m)[3][4], Row* rows) {
+    bool own = rows[1][3] != 0.0f;
+    uint32_t setup = static_cast<uint32_t>(rows[3][3]);
+    uint32_t units = std::min(setup & 15u, 8u);
+    if (own) {
+        move_matrix(m, rows + 4);
+    }
+    if ((setup & 32u) == 0) {
+        return;
+    }
+    Row* light = rows + kRunHeaderRows + kRunUnitRows * units;
+    if (own) {
+        turn_normal(m, light[5].data());
+    }
+    for (uint32_t n = 0; n < 8; n++) {
+        Row* at = light + 9 + n * 4;
+        move_point(m, &at[1][2], &at[1][3], &at[2][0], false);
+        move_point(m, &at[2][1], &at[2][2], &at[2][3], true);
+    }
+}
+
+void move_palette(const float (&m)[3][4], Row* palette) {
+    for (uint32_t row = 0; row <= kLastPositionMatrix; row += 3) {
+        move_matrix(m, palette + row);
+        turn_normal(m, palette[kPaletteRows].data() + row * 3);
+    }
+}
+
+bool turn_applies(const RecordedRun& before, const RecordedRun& run) {
+    if (!g_turn.ready || before.draw.camera != g_run_camera.mover || run.draw.camera != g_run_camera.mover || !run_perspective(g_previous, before) ||
+        !run_perspective(g_record, run)) {
+        return false;
+    }
+    const Row* a = &g_previous.rows[before.draw.matrix];
+    const Row* b = &g_record.rows[run.draw.matrix];
+    const float (&m)[3][4] = g_run_camera.move;
+    float still = 0.0f;
+    float turned = 0.0f;
+    for (int r = 0; r < 3; r++) {
+        for (int c = 0; c < 4; c++) {
+            float moved = m[r][0] * a[0][c] + m[r][1] * a[1][c] + m[r][2] * a[2][c] + (c == 3 ? m[r][3] : 0.0f);
+            still += std::fabs(b[r][c] - a[r][c]);
+            turned += std::fabs(b[r][c] - moved);
+        }
+    }
+    return turned < still;
+}
+
+bool run_rejected(const RecordedRun& before, const RecordedRun& run) {
+    const Row* a = &g_previous.rows[before.draw.matrix];
+    const Row* b = &g_record.rows[run.draw.matrix];
+    if (!turn_applies(before, run)) {
+        return matrix_change(a, b) == kOtherMatrix;
+    }
+    Row moved[3] = {a[0], a[1], a[2]};
+    move_matrix(g_run_camera.move, moved);
+    return matrix_change(moved, b) == kOtherMatrix;
 }
 
 constexpr float kFarthestStep = 0.1f;
@@ -605,6 +819,7 @@ void pair_runs() {
     g_run_cut = false;
     g_run_camera.valid = false;
     g_run_camera.known = false;
+    g_turn.ready = false;
     for (RecordedRun& run : runs) {
         run.match = kUnmatched;
     }
@@ -661,6 +876,7 @@ void pair_runs() {
         }
     }
     find_run_camera(unique);
+    prepare_turn();
     uint32_t paired = 0;
     uint32_t rejected = 0;
     static std::vector<uint8_t> settled;
@@ -716,7 +932,7 @@ void pair_runs() {
             }
             run.match = then;
             paired++;
-            rejected += matrix_change(&g_previous.rows[before[then].draw.matrix], &g_record.rows[run.draw.matrix]) == kOtherMatrix;
+            rejected += run_rejected(before[then], run);
         }
         head[slot] = kUnmatched;
     }
@@ -756,7 +972,7 @@ void pair_runs() {
         run.match = *best;
         *best = next[*best];
         paired++;
-        rejected += matrix_change(&g_previous.rows[before[run.match].draw.matrix], &g_record.rows[run.draw.matrix]) == kOtherMatrix;
+        rejected += run_rejected(before[run.match], run);
     }
     static std::vector<uint8_t> used;
     static std::vector<uint32_t> left;
@@ -859,6 +1075,8 @@ bool replay_runs(const RecordedCommand& command, float t) {
     uint32_t palette_at = kNoPalette;
     uint32_t palette_now = kNoPalette;
     uint32_t palette_before = kNoPalette;
+    bool palette_turned = false;
+    static std::vector<Row> moved;
     for (size_t i = command.begin; i < command.end; i++) {
         const RecordedRun& run = g_record.runs[i];
         const Row* now = &g_record.rows[run.draw.row];
@@ -867,6 +1085,7 @@ bool replay_runs(const RecordedCommand& command, float t) {
         if (before && !same_shape(before->draw, run.draw, then, now)) {
             before = nullptr;
         }
+        bool turning = before && turn_applies(*before, run);
         if (g_replay_rows.size() + run.draw.rows + kPaletteRows + kNormalRows > kRunRowBatch) {
             if (!send_replayed()) {
                 return false;
@@ -875,13 +1094,19 @@ bool replay_runs(const RecordedCommand& command, float t) {
         }
         if (run.draw.palette != kNoPalette) {
             uint32_t other = before ? before->draw.palette : kNoPalette;
-            if (palette_at == kNoPalette || palette_now != run.draw.palette || palette_before != other) {
+            if (palette_at == kNoPalette || palette_now != run.draw.palette || palette_before != other || palette_turned != turning) {
                 palette_at = static_cast<uint32_t>(g_replay_rows.size());
                 palette_now = run.draw.palette;
                 palette_before = other;
+                palette_turned = turning;
                 const Row* palette = &g_record.rows[run.draw.palette];
                 g_replay_rows.insert(g_replay_rows.end(), palette, palette + kPaletteRows + kNormalRows);
-                if (other != kNoPalette) {
+                if (other != kNoPalette && turning) {
+                    moved.assign(&g_previous.rows[other], &g_previous.rows[other] + kPaletteRows + kNormalRows);
+                    move_palette(g_run_camera.move, moved.data());
+                    blend_palette(&g_replay_rows[palette_at], moved.data(), palette, t);
+                    move_palette(turn_at(t), &g_replay_rows[palette_at]);
+                } else if (other != kNoPalette) {
                     blend_palette(&g_replay_rows[palette_at], &g_previous.rows[other], palette, t);
                 }
             }
@@ -889,7 +1114,12 @@ bool replay_runs(const RecordedCommand& command, float t) {
         uint32_t at = static_cast<uint32_t>(g_replay_rows.size());
         g_replay_rows.insert(g_replay_rows.end(), now, now + run.draw.rows);
         Row* out = &g_replay_rows[at];
-        if (before) {
+        if (turning) {
+            moved.assign(then, then + run.draw.rows);
+            move_run(g_run_camera.move, moved.data());
+            blend_run(out, moved.data(), now, t, run.draw.key);
+            move_run(turn_at(t), out);
+        } else if (before) {
             blend_run(out, then, now, t, run.draw.key);
         }
         if (run.draw.palette != kNoPalette) {
