@@ -2093,6 +2093,7 @@ render::CopyFilter copy_filter(uint32_t control) {
 std::atomic<uint32_t> g_frame_holds{0};
 std::atomic<uint32_t> g_long_holds{0};
 std::atomic<int64_t> g_gpu_asleep_ns{0};
+std::atomic<int64_t> g_frame_asleep_ns{0};
 std::atomic<bool> g_frame_late{false};
 
 void execute_copy(uint32_t value) {
@@ -2120,9 +2121,18 @@ void execute_copy(uint32_t value) {
             static auto previous_frame = now;
             double frame_ms = std::chrono::duration<double>(now - previous_frame).count() * 1000.0;
             previous_frame = now;
+            static double frame_cpu = 0.0;
+            static double frame_gpu = 0.0;
+            static const ThreadClock frame_gpu_clock = current_thread_clock();
+            double cpu_now = g_cpu_clock_known.load() ? thread_seconds(g_cpu_clock) : 0.0;
+            double gpu_now = thread_seconds(frame_gpu_clock);
+            double waited_ms = static_cast<double>(g_frame_asleep_ns.exchange(0)) / 1e6;
             if (frame_ms > kSlowFrameMs) {
-                log::write("frame", "slow frame: %.0f ms", frame_ms);
+                log::write("frame", "slow frame: %.0f ms (game thread working %.0f ms, graphics thread working %.0f ms and waiting for the game %.0f ms)", frame_ms,
+                           (cpu_now - frame_cpu) * 1000.0, (gpu_now - frame_gpu) * 1000.0, waited_ms);
             }
+            frame_cpu = cpu_now;
+            frame_gpu = gpu_now;
             double seconds = std::chrono::duration<double>(now - g_fps_start).count();
             if (seconds >= 1.0) {
                 int real_frames = g_frames;
@@ -2822,7 +2832,9 @@ void gpu_thread() {
             } else {
                 g_gpu.work.wait(hold, [] { return !g_gpu.items.empty(); });
             }
-            g_gpu_asleep_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - asleep).count();
+            int64_t slept = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - asleep).count();
+            g_gpu_asleep_ns += slept;
+            g_frame_asleep_ns += slept;
         }
         GpuItem item = std::move(g_gpu.items.front());
         g_gpu.items.pop_front();
