@@ -587,7 +587,6 @@ struct CameraTurn {
     float angle = 0.0f;
     float pivot[3] = {};
     float slide = 0.0f;
-    float shift[3] = {};
     float at = -1.0f;
     float now[3][4] = {};
 };
@@ -601,6 +600,8 @@ void compose_affine(const float (&a)[3][4], const float (&b)[3][4], float (&out)
         }
     }
 }
+
+constexpr float kSmallestTurn = 0.1f;
 
 void prepare_turn() {
     g_turn.ready = false;
@@ -624,14 +625,11 @@ void prepare_turn() {
     float z = std::copysign(std::sqrt(std::max(0.0f, 1.0f - m[0][0] - m[1][1] + m[2][2])) / 2, m[1][0] - m[0][1]);
     float sine = std::sqrt(x * x + y * y + z * z);
     float shift[3] = {m[0][3], m[1][3], m[2][3]};
-    std::copy(shift, shift + 3, g_turn.shift);
     g_turn.angle = 2.0f * std::atan2(sine, w);
     if (!std::isfinite(g_turn.angle) || g_turn.angle > 3.0f) {
         return;
     }
-    if (g_turn.angle < 1e-3f) {
-        g_turn.angle = 0.0f;
-        g_turn.ready = true;
+    if (g_turn.angle < kSmallestTurn) {
         return;
     }
     float u[3] = {x / sine, y / sine, z / sine};
@@ -652,28 +650,20 @@ const float (&turn_at(float t))[3][4] {
         return g_turn.now;
     }
     float moved[3][4];
-    if (g_turn.angle == 0.0f) {
-        for (int r = 0; r < 3; r++) {
-            for (int c = 0; c < 4; c++) {
-                moved[r][c] = (r == c ? 1.0f : 0.0f) + (c == 3 ? g_turn.shift[r] * t : 0.0f);
-            }
+    const float* u = g_turn.axis;
+    float angle = g_turn.angle * t;
+    float cosine = std::cos(angle);
+    float sine = std::sin(angle);
+    float rest = 1.0f - cosine;
+    float r[3][3] = {{cosine + u[0] * u[0] * rest, u[0] * u[1] * rest - u[2] * sine, u[0] * u[2] * rest + u[1] * sine},
+                     {u[1] * u[0] * rest + u[2] * sine, cosine + u[1] * u[1] * rest, u[1] * u[2] * rest - u[0] * sine},
+                     {u[2] * u[0] * rest - u[1] * sine, u[2] * u[1] * rest + u[0] * sine, cosine + u[2] * u[2] * rest}};
+    const float* c = g_turn.pivot;
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            moved[i][j] = r[i][j];
         }
-    } else {
-        const float* u = g_turn.axis;
-        float angle = g_turn.angle * t;
-        float cosine = std::cos(angle);
-        float sine = std::sin(angle);
-        float rest = 1.0f - cosine;
-        float r[3][3] = {{cosine + u[0] * u[0] * rest, u[0] * u[1] * rest - u[2] * sine, u[0] * u[2] * rest + u[1] * sine},
-                         {u[1] * u[0] * rest + u[2] * sine, cosine + u[1] * u[1] * rest, u[1] * u[2] * rest - u[0] * sine},
-                         {u[2] * u[0] * rest - u[1] * sine, u[2] * u[1] * rest + u[0] * sine, cosine + u[2] * u[2] * rest}};
-        const float* c = g_turn.pivot;
-        for (int i = 0; i < 3; i++) {
-            for (int j = 0; j < 3; j++) {
-                moved[i][j] = r[i][j];
-            }
-            moved[i][3] = c[i] - (r[i][0] * c[0] + r[i][1] * c[1] + r[i][2] * c[2]) + t * g_turn.slide * u[i];
-        }
+        moved[i][3] = c[i] - (r[i][0] * c[0] + r[i][1] * c[1] + r[i][2] * c[2]) + t * g_turn.slide * u[i];
     }
     compose_affine(moved, g_turn.inverse, g_turn.now);
     g_turn.at = t;
