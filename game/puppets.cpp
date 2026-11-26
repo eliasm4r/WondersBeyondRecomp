@@ -125,8 +125,8 @@ constexpr uint32_t kEventVector = 0x250;
 constexpr uint32_t kEventScale = 0x260;
 constexpr uint32_t kEffectManager = 0x800769e0;
 constexpr uint32_t kModelObject = 0xc;
-constexpr uint32_t kLocalHeight = 0x28;
-constexpr uint32_t kWorldHeight = 0x58;
+constexpr uint32_t kLocalMatrix = 0xc;
+constexpr uint32_t kWorldMatrix = 0x3c;
 constexpr uint32_t kNoBeam = 0xffffffffu;
 constexpr uint32_t kBeamEffect = 0x20010005;
 constexpr uint32_t kBeamCreate = 0x58;
@@ -174,7 +174,8 @@ struct Puppet {
     int changed = 0;
     std::array<float, 3> position{};
     uint32_t accessor = 0;
-    float ground = NAN;
+    std::array<float, 3> base{};
+    bool base_known = false;
     int unstepped = 0;
     uint32_t drawn_at = 0;
     bool stepped = false;
@@ -572,13 +573,24 @@ void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) 
     }
     uint32_t model_object = rd32(method(c, accessor, kModelSlot) + kModelObject);
     if (model_object != 0) {
-        float world = rdf32(model_object + kWorldHeight);
-        float local = rdf32(model_object + kLocalHeight);
-        if (world != 0.0f && world != local && std::isfinite(world)) {
-            puppet.ground = world - local;
+        float world[3];
+        float local[3];
+        bool fresh = true;
+        for (uint32_t r = 0; r < 3; r++) {
+            world[r] = rdf32(model_object + kWorldMatrix + 4 * (4 * r + 3));
+            local[r] = rdf32(model_object + kLocalMatrix + 4 * (4 * r + 3));
+            fresh = fresh && std::isfinite(world[r]);
         }
-        if (std::isfinite(puppet.ground)) {
-            wrf32(model_object + kLocalHeight, shown.position[1] - puppet.ground);
+        if (fresh && world[1] != 0.0f && (world[0] != local[0] || world[1] != local[1] || world[2] != local[2])) {
+            for (uint32_t r = 0; r < 3; r++) {
+                puppet.base[r] = world[r] - local[r];
+            }
+            puppet.base_known = true;
+        }
+        if (puppet.base_known) {
+            for (uint32_t r = 0; r < 3; r++) {
+                wrf32(model_object + kLocalMatrix + 4 * (4 * r + 3), shown.position[r] - puppet.base[r]);
+            }
         }
     }
     replay(c, puppet, peer, accessor, frame);
