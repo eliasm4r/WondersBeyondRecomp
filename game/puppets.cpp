@@ -187,7 +187,6 @@ struct Puppet {
     std::array<float, 3> position{};
     uint32_t accessor = 0;
     std::array<float, 3> base{};
-    std::array<float, 9> to_local{};
     bool base_known = false;
     int unstepped = 0;
     int off_logged = 0;
@@ -533,41 +532,6 @@ void note_changes(Puppet& puppet, uint32_t model) {
     puppet.watching = true;
 }
 
-using Turn = std::array<float, 9>;
-
-Turn read_turn(uint32_t matrix) {
-    Turn turn;
-    for (uint32_t r = 0; r < 3; r++) {
-        for (uint32_t k = 0; k < 3; k++) {
-            turn[3 * r + k] = rdf32(matrix + 4 * (4 * r + k));
-        }
-    }
-    return turn;
-}
-
-Turn times(const Turn& a, const Turn& b) {
-    Turn out{};
-    for (int r = 0; r < 3; r++) {
-        for (int k = 0; k < 3; k++) {
-            for (int i = 0; i < 3; i++) {
-                out[3 * r + k] += a[3 * r + i] * b[3 * i + k];
-            }
-        }
-    }
-    return out;
-}
-
-bool inverse(const Turn& m, Turn& out) {
-    float det = m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) + m[2] * (m[3] * m[7] - m[4] * m[6]);
-    if (!std::isfinite(det) || std::fabs(det) < 1e-6f) {
-        return false;
-    }
-    out = {(m[4] * m[8] - m[5] * m[7]) / det, (m[2] * m[7] - m[1] * m[8]) / det, (m[1] * m[5] - m[2] * m[4]) / det,
-           (m[5] * m[6] - m[3] * m[8]) / det, (m[0] * m[8] - m[2] * m[6]) / det, (m[2] * m[3] - m[0] * m[5]) / det,
-           (m[3] * m[7] - m[4] * m[6]) / det, (m[1] * m[6] - m[0] * m[7]) / det, (m[0] * m[4] - m[1] * m[3]) / det};
-    return true;
-}
-
 void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) {
     uint32_t accessor = guest(c, kAccessor, puppet.object);
     puppet.accessor = accessor;
@@ -632,37 +596,26 @@ void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) 
             fresh = fresh && std::isfinite(world[r]);
         }
         float off = 0.0f;
+        float body = 0.0f;
         for (int r = 0; r < 3; r++) {
             off += (world[r] - puppet.wanted[r]) * (world[r] - puppet.wanted[r]);
+            body += local[r] * local[r];
         }
         off = std::sqrt(off);
         if (puppet.base_known && fresh && off > kModelOff && puppet.age - puppet.off_logged > kReportEvery / 4) {
             puppet.off_logged = puppet.age;
-            float away = std::sqrt(local[0] * local[0] + local[1] * local[1] + local[2] * local[2]);
-            log::write("online", "%s model %.1f away from where it should be, %.1f from its body", peer.name.c_str(), off, away);
+            log::write("online", "%s model %.1f away from where it should be, %.1f from its body", peer.name.c_str(), off, std::sqrt(body));
         }
-        Turn world_turn = read_turn(model_object + kWorldMatrix);
-        Turn local_turn = read_turn(model_object + kLocalMatrix);
-        Turn world_back;
-        Turn local_back;
-        if (fresh && world[1] != 0.0f && (world[0] != local[0] || world[1] != local[1] || world[2] != local[2]) && inverse(world_turn, world_back) &&
-            inverse(local_turn, local_back)) {
-            Turn parent = times(world_turn, local_back);
-            for (int r = 0; r < 3; r++) {
-                puppet.base[r] = world[r] - (parent[3 * r] * local[0] + parent[3 * r + 1] * local[1] + parent[3 * r + 2] * local[2]);
+        if (fresh && world[1] != 0.0f && (world[0] != local[0] || world[1] != local[1] || world[2] != local[2])) {
+            for (uint32_t r = 0; r < 3; r++) {
+                puppet.base[r] = world[r] - local[r];
             }
-            puppet.to_local = times(local_turn, world_back);
             puppet.base_known = true;
         }
         if (puppet.base_known) {
-            float away[3];
-            for (int r = 0; r < 3; r++) {
-                away[r] = shown.position[r] - puppet.base[r];
-            }
             puppet.wanted = shown.position;
-            const Turn& m = puppet.to_local;
             for (uint32_t r = 0; r < 3; r++) {
-                wrf32(model_object + kLocalMatrix + 4 * (4 * r + 3), m[3 * r] * away[0] + m[3 * r + 1] * away[1] + m[3 * r + 2] * away[2]);
+                wrf32(model_object + kLocalMatrix + 4 * (4 * r + 3), shown.position[r] - puppet.base[r]);
             }
         }
     }
