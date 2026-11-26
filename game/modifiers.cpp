@@ -161,7 +161,7 @@ void publish_player() {
     for (const RecentEvent& recent : g_recent) {
         events.push_back(recent.event);
     }
-    online::update(g_shown.position, zone, {g_shown.rotation, g_shown.character, g_motion, g_motion_flags, g_motion_serial, std::move(events)});
+    online::update(g_shown.position, zone, {g_shown.rotation, g_shown.character, g_motion, g_motion_flags, g_motion_serial, 0, std::move(events)});
     g_shown.valid = false;
     uint32_t camera = g_render_camera ? g_render_camera : g_field_camera;
     if (!camera) {

@@ -321,6 +321,22 @@
       "defaults": { "online/names": "1" }
     },
     {
+      "id": "online_color", "label": "Name color",
+      "help": "Multiplayer: color of your name for the other players. Auto picks one for each player.",
+      "choices": [
+        { "label": "Auto", "set": { "online/color": "auto" } },
+        { "label": "Yellow", "set": { "online/color": "yellow" } },
+        { "label": "Blue", "set": { "online/color": "blue" } },
+        { "label": "Green", "set": { "online/color": "green" } },
+        { "label": "Red", "set": { "online/color": "red" } },
+        { "label": "Purple", "set": { "online/color": "purple" } },
+        { "label": "Orange", "set": { "online/color": "orange" } },
+        { "label": "Pink", "set": { "online/color": "pink" } },
+        { "label": "White", "set": { "online/color": "white" } }
+      ],
+      "defaults": { "online/color": "auto" }
+    },
+    {
       "id": "online_volume", "label": "Other players' volume",
       "help": "Multiplayer: volume of the sounds made by the other players, in percent.",
       "slider": { "key": "online/volume", "min": 0, "max": 100, "step": 5, "format": "%d" },

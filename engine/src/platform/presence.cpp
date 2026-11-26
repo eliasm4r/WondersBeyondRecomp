@@ -50,6 +50,7 @@ constexpr size_t kEchoTimeAt = kEchoIdAt + 4;
 constexpr size_t kEchoHoldAt = kEchoTimeAt + 4;
 constexpr size_t kPacketBytes = kEchoHoldAt + 4;
 constexpr uint32_t kFlagHosting = 1;
+constexpr uint32_t kColorShift = 8;
 constexpr int kLongestPing = 10000;
 constexpr size_t kEventWords = 14;
 constexpr size_t kEventBytes = kEventWords * 4;
@@ -122,6 +123,7 @@ bool decode(const uint8_t* data, size_t size, Peer& peer) {
     peer.pose.motion_serial = get32(data + kMotionSerialAt);
     peer.pose.sent_ms = get32(data + kSentAt);
     peer.hosting = (get32(data + kFlagsAt) & kFlagHosting) != 0;
+    peer.pose.color = (get32(data + kFlagsAt) >> kColorShift) & 0xFF;
     peer.clock = get32(data + kClockAt);
     peer.echo_id = get32(data + kEchoIdAt);
     peer.echo_time = get32(data + kEchoTimeAt);
@@ -596,7 +598,7 @@ void Link::send(const std::array<float, 3>& position, uint32_t zone, const Pose&
     put32(packet + kMotionSerialAt, pose.motion_serial);
     put32(packet + kSentAt, pose.sent_ms);
     std::memcpy(packet + kVersionAt, m_impl->version, kVersionBytes);
-    put32(packet + kFlagsAt, m_impl->hosting ? kFlagHosting : 0);
+    put32(packet + kFlagsAt, (m_impl->hosting ? kFlagHosting : 0) | ((pose.color & 0xFF) << kColorShift));
     put32(packet + kClockAt, static_cast<uint32_t>(m_impl->now * 1000.0));
     if (!m_peers.empty()) {
         const Peer& echoed = m_peers[m_impl->echo_next++ % m_peers.size()];

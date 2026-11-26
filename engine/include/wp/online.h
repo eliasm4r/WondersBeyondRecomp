@@ -43,6 +43,8 @@ std::vector<Notice> take_notices();
 std::string other_version();
 bool reconnecting();
 void say_goodbye();
+inline constexpr const char* kColorNames[] = {"auto", "yellow", "blue", "green", "red", "purple", "orange", "pink", "white"};
+
 uint32_t player_color(uint32_t id);
 uint32_t own_id();
 void own_state(std::string& name, uint32_t& character, uint32_t& zone);

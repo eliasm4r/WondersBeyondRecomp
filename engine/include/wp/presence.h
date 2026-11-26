@@ -29,6 +29,7 @@ struct Pose {
     std::string motion;
     uint32_t motion_flags = 0;
     uint32_t motion_serial = 0;
+    uint32_t color = 0;
     std::vector<Event> events;
     uint32_t sent_ms = 0;
 };

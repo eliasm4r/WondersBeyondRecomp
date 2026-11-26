@@ -14,6 +14,7 @@
 #include "wp/cloud_sync.h"
 #include "wp/log.h"
 #include "wp/relay.h"
+#include "wp/settings.h"
 
 namespace wp::online {
 
@@ -39,6 +40,18 @@ constexpr auto kLostPatience = std::chrono::seconds(30);
 constexpr auto kWatchEvery = std::chrono::milliseconds(250);
 constexpr size_t kMostNotices = 16;
 constexpr std::array<uint32_t, 4> kPlayerColors = {0xFFD23F, 0x4FC3F7, 0x81E67B, 0xFF8A80};
+constexpr std::array<uint32_t, 9> kChosenColors = {0, 0xFFD23F, 0x4FC3F7, 0x81E67B, 0xFF8A80, 0xB39DDB, 0xFFB74D, 0xF48FB1, 0xFFFFFF};
+static_assert(std::size(kColorNames) == kChosenColors.size());
+
+uint32_t own_color_index() {
+    std::string chosen = settings::text("online.color", nullptr);
+    for (uint32_t i = 1; i < kChosenColors.size(); i++) {
+        if (chosen == kColorNames[i]) {
+            return i;
+        }
+    }
+    return 0;
+}
 
 struct Session {
     presence::Link link;
@@ -635,6 +648,7 @@ void update(const std::array<float, 3>& position, uint32_t zone, const presence:
     std::lock_guard<std::mutex> lock(g_mutex);
     g_position = position;
     g_pose = pose;
+    g_pose.color = own_color_index();
     g_pose.sent_ms = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count());
     g_zone = zone;
     g_updated = Clock::now();
@@ -707,6 +721,14 @@ void say_goodbye() {
 
 uint32_t player_color(uint32_t id) {
     std::lock_guard<std::mutex> lock(g_mutex);
+    if (id == g_own_id && g_pose.color != 0 && g_pose.color < kChosenColors.size()) {
+        return kChosenColors[g_pose.color];
+    }
+    for (const presence::Peer& peer : g_peers) {
+        if (peer.id == id && peer.pose.color != 0 && peer.pose.color < kChosenColors.size()) {
+            return kChosenColors[peer.pose.color];
+        }
+    }
     size_t rank = id > g_own_id && g_own_id != 0 ? 1 : 0;
     for (const presence::Peer& peer : g_peers) {
         rank += peer.id < id ? 1 : 0;

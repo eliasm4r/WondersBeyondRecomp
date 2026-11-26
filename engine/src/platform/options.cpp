@@ -246,6 +246,7 @@ constexpr const char* kOnlineCopy = "online.copy";
 constexpr const char* kOnlinePlayers = "online.players";
 constexpr const char* kOnlineNames = "online.names";
 constexpr const char* kOnlineVolume = "online.volume";
+constexpr const char* kOnlineColor = "online.color";
 constexpr size_t kNameLength = 12;
 constexpr size_t kAddressLength = 15;
 
@@ -258,7 +259,7 @@ std::string g_copied_code;
 void close_field();
 
 const char* field_letters() {
-    return g_field == kOnlineAddress ? "0123456789ABCDEFGHJKMNPQRSTVWXYZ." : "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    return g_field == kOnlineAddress ? "0123456789ABCDEFGHJKMNPQRSTVWXYZ." : "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 }
 
 size_t field_limit() {
@@ -283,6 +284,7 @@ std::vector<std::string> online_keys() {
     } else {
         keys.insert(keys.end(), {kOnlineName, kOnlineAddress, kOnlineHost, kOnlineJoin});
     }
+    keys.push_back(kOnlineColor);
     keys.push_back(kOnlineNames);
     keys.push_back(kOnlineVolume);
     return keys;
@@ -695,6 +697,9 @@ std::vector<std::string> choices(const std::string& key) {
     if (key == "overlay.corner") {
         return {"top_left", "top_right", "bottom_left", "bottom_right"};
     }
+    if (key == "online.color") {
+        return std::vector<std::string>(std::begin(online::kColorNames), std::end(online::kColorNames));
+    }
     if (key == kDevice) {
         return std::vector<std::string>(std::begin(kDeviceNames), std::end(kDeviceNames));
     }
@@ -763,8 +768,8 @@ std::string shown_value(const std::string& key, const std::string& value) {
     if (key == "game.text_speed") {
         return value == "1" ? ui::label("menu.text_speed.original") : value == "0" ? ui::label("menu.text_speed.instant") : value + "x";
     }
-    if (key == "overlay.level" || key == "overlay.corner" || key == kDevice) {
-        std::string prefix = key == "overlay.level" ? "menu.level." : key == "overlay.corner" ? "menu.corner." : "menu.device.";
+    if (key == "overlay.level" || key == "overlay.corner" || key == kDevice || key == "online.color") {
+        std::string prefix = key == "overlay.level" ? "menu.level." : key == "overlay.corner" ? "menu.corner." : key == "online.color" ? "menu.color." : "menu.device.";
         return ui::label((prefix + value).c_str());
     }
     if (key == kPlayTime) {
@@ -1146,8 +1151,9 @@ std::string Menu::handle(Action action) {
 bool type_code(const char* text) {
     if (g_field && text) {
         for (; *text; text++) {
-            char character = static_cast<char>(std::toupper(static_cast<unsigned char>(*text)));
+            char character = *text;
             if (g_field == kOnlineAddress) {
+                character = static_cast<char>(std::toupper(static_cast<unsigned char>(character)));
                 character = character == 'O' ? '0' : (character == 'I' || character == 'L') ? '1' : character;
             }
             if (character != 0 && std::strchr(field_letters(), character)) {
