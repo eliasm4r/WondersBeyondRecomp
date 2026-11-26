@@ -305,10 +305,12 @@ bool same_shape(const RunDraw& before, const RunDraw& now, const Row* a, const R
     return !lit || a[light] == b[light];
 }
 
+bool blend_turn(Row* out, const Row* a, const Row* b, float t);
+
 void blend_run(Row* out, const Row* a, const Row* b, float t, uint64_t key) {
     lerp_rows(out, a, b, 2, t);
     bool own = b[1][3] != 0.0f;
-    if (own) {
+    if (own && (matrix_change(a + 4, b + 4) != kOtherMatrix || !blend_turn(out + 4, a + 4, b + 4, t))) {
         blend_matrix(out + 4, a + 4, b + 4, t);
     }
     uint32_t setup = static_cast<uint32_t>(b[3][3]);
@@ -1180,6 +1182,37 @@ void adopt_run_camera() {
     }
 }
 
+struct PaletteBlend {
+    uint32_t before = kNoPalette;
+    bool turning = false;
+};
+
+std::unordered_map<uint32_t, PaletteBlend> g_palette_blends;
+uint64_t g_palette_blends_frame = ~0ull;
+
+const PaletteBlend* palette_blend(uint32_t palette) {
+    if (g_palette_blends_frame != g_frame) {
+        g_palette_blends_frame = g_frame;
+        g_palette_blends.clear();
+        for (size_t i = 0; i < g_record.runs.size(); i++) {
+            const RecordedRun& run = g_record.runs[i];
+            if (run.draw.palette == kNoPalette || run.match == kUnmatched) {
+                continue;
+            }
+            const RecordedRun& before = g_previous.runs[run.match];
+            if (before.draw.palette == kNoPalette || !same_shape(before.draw, run.draw, &g_previous.rows[before.draw.row], &g_record.rows[run.draw.row])) {
+                continue;
+            }
+            auto entry = g_palette_blends.try_emplace(run.draw.palette, PaletteBlend{before.draw.palette, false}).first;
+            if (entry->second.before == before.draw.palette) {
+                entry->second.turning = entry->second.turning || turns_with_camera(i, before, run);
+            }
+        }
+    }
+    auto found = g_palette_blends.find(palette);
+    return found == g_palette_blends.end() ? nullptr : &found->second;
+}
+
 bool replay_runs(const RecordedCommand& command, float t) {
     uint32_t palette_at = kNoPalette;
     uint32_t palette_now = kNoPalette;
@@ -1203,14 +1236,19 @@ bool replay_runs(const RecordedCommand& command, float t) {
         }
         if (run.draw.palette != kNoPalette) {
             uint32_t other = before ? before->draw.palette : kNoPalette;
-            if (palette_at == kNoPalette || palette_now != run.draw.palette || palette_before != other || palette_turned != turning) {
+            bool palette_turning = turning;
+            if (const PaletteBlend* shared = palette_blend(run.draw.palette)) {
+                other = shared->before;
+                palette_turning = shared->turning;
+            }
+            if (palette_at == kNoPalette || palette_now != run.draw.palette || palette_before != other || palette_turned != palette_turning) {
                 palette_at = static_cast<uint32_t>(g_replay_rows.size());
                 palette_now = run.draw.palette;
                 palette_before = other;
-                palette_turned = turning;
+                palette_turned = palette_turning;
                 const Row* palette = &g_record.rows[run.draw.palette];
                 g_replay_rows.insert(g_replay_rows.end(), palette, palette + kPaletteRows + kNormalRows);
-                if (other != kNoPalette && turning) {
+                if (other != kNoPalette && palette_turning) {
                     moved.assign(&g_previous.rows[other], &g_previous.rows[other] + kPaletteRows + kNormalRows);
                     move_palette(g_run_camera.move, moved.data());
                     blend_palette(&g_replay_rows[palette_at], moved.data(), palette, t);
