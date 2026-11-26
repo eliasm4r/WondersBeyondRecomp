@@ -191,6 +191,10 @@ struct Puppet {
     int unstepped = 0;
     int off_logged = 0;
     std::array<float, 3> wanted{};
+    std::array<float, 3> seen_world{};
+    std::array<float, 3> seen_local{};
+    std::array<float, 3> last_local{};
+    uint32_t model_object = 0;
     uint32_t drawn_at = 0;
     bool stepped = false;
     std::array<uint8_t, 0x100> watched{};
@@ -602,21 +606,38 @@ void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) 
             body += local[r] * local[r];
         }
         off = std::sqrt(off);
-        if (puppet.base_known && fresh && off > kModelOff && puppet.age - puppet.off_logged > kReportEvery / 4) {
+        if (puppet.base_known && fresh && off > kModelOff && world[1] != local[1] && puppet.age - puppet.off_logged > kReportEvery / 4) {
             puppet.off_logged = puppet.age;
-            log::write("online", "%s model %.1f away from where it should be, %.1f from its body", peer.name.c_str(), off, std::sqrt(body));
+            log::write("online", "%s model %.1f away from where it should be, %.1f from its body; world %.1f %.1f %.1f local %.1f %.1f %.1f base %.1f %.1f %.1f wanted %.1f %.1f %.1f", peer.name.c_str(), off, std::sqrt(body), world[0], world[1], world[2], local[0], local[1], local[2], puppet.base[0], puppet.base[1], puppet.base[2], puppet.wanted[0], puppet.wanted[1], puppet.wanted[2]);
         }
-        if (fresh && world[1] != 0.0f && (world[0] != local[0] || world[1] != local[1] || world[2] != local[2])) {
+        bool world_still = true;
+        bool ours = true;
+        bool moved = false;
+        for (uint32_t r = 0; r < 3; r++) {
+            world_still = world_still && world[r] == puppet.seen_world[r];
+            ours = ours && local[r] == puppet.seen_local[r];
+            moved = moved || puppet.seen_local[r] != puppet.last_local[r];
+        }
+        bool recomputed = !(world_still && ours && moved);
+        for (uint32_t r = 0; r < 3; r++) {
+            puppet.seen_world[r] = world[r];
+        }
+        if (fresh && recomputed && world[1] != 0.0f && (world[0] != local[0] || world[1] != local[1] || world[2] != local[2])) {
             for (uint32_t r = 0; r < 3; r++) {
                 puppet.base[r] = world[r] - local[r];
             }
             puppet.base_known = true;
         }
+        puppet.model_object = model_object;
+        puppet.last_local = puppet.seen_local;
         if (puppet.base_known) {
             puppet.wanted = shown.position;
             for (uint32_t r = 0; r < 3; r++) {
-                wrf32(model_object + kLocalMatrix + 4 * (4 * r + 3), shown.position[r] - puppet.base[r]);
+                puppet.seen_local[r] = shown.position[r] - puppet.base[r];
+                wrf32(model_object + kLocalMatrix + 4 * (4 * r + 3), puppet.seen_local[r]);
             }
+        } else {
+            puppet.seen_local = {local[0], local[1], local[2]};
         }
     }
     replay(c, puppet, peer, accessor, frame);
@@ -924,6 +945,11 @@ void puppets_visibility_step(Cpu& c, HleFunction original) {
             if (puppet.drawn_at != 0) {
                 for (uint32_t i = 0; i < 3; i++) {
                     wrf32(puppet.drawn_at + 4 * i, puppet.position[i] + (i == 1 ? kGroundLift : 0.0f));
+                }
+            }
+            if (puppet.base_known && puppet.model_object != 0) {
+                for (uint32_t r = 0; r < 3; r++) {
+                    wrf32(puppet.model_object + kLocalMatrix + 4 * (4 * r + 3), puppet.seen_local[r]);
                 }
             }
         }
