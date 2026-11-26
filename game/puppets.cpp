@@ -622,7 +622,7 @@ void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) 
         for (uint32_t r = 0; r < 3; r++) {
             puppet.seen_world[r] = world[r];
         }
-        if (fresh && recomputed && world[1] != 0.0f && (world[0] != local[0] || world[1] != local[1] || world[2] != local[2])) {
+        if (fresh && recomputed && (world[0] != 0.0f || world[1] != 0.0f || world[2] != 0.0f) && (world[0] != local[0] || world[1] != local[1] || world[2] != local[2])) {
             for (uint32_t r = 0; r < 3; r++) {
                 puppet.base[r] = world[r] - local[r];
             }
