@@ -15,6 +15,7 @@
 
 #include "wp/input.h"
 #include "wp/ios.h"
+#include "wp/log.h"
 #include "wp/memory.h"
 #include "wp/real_wiimote.h"
 #include "wp/wiimote.h"
@@ -54,6 +55,7 @@ constexpr uint8_t kEventPacketTypeChanged = 0x1D;
 constexpr uint16_t kCommandInquiry = 0x0401;
 constexpr uint16_t kCommandCreateConnection = 0x0405;
 constexpr uint16_t kCommandDisconnect = 0x0406;
+constexpr uint8_t kStatusDisallowed = 0x0C;
 constexpr uint16_t kCommandAcceptConnection = 0x0409;
 constexpr uint16_t kCommandLinkKeyReply = 0x040B;
 constexpr uint16_t kCommandLinkKeyNegativeReply = 0x040C;
@@ -579,12 +581,22 @@ void execute_command(uint32_t data) {
     case kCommandDisconnect: {
         uint16_t handle = static_cast<uint16_t>(rd8(parameters) | (rd8(parameters + 1) << 8));
         uint8_t reason = rd8(parameters + 2);
+        int index = wiimote_from_handle(handle);
+        if (index >= 0 && !g_wiimotes[index].real) {
+            static bool told = false;
+            if (!told) {
+                told = true;
+                log::write("bluetooth", "kept Wii Remote %d connected when the game tried to drop it, reason %02x", index + 1, reason);
+            }
+            command_status(opcode, kStatusDisallowed);
+            break;
+        }
+        log::write("bluetooth", "the game disconnects Wii Remote handle %04x, reason %02x", handle, reason);
         command_status(opcode);
         std::vector<uint8_t> body = {0x00};
         put16(body, handle);
         body.push_back(reason);
         event(kEventDisconnectionComplete, body);
-        int index = wiimote_from_handle(handle);
         if (index >= 0) {
             g_wiimotes[index] = Wiimote{};
             wiimote::reset(static_cast<uint32_t>(index));
@@ -669,6 +681,7 @@ void update_wiimote(uint32_t index) {
     Wiimote& wiimote = g_wiimotes[index];
     bool real = real_wiimote::present(index);
     if (wiimote.baseband != Baseband::Inactive && (!attached(index) || wiimote.real != real)) {
+        log::write("bluetooth", "Wii Remote %u leaves: attached %d, real %d", index + 1, attached(index) ? 1 : 0, real ? 1 : 0);
         if (wiimote.baseband == Baseband::Complete) {
             std::vector<uint8_t> body = {0x00};
             put16(body, connection_handle(index));

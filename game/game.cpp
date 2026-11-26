@@ -193,6 +193,7 @@ void retrace() {
 }
 
 void keep_remote_connected(Cpu& c) {
+    log::write("input", "kept Wii Remote %u connected when the game asked to drop it", c.r[3] + 1);
     c.r[3] = 0;
 }
 

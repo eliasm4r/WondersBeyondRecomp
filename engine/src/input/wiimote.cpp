@@ -754,7 +754,7 @@ void update(uint32_t index, const Sender& send) {
     }
     state.next_report = now + kReportInterval;
     input::Sample sample = input::sample(index);
-    state.buttons = static_cast<uint16_t>(sample.buttons & 0x9F1F);
+    state.buttons = static_cast<uint16_t>(sample.buttons & 0x1F1F);
     update_motion(state, sample);
     if (process_read(state, send)) {
         return;
