@@ -28,6 +28,7 @@ address,name
 0x8005dc40,BeamMove
 0x8005dde0,BeamStop
 0x800a0720,BeamStart
+0x8005b4e0,EffectManagerSetUp
 0x800a07f0,EffectAt
 0x800a0c90,EffectOn
 0x800a10a0,EffectPlaced

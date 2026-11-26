@@ -9,6 +9,7 @@ bool puppets_blocks_motion(uint32_t accessor);
 bool puppets_shot_starting(uint32_t accessor);
 void puppets_frame(Cpu& c, bool park, bool active);
 void puppets_free_beam(Cpu& c);
+void puppets_widen_beams(Cpu& c, HleFunction original);
 void puppets_skip_in_search(Cpu& c, HleFunction original);
 uint32_t puppets_model_object(Cpu& c, uint32_t accessor);
 void puppets_scene_change(Cpu& c);

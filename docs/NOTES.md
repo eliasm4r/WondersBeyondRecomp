@@ -1826,8 +1826,11 @@ phone never did it.
 - Punching also tries the 8 ports around each endpoint, and a joiner accepts its host from any port of the same address,
   because some routers change the port for each destination.
 - The effect manager has a single Thunderbolt specializer slot (pool at +0x150), and the game does not check for a failed
-  allocation. A puppet's beam only takes a free slot, and any local beam request first releases it with 0x8005dde0 and
-  flag 1. Puppet effects also leave 16 free entries in each effect pool for the local game.
+  allocation. The pool is built once by 0x8005b4e0 with fixed sizes (0x4c4-byte entries, a u16 next list, the count at
+  pool + 0xc). Each entry is a standalone object reached through the effect entry, so after that function returns the
+  pool is rebuilt with 4 entries. A puppet's beam only takes a slot when another stays free for the local player, and a
+  local beam request releases puppet beams (0x8005dde0, flag 1) only when no slot is left. With a single slot, a second
+  player's beam was always dropped. Puppet effects also leave 16 free entries in each effect pool for the local game.
 
 ## Online relay and field changes
 

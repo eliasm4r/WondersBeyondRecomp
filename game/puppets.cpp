@@ -146,6 +146,17 @@ constexpr uint32_t kLargeSlots = 0x80;
 constexpr uint32_t kBeamSlots = 0x150;
 constexpr uint32_t kKeepEffects = 16;
 constexpr uint32_t kBeamNow = 1;
+constexpr uint32_t kBeamCount = 4;
+constexpr uint32_t kEffectManagerObject = 0x804c6b84;
+constexpr uint32_t kBeamSize = 0x4c4;
+constexpr uint32_t kArrayHeader = 0x10;
+constexpr uint32_t kAllocate = 0x8000dc00;
+constexpr uint32_t kArrayNew = 0x803ff560;
+constexpr uint32_t kBeamMake = 0x80063d10;
+constexpr uint32_t kBeamUnmake = 0x80063d50;
+constexpr uint32_t kPoolData = 4;
+constexpr uint32_t kPoolCount = 0xc;
+constexpr uint32_t kPoolUsed = 0x12;
 constexpr uint32_t kEffectGroups = 0x24;
 constexpr uint32_t kGroupMatches = 0x80062570;
 constexpr uint32_t kStopOneSound = 0x64;
@@ -417,7 +428,7 @@ void replay(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t accesso
             uint32_t manager = guest(c, kEffectManager, 0);
             if (event.kind == 6) {
                 stop_beam(c, puppet);
-                if (free_slots(manager, kBeamSlots, 1) == 0 || !room_for_effect(manager)) {
+                if (free_slots(manager, kBeamSlots, 2) < 2 || !room_for_effect(manager)) {
                     continue;
                 }
                 uint32_t effects = method(c, accessor, kEffectSlot);
@@ -816,9 +827,44 @@ void puppets_skip_in_search(Cpu& c, HleFunction original) {
     }
 }
 
+void puppets_widen_beams(Cpu& c, HleFunction original) {
+    uint32_t manager = c.r[3];
+    uint32_t heap = c.r[4];
+    original(c);
+    uint32_t result = c.r[3];
+    uint32_t pool = manager + kBeamSlots;
+    c.r[3] = kArrayHeader + kBeamSize * kBeamCount;
+    c.r[4] = heap;
+    call(c, kAllocate);
+    uint32_t block = c.r[3];
+    c.r[3] = block;
+    c.r[4] = kBeamMake;
+    c.r[5] = kBeamUnmake;
+    c.r[6] = kBeamSize;
+    c.r[7] = kBeamCount;
+    call(c, kArrayNew);
+    uint32_t data = c.r[3];
+    c.r[3] = 2 * kBeamCount;
+    c.r[4] = heap;
+    call(c, kAllocate);
+    uint32_t next = c.r[3];
+    if (block != 0 && data != 0 && next != 0) {
+        for (uint32_t i = 0; i < kBeamCount; i++) {
+            wr16(next + 2 * i, static_cast<uint16_t>(i + 1 < kBeamCount ? i + 1 : kPoolEnd));
+        }
+        wr32(pool + kPoolData, data);
+        wr32(pool + kPoolNext, next);
+        wr32(pool + kPoolCount, kBeamCount);
+        wr16(pool + kPoolHead, 0);
+        wr16(pool + kPoolUsed, 0);
+        log::write("online", "room for %u Thunderbolt beams", kBeamCount);
+    }
+    c.r[3] = result;
+}
+
 void puppets_free_beam(Cpu& c) {
     bool held = std::any_of(g_puppets.begin(), g_puppets.end(), [](const Puppet& puppet) { return puppet.beam != kNoBeam; });
-    if (g_making_beam || !held) {
+    if (g_making_beam || !held || free_slots(kEffectManagerObject, kBeamSlots, 1) > 0) {
         return;
     }
     Cpu saved = c;
