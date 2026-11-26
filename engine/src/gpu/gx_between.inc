@@ -334,46 +334,67 @@ void blend_run(Row* out, const Row* a, const Row* b, float t, uint64_t key) {
     }
 }
 
-bool split_matrix(const Row* m, float (&q)[4], float (&scale)[3]) {
-    float r[3][3];
-    for (int j = 0; j < 3; j++) {
-        scale[j] = std::sqrt(m[0][j] * m[0][j] + m[1][j] * m[1][j] + m[2][j] * m[2][j]);
-        if (!std::isfinite(scale[j]) || scale[j] < 1e-6f) {
+bool polar_split(const Row* m, float (&q)[4], float (&stretch)[3][3]) {
+    double r[3][3];
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            r[i][j] = m[i][j];
+            if (!std::isfinite(m[i][j])) {
+                return false;
+            }
+        }
+    }
+    for (int round = 0; round < 30; round++) {
+        double c[3][3];
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 3; j++) {
+                int i1 = (i + 1) % 3, i2 = (i + 2) % 3, j1 = (j + 1) % 3, j2 = (j + 2) % 3;
+                c[i][j] = r[i1][j1] * r[i2][j2] - r[i1][j2] * r[i2][j1];
+            }
+        }
+        double det = r[0][0] * c[0][0] + r[0][1] * c[0][1] + r[0][2] * c[0][2];
+        if (!(det > 1e-12)) {
             return false;
         }
+        double change = 0.0;
         for (int i = 0; i < 3; i++) {
-            r[i][j] = m[i][j] / scale[j];
+            for (int j = 0; j < 3; j++) {
+                double next = 0.5 * (r[i][j] + c[i][j] / det);
+                change = std::max(change, std::fabs(next - r[i][j]));
+                r[i][j] = next;
+            }
+        }
+        if (change < 1e-7) {
+            break;
         }
     }
-    float det = r[0][0] * (r[1][1] * r[2][2] - r[1][2] * r[2][1]) - r[0][1] * (r[1][0] * r[2][2] - r[1][2] * r[2][0]) + r[0][2] * (r[1][0] * r[2][1] - r[1][1] * r[2][0]);
-    if (det < 0.9f || det > 1.1f) {
-        return false;
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            stretch[i][j] = static_cast<float>(r[0][i] * m[0][j] + r[1][i] * m[1][j] + r[2][i] * m[2][j]);
+        }
     }
-    float w = std::sqrt(std::max(0.0f, 1.0f + r[0][0] + r[1][1] + r[2][2])) / 2;
-    float x = std::copysign(std::sqrt(std::max(0.0f, 1.0f + r[0][0] - r[1][1] - r[2][2])) / 2, r[2][1] - r[1][2]);
-    float y = std::copysign(std::sqrt(std::max(0.0f, 1.0f - r[0][0] + r[1][1] - r[2][2])) / 2, r[0][2] - r[2][0]);
-    float z = std::copysign(std::sqrt(std::max(0.0f, 1.0f - r[0][0] - r[1][1] + r[2][2])) / 2, r[1][0] - r[0][1]);
-    float length = std::sqrt(w * w + x * x + y * y + z * z);
-    q[0] = w / length;
-    q[1] = x / length;
-    q[2] = y / length;
-    q[3] = z / length;
+    double w = std::sqrt(std::max(0.0, 1.0 + r[0][0] + r[1][1] + r[2][2])) / 2;
+    double x = std::copysign(std::sqrt(std::max(0.0, 1.0 + r[0][0] - r[1][1] - r[2][2])) / 2, r[2][1] - r[1][2]);
+    double y = std::copysign(std::sqrt(std::max(0.0, 1.0 - r[0][0] + r[1][1] - r[2][2])) / 2, r[0][2] - r[2][0]);
+    double z = std::copysign(std::sqrt(std::max(0.0, 1.0 - r[0][0] - r[1][1] + r[2][2])) / 2, r[1][0] - r[0][1]);
+    double length = std::sqrt(w * w + x * x + y * y + z * z);
+    q[0] = static_cast<float>(w / length);
+    q[1] = static_cast<float>(x / length);
+    q[2] = static_cast<float>(y / length);
+    q[3] = static_cast<float>(z / length);
     return true;
 }
 
 constexpr float kLargestBoneTurn = 1.6f;
 
 bool blend_turn(Row* out, const Row* a, const Row* b, float t) {
-    float qa[4], qb[4], sa[3], sb[3];
-    if (!split_matrix(a, qa, sa) || !split_matrix(b, qb, sb)) {
+    float qa[4], qb[4], sa[3][3], sb[3][3];
+    if (!polar_split(a, qa, sa) || !polar_split(b, qb, sb)) {
         return false;
     }
     float step = 0.0f;
     float length = 0.0f;
     for (int i = 0; i < 3; i++) {
-        if (std::fabs(sa[i] - sb[i]) > 0.5f * std::max(sa[i], sb[i])) {
-            return false;
-        }
         step += (b[i][3] - a[i][3]) * (b[i][3] - a[i][3]);
         length += b[i][3] * b[i][3];
     }
@@ -400,9 +421,15 @@ bool blend_turn(Row* out, const Row* a, const Row* b, float t) {
     float r[3][3] = {{1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)},
                      {2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)},
                      {2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)}};
+    float stretch[3][3];
     for (int i = 0; i < 3; i++) {
         for (int j = 0; j < 3; j++) {
-            out[i][j] = r[i][j] * (sa[j] + (sb[j] - sa[j]) * t);
+            stretch[i][j] = sa[i][j] + (sb[i][j] - sa[i][j]) * t;
+        }
+    }
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            out[i][j] = r[i][0] * stretch[0][j] + r[i][1] * stretch[1][j] + r[i][2] * stretch[2][j];
         }
         out[i][3] = a[i][3] + (b[i][3] - a[i][3]) * t;
     }
