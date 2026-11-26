@@ -176,6 +176,7 @@ struct Puppet {
     uint32_t accessor = 0;
     float ground = NAN;
     int unstepped = 0;
+    uint32_t drawn_at = 0;
     bool stepped = false;
     std::array<uint8_t, 0x100> watched{};
     bool watching = false;
@@ -535,6 +536,7 @@ void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) 
     }
     uint32_t posture = method(c, accessor, kPostureSlot);
     uint32_t position = method(c, posture, kPositionSlot);
+    puppet.drawn_at = position;
     uint32_t rotation = method(c, posture, kRotationSlot);
     double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
     if (peer.sequence != puppet.sequence) {
@@ -846,6 +848,11 @@ void puppets_visibility_step(Cpu& c, HleFunction original) {
         if (puppet.object == c.r[3]) {
             puppet.unstepped = 0;
             puppet.stepped = true;
+            if (puppet.drawn_at != 0) {
+                for (uint32_t i = 0; i < 3; i++) {
+                    wrf32(puppet.drawn_at + 4 * i, puppet.position[i] + (i == 1 ? kGroundLift : 0.0f));
+                }
+            }
         }
     }
     original(c);
