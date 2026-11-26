@@ -929,6 +929,86 @@ float copy_distance(const RecordedRun& before, const RecordedRun& run) {
     return std::min(run_distance(before, run), run_distance(before, run, false));
 }
 
+struct Twin {
+    uint32_t now[2];
+    uint32_t then[2];
+};
+
+constexpr float kTwinGroup = 0.2f;
+
+float run_away(const RecordedRun& run) {
+    const Row* b = &g_record.rows[run.draw.matrix];
+    return std::sqrt(b[0][3] * b[0][3] + b[1][3] * b[1][3] + b[2][3] * b[2][3]);
+}
+
+float now_apart(const RecordedRun& x, const RecordedRun& y) {
+    const Row* a = &g_record.rows[x.draw.matrix];
+    const Row* b = &g_record.rows[y.draw.matrix];
+    return std::fabs(a[0][3] - b[0][3]) + std::fabs(a[1][3] - b[1][3]) + std::fabs(a[2][3] - b[2][3]);
+}
+
+void pair_twins(const Twin* twins, size_t count, std::vector<RecordedRun>& runs, const std::vector<RecordedRun>& before, uint32_t& paired, uint32_t& rejected) {
+    static std::vector<uint32_t> group;
+    group.resize(count);
+    for (size_t i = 0; i < count; i++) {
+        group[i] = static_cast<uint32_t>(i);
+    }
+    auto root = [&](uint32_t k) {
+        while (group[k] != k) {
+            group[k] = group[group[k]];
+            k = group[k];
+        }
+        return k;
+    };
+    for (size_t i = 0; i < count; i++) {
+        float reach = kTwinGroup * run_away(runs[twins[i].now[0]]);
+        for (size_t j = i + 1; j < count; j++) {
+            bool touching = false;
+            for (int a = 0; a < 2 && !touching; a++) {
+                for (int b = 0; b < 2 && !touching; b++) {
+                    touching = now_apart(runs[twins[i].now[a]], runs[twins[j].now[b]]) <= reach;
+                }
+            }
+            if (touching && root(static_cast<uint32_t>(i)) != root(static_cast<uint32_t>(j))) {
+                group[root(static_cast<uint32_t>(i))] = root(static_cast<uint32_t>(j));
+            }
+        }
+    }
+    static std::vector<float> straight;
+    static std::vector<float> crossed;
+    static std::vector<uint8_t> close;
+    straight.assign(count, 0.0f);
+    crossed.assign(count, 0.0f);
+    close.assign(count, 1);
+    for (size_t i = 0; i < count; i++) {
+        const Twin& twin = twins[i];
+        uint32_t r = root(static_cast<uint32_t>(i));
+        float s = run_distance(before[twin.then[0]], runs[twin.now[0]]) + run_distance(before[twin.then[1]], runs[twin.now[1]]);
+        float c = run_distance(before[twin.then[1]], runs[twin.now[0]]) + run_distance(before[twin.then[0]], runs[twin.now[1]]);
+        float away = run_away(runs[twin.now[0]]);
+        straight[r] += s;
+        crossed[r] += c;
+        bool twins_close = now_apart(runs[twin.now[0]], runs[twin.now[1]]) <= kTwinsApart * away && s - std::min(s, c) <= kOrderSlack * away * 2.0f;
+        close[r] = close[r] && twins_close;
+    }
+    for (size_t i = 0; i < count; i++) {
+        const Twin& twin = twins[i];
+        uint32_t r = root(static_cast<uint32_t>(i));
+        bool swap = !close[r] && crossed[r] < straight[r];
+        for (int k = 0; k < 2; k++) {
+            RecordedRun& run = runs[twin.now[k]];
+            uint32_t then = twin.then[swap ? 1 - k : k];
+            if (!same_object(before[then], run, copy_distance(before[then], run), kFarthestStep)) {
+                g_run_counts[4]++;
+                continue;
+            }
+            run.match = then;
+            paired++;
+            rejected += run_rejected(before[then], run);
+        }
+    }
+}
+
 void pair_runs() {
     auto started = std::chrono::steady_clock::now();
     std::vector<RecordedRun>& runs = g_record.runs;
@@ -999,6 +1079,8 @@ void pair_runs() {
     uint32_t rejected = 0;
     static std::vector<uint8_t> settled;
     settled.assign(runs.size(), 0);
+    static std::vector<Twin> twins;
+    twins.clear();
     for (size_t i = 0; i < runs.size(); i++) {
         uint64_t key = runs[i].draw.key;
         size_t slot = key != 0 ? slot_of(key) : 0;
@@ -1022,6 +1104,13 @@ void pair_runs() {
             then_count++;
         }
         if (count != then_count || count > kMostCopies) {
+            continue;
+        }
+        if (count == 2) {
+            twins.push_back({{now_copies[0], now_copies[1]}, {then_copies[0], then_copies[1]}});
+            settled[now_copies[0]] = 1;
+            settled[now_copies[1]] = 1;
+            head[slot] = kUnmatched;
             continue;
         }
         std::array<uint32_t, kMostCopies> order{};
@@ -1073,6 +1162,7 @@ void pair_runs() {
         }
         head[slot] = kUnmatched;
     }
+    pair_twins(twins.data(), twins.size(), runs, before, paired, rejected);
     for (size_t i = 0; i < runs.size(); i++) {
         RecordedRun& run = runs[i];
         uint64_t key = run.draw.key;
