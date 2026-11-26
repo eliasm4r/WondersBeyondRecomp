@@ -24,6 +24,7 @@ uint32_t other_seconds();
 std::string other_device();
 const char* code_letters();
 const char* rooms_host();
+void say_hello();
 bool room_request(const char* method, const std::string& path, const std::string& body, int& status, std::string& reply);
 
 }

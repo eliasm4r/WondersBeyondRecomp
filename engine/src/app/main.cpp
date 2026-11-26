@@ -16,6 +16,7 @@
 #include <utility>
 
 #include "wp/discord.h"
+#include "wp/cloud_sync.h"
 #include "wp/update_check.h"
 #include "wp/big_stack.h"
 #include "wp/boot.h"
@@ -311,6 +312,7 @@ int run(int argc, char** argv) {
     if (!std::getenv("WP_HEADLESS")) {
         wp::discord::start();
         wp::update::start();
+        wp::cloud::say_hello();
     }
     wp::Cpu cpu{};
     wp::init_threads(cpu);

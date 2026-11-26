@@ -192,7 +192,14 @@ void retrace() {
     }
 }
 
+void keep_remote_connected(Cpu& c) {
+    c.r[3] = 0;
+}
+
 HleFunction replacement(const char* name) {
+    if (std::strcmp(name, "WPADDisconnect") == 0) {
+        return keep_remote_connected;
+    }
     return std::strcmp(name, "SequencerBootUpdate") == 0 ? boot_sequence : nullptr;
 }
 

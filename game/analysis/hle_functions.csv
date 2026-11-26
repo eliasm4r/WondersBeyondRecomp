@@ -4,3 +4,4 @@ OSLoadContext
 OSSwitchFiber
 OSPanic
 SequencerBootUpdate
+WPADDisconnect

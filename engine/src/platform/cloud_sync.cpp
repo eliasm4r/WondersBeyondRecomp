@@ -1,6 +1,7 @@
 #include "wp/cloud_sync.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <condition_variable>
@@ -12,6 +13,7 @@
 #include <fstream>
 #include <iterator>
 #include <mutex>
+#include <random>
 #include <sstream>
 #include <thread>
 
@@ -683,6 +685,36 @@ const char* rooms_host() {
     return kRoomsHost;
 }
 
+
+void say_hello() {
+    static std::atomic<bool> started{false};
+    if (started.exchange(true)) {
+        return;
+    }
+#if defined(__ANDROID__)
+    constexpr char kPlatform[] = "android";
+#elif defined(_WIN32)
+    constexpr char kPlatform[] = "windows";
+#elif defined(__APPLE__)
+    constexpr char kPlatform[] = "macos";
+#else
+    constexpr char kPlatform[] = "linux";
+#endif
+    std::thread([platform = std::string(kPlatform)] {
+        std::random_device random;
+        std::string id;
+        for (int i = 0; i < 32; i++) {
+            id.push_back("0123456789abcdef"[random() % 16]);
+        }
+        const std::string text = id + " " + platform + " " + update::version();
+        const Bytes body(text.begin(), text.end());
+        while (true) {
+            Reply reply;
+            fetch(kRoomsHost, "POST", "/v1/hello", &body, 0, reply);
+            std::this_thread::sleep_for(std::chrono::minutes(5));
+        }
+    }).detach();
+}
 
 bool room_request(const char* method, const std::string& path, const std::string& body, int& status, std::string& reply) {
     Bytes data(body.begin(), body.end());

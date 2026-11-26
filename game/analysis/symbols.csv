@@ -369,3 +369,4 @@ address,name
 0x804129a0,TRKTargetSetInputPendingPtr
 0x80296860,OSSelectThread
 0x801314b0,SequencerBootUpdate
+0x802d4810,WPADDisconnect
