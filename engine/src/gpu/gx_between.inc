@@ -310,7 +310,7 @@ bool blend_turn(Row* out, const Row* a, const Row* b, float t);
 void blend_run(Row* out, const Row* a, const Row* b, float t, uint64_t key) {
     lerp_rows(out, a, b, 2, t);
     bool own = b[1][3] != 0.0f;
-    if (own && (matrix_change(a + 4, b + 4) != kOtherMatrix || !blend_turn(out + 4, a + 4, b + 4, t))) {
+    if (own && (matrix_change(a + 4, b + 4) == kSameMatrix || !blend_turn(out + 4, a + 4, b + 4, t))) {
         blend_matrix(out + 4, a + 4, b + 4, t);
     }
     uint32_t setup = static_cast<uint32_t>(b[3][3]);
@@ -371,7 +371,7 @@ bool blend_turn(Row* out, const Row* a, const Row* b, float t) {
     float step = 0.0f;
     float length = 0.0f;
     for (int i = 0; i < 3; i++) {
-        if (std::fabs(sa[i] - sb[i]) > 0.1f * std::max(sa[i], sb[i])) {
+        if (std::fabs(sa[i] - sb[i]) > 0.5f * std::max(sa[i], sb[i])) {
             return false;
         }
         step += (b[i][3] - a[i][3]) * (b[i][3] - a[i][3]);
@@ -411,7 +411,7 @@ bool blend_turn(Row* out, const Row* a, const Row* b, float t) {
 
 void blend_palette(Row* out, const Row* a, const Row* b, float t) {
     for (uint32_t m = 0; m + 3 <= 64; m += 3) {
-        if (matrix_change(a + m, b + m) != kOtherMatrix || !blend_turn(out + m, a + m, b + m, t)) {
+        if (matrix_change(a + m, b + m) == kSameMatrix || !blend_turn(out + m, a + m, b + m, t)) {
             blend_matrix(out + m, a + m, b + m, t);
         }
     }
