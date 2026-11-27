@@ -643,11 +643,21 @@ void start_from_environment() {
     }
 }
 
+std::vector<std::pair<uint32_t, uint32_t>> given_colors(uint32_t extra);
+
 void update(const std::array<float, 3>& position, uint32_t zone, const presence::Pose& pose) {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_position = position;
     g_pose = pose;
     g_pose.color = own_color_index();
+    if (g_pose.color != 0 && g_session) {
+        for (const auto& player : given_colors(0)) {
+            if (player.first == g_own_id && player.second != g_pose.color) {
+                g_pose.color = player.second;
+                settings::store("online.color", kColorNames[player.second]);
+            }
+        }
+    }
     g_pose.sent_ms = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count());
     g_zone = zone;
     g_updated = Clock::now();
@@ -718,8 +728,7 @@ void say_goodbye() {
     }
 }
 
-uint32_t player_color(uint32_t id) {
-    std::lock_guard<std::mutex> lock(g_mutex);
+std::vector<std::pair<uint32_t, uint32_t>> given_colors(uint32_t extra) {
     std::vector<std::pair<uint32_t, uint32_t>> players;
     if (g_own_id != 0) {
         players.push_back({g_own_id, g_pose.color});
@@ -727,21 +736,22 @@ uint32_t player_color(uint32_t id) {
     for (const presence::Peer& peer : g_peers) {
         players.push_back({peer.id, peer.pose.color});
     }
-    if (std::none_of(players.begin(), players.end(), [&](const auto& player) { return player.first == id; })) {
-        players.push_back({id, 0});
+    if (extra != 0 && std::none_of(players.begin(), players.end(), [&](const auto& player) { return player.first == extra; })) {
+        players.push_back({extra, 0});
     }
     std::sort(players.begin(), players.end());
     bool taken[kChosenColors.size()] = {};
-    std::vector<uint32_t> given(players.size(), 0);
+    std::vector<std::pair<uint32_t, uint32_t>> given(players.size(), {0, 0});
     for (size_t i = 0; i < players.size(); i++) {
+        given[i].first = players[i].first;
         uint32_t wanted = players[i].second;
         if (wanted != 0 && wanted < kChosenColors.size() && !taken[wanted]) {
             taken[wanted] = true;
-            given[i] = wanted;
+            given[i].second = wanted;
         }
     }
-    for (size_t i = 0; i < players.size(); i++) {
-        if (given[i] != 0) {
+    for (auto& player : given) {
+        if (player.second != 0) {
             continue;
         }
         uint32_t free = 1;
@@ -749,14 +759,37 @@ uint32_t player_color(uint32_t id) {
             free++;
         }
         taken[free] = true;
-        given[i] = free;
+        player.second = free;
     }
-    for (size_t i = 0; i < players.size(); i++) {
-        if (players[i].first == id) {
-            return kChosenColors[given[i]];
+    return given;
+}
+
+uint32_t player_color(uint32_t id) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    for (const auto& player : given_colors(id)) {
+        if (player.first == id) {
+            return kChosenColors[player.second];
         }
     }
     return kChosenColors[1];
+}
+
+uint32_t colors_taken() {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (!g_session) {
+        return 0;
+    }
+    uint32_t mask = 0;
+    for (const auto& player : given_colors(0)) {
+        if (player.first != g_own_id) {
+            mask |= 1u << player.second;
+        }
+    }
+    return mask;
+}
+
+uint32_t color_value(uint32_t index) {
+    return index < kChosenColors.size() ? kChosenColors[index] : 0;
 }
 
 uint32_t own_id() {

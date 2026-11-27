@@ -267,6 +267,32 @@ void draw_control(Canvas& canvas, const Menu& menu, const Row& row, bool selecte
         canvas.text(value_face, kWhite, row.value.empty() ? ui::label("menu.reset") : row.value, control.x + unit / 2, control.y, control.x + control.width - unit / 2, control.y + control.height,
                     Align::Center, true);
         break;
+    case Kind::Swatches: {
+        int count = static_cast<int>(row.swatches.size());
+        if (count == 0) {
+            break;
+        }
+        int cell = control.width / count;
+        int size = std::min(cell - std::max(2, unit / 4), control.height);
+        int ring = std::max(2, unit / 6);
+        for (int i = 0; i < count; i++) {
+            int left = control.x + i * cell + (cell - size) / 2;
+            int top = cy - size / 2;
+            bool taken = (row.swatches_taken >> i) & 1u;
+            if (i == row.swatch) {
+                canvas.fill_round(left - ring, top - ring, left + size + ring, top + size + ring, size / 3 + ring, kOrange);
+                canvas.fill_round(left - ring / 2, top - ring / 2, left + size + ring / 2, top + size + ring / 2, size / 3 + ring / 2, kPanel);
+            }
+            uint32_t fill = i == 0 || taken ? kChip : row.swatches[static_cast<size_t>(i)];
+            canvas.fill_round(left, top, left + size, top + size, size / 3, fill);
+            if (i == 0) {
+                canvas.text(value_face, kInk, "A", left, top, left + size, top + size, Align::Center, false);
+            } else if (taken) {
+                canvas.cross(left + size / 2, top + size / 2, size / 4, std::max(2, unit / 8), kChipOffInk);
+            }
+        }
+        break;
+    }
     case Kind::Choice: {
         float half = unit * 0.42f;
         float arrow = unit * 0.8f;

@@ -613,6 +613,9 @@ Kind kind(const std::string& key) {
     if (slider_of(key)) {
         return Kind::Slider;
     }
+    if (key == kOnlineColor) {
+        return Kind::Swatches;
+    }
     std::vector<std::string> options = choices(key);
     return options.size() == 2 && options[0] == "0" && options[1] == "1" ? Kind::Toggle : Kind::Choice;
 }
@@ -830,6 +833,16 @@ std::string step_value(const std::string& key, const std::string& value, int ste
     if (slider_of(key)) {
         return list[static_cast<size_t>(std::clamp(index + step, 0, count - 1))];
     }
+    if (key == kOnlineColor) {
+        uint32_t taken = online::colors_taken();
+        for (int tries = 0; tries < count; tries++) {
+            index = ((index + step) % count + count) % count;
+            if (!((taken >> index) & 1u)) {
+                return list[static_cast<size_t>(index)];
+            }
+        }
+        return value;
+    }
     index = ((index + step) % count + count) % count;
     return list[static_cast<size_t>(index)];
 }
@@ -974,6 +987,15 @@ std::vector<Row> Menu::rows() const {
             std::string value = settings::text(key.c_str(), nullptr);
             row.value = shown_value(key, value);
             row.on = row.kind == Kind::Toggle && enabled_text(value);
+            if (row.kind == Kind::Swatches) {
+                row.swatches_taken = online::colors_taken();
+                for (uint32_t i = 0; i < std::size(online::kColorNames); i++) {
+                    row.swatches.push_back(online::color_value(i));
+                    if (value == online::kColorNames[i]) {
+                        row.swatch = static_cast<int>(i);
+                    }
+                }
+            }
             if (const Slider* slider = slider_of(key)) {
                 row.fraction = std::clamp((std::atoi(value.c_str()) - slider->low) / static_cast<double>(slider->high - slider->low), 0.0, 1.0);
             }
@@ -1020,6 +1042,23 @@ std::string Menu::set_toggle(size_t row, bool on) {
     }
     settings::store(key.c_str(), on ? "1" : "0");
     return key;
+}
+
+std::string Menu::set_swatch(size_t row, double fraction) {
+    std::vector<std::string> list = keys();
+    if (row >= list.size() || kind(list[row]) != Kind::Swatches) {
+        return "";
+    }
+    size_t count = std::size(online::kColorNames);
+    size_t index = std::min(count - 1, static_cast<size_t>(std::clamp(fraction, 0.0, 1.0) * static_cast<double>(count)));
+    if ((online::colors_taken() >> index) & 1u) {
+        return "";
+    }
+    if (settings::text(list[row].c_str(), nullptr) == online::kColorNames[index]) {
+        return "";
+    }
+    settings::store(list[row].c_str(), online::kColorNames[index]);
+    return list[row];
 }
 
 std::string Menu::set_fraction(size_t row, double fraction) {
@@ -1133,7 +1172,7 @@ std::string Menu::handle(Action action) {
         [[fallthrough]];
     case Action::Previous:
     case Action::Next: {
-        if (type != Kind::Choice && type != Kind::Slider && !(type == Kind::Toggle && action == Action::Accept)) {
+        if (type != Kind::Choice && type != Kind::Slider && type != Kind::Swatches && !(type == Kind::Toggle && action == Action::Accept)) {
             return "";
         }
         std::string current = settings::text(key.c_str(), nullptr);
@@ -1174,6 +1213,10 @@ bool type_code(const char* text) {
         }
     }
     return true;
+}
+
+bool name_field_open() {
+    return g_field == kOnlineName;
 }
 
 bool text_field_open() {
@@ -1220,8 +1263,10 @@ bool code_entry_key(unsigned key) {
             const char digit[2] = {static_cast<char>('0' + (key - 0x60)), 0};
             type_code(digit);
         } else if ((key >= '0' && key <= '9') || (key >= 'A' && key <= 'Z')) {
-            const char letter[2] = {static_cast<char>(key), 0};
-            type_code(letter);
+            if (g_field != kOnlineName) {
+                const char letter[2] = {static_cast<char>(key), 0};
+                type_code(letter);
+            }
         } else if (key != 0x20 && key != 0x25 && key != 0x27) {
             return false;
         }

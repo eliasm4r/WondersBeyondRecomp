@@ -247,6 +247,11 @@ std::string menu_click(void* window, int x, int y, bool right) {
     if (type == Kind::Info) {
         return act(window, Action::Accept);
     }
+    if (type == Kind::Swatches) {
+        std::string changed = g_menu.set_swatch(row, control_fraction(frame, placed, row - g_menu.scroll(), x));
+        sync(window);
+        return changed;
+    }
     if (type == Kind::Toggle) {
         std::string changed = g_menu.set_toggle(row, control_fraction(frame, placed, row - g_menu.scroll(), x) < 0.5);
         sync(window);

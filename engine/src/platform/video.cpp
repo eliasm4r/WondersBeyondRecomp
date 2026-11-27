@@ -244,6 +244,14 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         note_key(wparam, lparam);
         return DefWindowProc(window, message, wparam, lparam);
     }
+    case WM_CHAR:
+        if (options::menu_open() && options::name_field_open() && wparam >= 0x20 && wparam < 0x7F && GetKeyState(VK_CONTROL) >= 0) {
+            const char typed[2] = {static_cast<char>(wparam), 0};
+            options::type_code(typed);
+            options::refresh_menu(window);
+            return 0;
+        }
+        return DefWindowProc(window, message, wparam, lparam);
     case WM_SYSKEYDOWN:
     case WM_SYSKEYUP:
         // F10 alone would open the window's system menu and freeze the game until the next key.

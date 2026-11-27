@@ -14,7 +14,7 @@ enum class Action { Up, Down, Previous, Next, Accept, Close, TabPrevious, TabNex
 
 enum class Part { None, Label, Previous, Value, Next, Close, Tab };
 
-enum class Kind { Choice, Toggle, Slider, Key, Pad, Button, Info };
+enum class Kind { Choice, Toggle, Slider, Key, Pad, Button, Info, Swatches };
 
 enum class Device { Keyboard, Gamepad };
 
@@ -35,6 +35,9 @@ struct Row {
     bool live = false;
     bool on = false;
     double fraction = 0.0;
+    std::vector<uint32_t> swatches;
+    uint32_t swatches_taken = 0;
+    int swatch = -1;
     std::string help;
 };
 
@@ -52,6 +55,7 @@ bool code_entry_key(unsigned key);
 bool type_code(const char* text);
 bool code_entry_open();
 bool text_field_open();
+bool name_field_open();
 bool take_keyboard_request();
 void paste_text(const std::string& text);
 void cancel_text_field();
@@ -72,6 +76,7 @@ public:
     // Moves the slider of this row to a position between 0 and 1.
     std::string set_fraction(size_t row, double fraction);
     std::string set_toggle(size_t row, bool on);
+    std::string set_swatch(size_t row, double fraction);
     // A key or gamepad row waiting for the input to bind.
     bool capturing() const { return capturing_; }
     Kind capture_kind() const;
