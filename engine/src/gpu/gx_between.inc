@@ -318,11 +318,20 @@ bool same_shape(const RunDraw& before, const RunDraw& now, const Row* a, const R
 
 bool blend_turn(Row* out, const Row* a, const Row* b, float t);
 
-void blend_run(Row* out, const Row* a, const Row* b, float t, uint64_t key) {
+bool turns_wanted() {
+    static const settings::LiveFlag turns("video.between_turns", "WP_BETWEEN_TURNS");
+    return turns();
+}
+
+void blend_run(Row* out, const Row* a, const Row* b, float t, uint64_t key, bool skinned) {
     lerp_rows(out, a, b, 2, t);
     bool own = b[1][3] != 0.0f;
-    if (own && (matrix_change(a + 4, b + 4) == kSameMatrix || !blend_turn(out + 4, a + 4, b + 4, t))) {
-        blend_matrix(out + 4, a + 4, b + 4, t);
+    if (own) {
+        MatrixChange change = matrix_change(a + 4, b + 4);
+        bool turn = turns_wanted() && change != kSameMatrix && (skinned || change == kOtherMatrix);
+        if (!turn || !blend_turn(out + 4, a + 4, b + 4, t)) {
+            blend_matrix(out + 4, a + 4, b + 4, t);
+        }
     }
     uint32_t setup = static_cast<uint32_t>(b[3][3]);
     uint32_t units = std::min(setup & 15u, 8u);
@@ -449,7 +458,7 @@ bool blend_turn(Row* out, const Row* a, const Row* b, float t) {
 
 void blend_palette(Row* out, const Row* a, const Row* b, float t) {
     for (uint32_t m = 0; m + 3 <= 64; m += 3) {
-        if (matrix_change(a + m, b + m) == kSameMatrix || !blend_turn(out + m, a + m, b + m, t)) {
+        if (matrix_change(a + m, b + m) == kSameMatrix || !turns_wanted() || !blend_turn(out + m, a + m, b + m, t)) {
             blend_matrix(out + m, a + m, b + m, t);
         }
     }
@@ -1405,10 +1414,10 @@ bool replay_runs(const RecordedCommand& command, float t) {
         if (turning) {
             moved.assign(then, then + run.draw.rows);
             move_run(g_run_camera.move, moved.data());
-            blend_run(out, moved.data(), now, t, run.draw.key);
+            blend_run(out, moved.data(), now, t, run.draw.key, run.draw.palette != kNoPalette);
             move_run(turn_at(t), out);
         } else if (before) {
-            blend_run(out, then, now, t, run.draw.key);
+            blend_run(out, then, now, t, run.draw.key, run.draw.palette != kNoPalette);
         }
         if (run.draw.palette != kNoPalette) {
             out[3][2] = static_cast<float>(static_cast<int>(palette_at) - static_cast<int>(at));

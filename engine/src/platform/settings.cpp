@@ -52,6 +52,7 @@ const Option kBaseOptions[] = {
     {"video.gpu_vertices", "1"},
     {"video.keep_models", "1"},
     {"video.gpu_between", "1"},
+    {"video.between_turns", "1"},
     {"video.custom_textures", "1"},
     {"input.gamepads", "1"},
     {"input.joycon_pairs", "1"},
