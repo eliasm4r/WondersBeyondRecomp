@@ -1494,8 +1494,11 @@ void match_by(uint64_t RecordedDraw::*key, std::vector<uint32_t>& partner, std::
         uint32_t next = ~0u;
         uint32_t before = 0;
         uint32_t now = 0;
+        uint32_t first_now = ~0u;
     };
     static std::vector<Slot> table;
+    static std::vector<uint32_t> next_now;
+    next_now.assign(g_record.draws.size(), ~0u);
     static std::vector<uint32_t> next_same;
     size_t size = 1;
     while (size < (g_previous.draws.size() + g_record.draws.size()) * 2) {
@@ -1523,9 +1526,12 @@ void match_by(uint64_t RecordedDraw::*key, std::vector<uint32_t>& partner, std::
         entry.next = static_cast<uint32_t>(i);
         entry.before++;
     }
-    for (size_t d = 0; d < g_record.draws.size(); d++) {
+    for (size_t d = g_record.draws.size(); d-- > 0;) {
         if (partner[d] == kUnmatched && g_record.draws[d].*key != 0) {
-            slot(g_record.draws[d].*key).now++;
+            Slot& entry = slot(g_record.draws[d].*key);
+            entry.now++;
+            next_now[d] = entry.first_now;
+            entry.first_now = static_cast<uint32_t>(d);
         }
     }
     for (size_t d = 0; d < g_record.draws.size(); d++) {
@@ -1541,7 +1547,7 @@ void match_by(uint64_t RecordedDraw::*key, std::vector<uint32_t>& partner, std::
         if (p == ~0u) {
             continue;
         }
-        if (entry.before > 1) {
+        if (entry.before > 1 || entry.now > 1) {
             float best = draw_gap(g_previous.draws[p], draw);
             uint32_t looked = 1;
             for (uint32_t other = next_same[p]; other != ~0u && looked < kCopyCandidates && best > 0.0f; other = next_same[other]) {
@@ -1554,6 +1560,21 @@ void match_by(uint64_t RecordedDraw::*key, std::vector<uint32_t>& partner, std::
                     best = gap;
                     p = other;
                 }
+            }
+        }
+        if (entry.now > 1) {
+            float mine = draw_gap(g_previous.draws[p], draw);
+            bool closer = false;
+            uint32_t looked = 0;
+            for (uint32_t other = entry.first_now; other != ~0u && !closer && looked < kCopyCandidates; other = next_now[other]) {
+                if (other == d || partner[other] != kUnmatched) {
+                    continue;
+                }
+                looked++;
+                closer = draw_gap(g_previous.draws[p], g_record.draws[other]) < mine;
+            }
+            if (closer) {
+                continue;
             }
         }
         claimed[p] = 1;
