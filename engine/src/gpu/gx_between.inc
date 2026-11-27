@@ -142,6 +142,17 @@ bool close_draw(const RecordedDraw& before, const RecordedDraw& draw) {
 bool g_run_cut = false;
 std::array<std::string, 256> g_pair_notes;
 bool g_pair_notes_wanted = false;
+std::string g_copy_notes;
+
+template <typename... Values>
+void note_copy(const char* format, Values... values) {
+    if (!g_pair_notes_wanted || g_copy_notes.size() > 4000) {
+        return;
+    }
+    char part[200];
+    std::snprintf(part, sizeof part, format, values...);
+    g_copy_notes += part;
+}
 uint32_t g_run_counts[6] = {};
 std::vector<Row> g_replay_rows;
 std::vector<RunDraw> g_replay_draws;
@@ -815,6 +826,7 @@ std::vector<uint8_t> g_run_turns;
 constexpr float kSameObject = 0.15f;
 constexpr float kOrderSlack = 0.05f;
 constexpr float kTwinsApart = 0.1f;
+constexpr float kOrderShare = 0.5f;
 
 bool same_object(const RecordedRun& first, const RecordedRun& run) {
     if (first.draw.camera != run.draw.camera) {
@@ -988,13 +1000,19 @@ void pair_twins(const Twin* twins, size_t count, std::vector<RecordedRun>& runs,
         float away = run_away(runs[twin.now[0]]);
         straight[r] += s;
         crossed[r] += c;
-        bool twins_close = now_apart(runs[twin.now[0]], runs[twin.now[1]]) <= kTwinsApart * away && s - std::min(s, c) <= kOrderSlack * away * 2.0f;
+        float apart = now_apart(runs[twin.now[0]], runs[twin.now[1]]);
+        bool twins_close = apart <= kTwinsApart * away && s - std::min(s, c) <= std::min(kOrderSlack * away * 2.0f, kOrderShare * apart);
         close[r] = close[r] && twins_close;
     }
     for (size_t i = 0; i < count; i++) {
         const Twin& twin = twins[i];
         uint32_t r = root(static_cast<uint32_t>(i));
         bool swap = !close[r] && crossed[r] < straight[r];
+        if (crossed[r] < straight[r] || swap) {
+            const Row* x = &g_record.rows[runs[twin.now[0]].draw.matrix];
+            note_copy(" | twins %04x at %.1f %.1f %.1f apart %.1f straight %.1f crossed %.1f %s", static_cast<unsigned>(runs[twin.now[0]].draw.key & 0xFFFF), x[0][3], x[1][3], x[2][3],
+                      now_apart(runs[twin.now[0]], runs[twin.now[1]]), straight[r], crossed[r], swap ? "swapped" : "kept");
+        }
         for (int k = 0; k < 2; k++) {
             RecordedRun& run = runs[twin.now[k]];
             uint32_t then = twin.then[swap ? 1 - k : k];
@@ -1073,6 +1091,7 @@ void pair_runs() {
             unique[i] = head[slot];
         }
     }
+    g_copy_notes.clear();
     find_run_camera(unique);
     prepare_turn();
     uint32_t paired = 0;
@@ -1143,7 +1162,11 @@ void pair_runs() {
                 apart = std::min(apart, std::fabs(x[0][3] - y[0][3]) + std::fabs(x[1][3] - y[1][3]) + std::fabs(x[2][3] - y[2][3]));
             }
         }
-        if (apart <= kTwinsApart * away && drawn_total - best_total <= kOrderSlack * away * static_cast<float>(count)) {
+        bool keep_order = apart <= kTwinsApart * away && drawn_total - best_total <= std::min(kOrderSlack * away * static_cast<float>(count), kOrderShare * apart);
+        if (drawn_total > best_total) {
+            note_copy(" | %u copies %04x apart %.1f drawn %.1f best %.1f %s", count, static_cast<unsigned>(key & 0xFFFF), apart, drawn_total, best_total, keep_order ? "kept" : "reordered");
+        }
+        if (keep_order) {
             for (uint32_t k = 0; k < count; k++) {
                 best_order[k] = k;
             }
@@ -1247,6 +1270,7 @@ void pair_runs() {
         char part[160];
         std::snprintf(part, sizeof part, "frame %llu runs %zu paired %u far %u cut %d:", static_cast<unsigned long long>(g_frame), runs.size(), paired, rejected, g_run_cut);
         note = part;
+        note += g_copy_notes;
         for (size_t i = 0; i < runs.size() && note.size() < 6000; i++) {
             uint64_t key = runs[i].draw.key;
             size_t slot = key != 0 ? slot_of(key) : 0;
@@ -1574,8 +1598,13 @@ void match_by(uint64_t RecordedDraw::*key, std::vector<uint32_t>& partner, std::
                 closer = draw_gap(g_previous.draws[p], g_record.draws[other]) < mine;
             }
             if (closer) {
+                note_copy(" | free %04x left alone, gap %.3f", static_cast<unsigned>(draw.*key & 0xFFFF), mine);
                 continue;
             }
+        }
+        if (p != entry.next) {
+            note_copy(" | free %04x took copy %u over %u, gap %.3f instead of %.3f", static_cast<unsigned>(draw.*key & 0xFFFF), p, entry.next, draw_gap(g_previous.draws[p], draw),
+                      draw_gap(g_previous.draws[entry.next], draw));
         }
         claimed[p] = 1;
         kind[d] = entry.before != entry.now ? kCountChanged : (entry.now == 1 ? kOnly : kSameCount);
@@ -1854,8 +1883,12 @@ void pair_frame() {
     uint32_t moved_too_far = 0;
     static std::vector<uint8_t> kind;
     kind.assign(g_record.draws.size(), kNoPair);
+    g_copy_notes.clear();
     match_by(&RecordedDraw::exact, partner, taken, kind, moved_too_far);
     match_by(&RecordedDraw::key, partner, taken, kind, moved_too_far);
+    if (g_pair_notes_wanted && !g_copy_notes.empty()) {
+        g_pair_notes[g_frame % g_pair_notes.size()] += g_copy_notes;
+    }
     find_cameras(partner, kind);
     adopt_run_camera();
     static bool forward[kMaxCameras];
