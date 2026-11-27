@@ -37,6 +37,8 @@ void set_view(const View& view, std::vector<Marker> markers);
 void set_picture(const options::Rect& picture);
 bool take(uint64_t& version, options::Image& image, bool& visible);
 options::Rect place();
+uint64_t freeze();
+void showing(uint64_t serial, float fraction);
 void toggle_list();
 bool list_open();
 

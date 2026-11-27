@@ -825,6 +825,16 @@ void step(Cpu& c, bool active, uint32_t frame) {
 
 }
 
+bool puppets_position(uint32_t peer, std::array<float, 3>& position) {
+    for (const Puppet& puppet : g_puppets) {
+        if (puppet.peer == peer && puppet.ready) {
+            position = puppet.position;
+            return true;
+        }
+    }
+    return false;
+}
+
 bool puppets_shot_starting(uint32_t accessor) {
     return std::find(g_starting_shots.begin(), g_starting_shots.end(), accessor) != g_starting_shots.end() ||
            std::find(g_new_shots.begin(), g_new_shots.end(), accessor) != g_new_shots.end();

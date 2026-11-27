@@ -171,7 +171,9 @@ void publish_player() {
     std::vector<ghosts::Marker> markers;
     for (const presence::Peer& peer : online::peers()) {
         if (names() && peer.zone != 0 && peer.zone == zone) {
-            markers.push_back({{peer.position[0], peer.position[1] + kMarkerHeight, peer.position[2]}, peer.name, online::player_color(peer.id)});
+            std::array<float, 3> at = peer.position;
+            puppets_position(peer.id, at);
+            markers.push_back({{at[0], at[1] + kMarkerHeight, at[2]}, peer.name, online::player_color(peer.id)});
         }
     }
     ghosts::View view;

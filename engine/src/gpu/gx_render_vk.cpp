@@ -2830,6 +2830,7 @@ std::vector<CommandColors> g_previous_colors;
 std::vector<uint32_t> g_color_partner;
 size_t g_frame_vertices = 0;
 uint32_t g_interpolated_ready = 0;
+float g_between_fractions[kMaxBetween] = {};
 std::atomic<uint32_t> g_interpolated_frames{0};
 uint32_t g_ring_marks[3] = {};
 
@@ -4796,6 +4797,7 @@ uint32_t run_interpolated(int x, int y, int width, int height, bool depth, const
     uint32_t count = std::min<uint32_t>(plan.images, kMaxBetween);
     uint32_t made = 0;
     while (made < count && replay_between(g_matches, plan.fractions[made], g_device.interpolated[made], x, y, width, height, depth, filter)) {
+        g_between_fractions[made] = plan.fractions[made];
         made++;
     }
     g_replays += made;
@@ -4872,14 +4874,17 @@ struct ShownImage {
     Target target;
     std::chrono::steady_clock::time_point due;
     bool interpolated = false;
+    uint64_t labels = 0;
+    float fraction = 1.0f;
 };
 
 constexpr size_t kShownImages = kMaxBetween + 3;
+uint64_t g_labels = 0;
 ShownImage g_shown[kShownImages];
 std::deque<size_t> g_show_queue;
 std::chrono::steady_clock::time_point g_last_shown;
 
-bool queue_image(const Target& source, std::chrono::steady_clock::time_point due, bool interpolated) {
+bool queue_image(const Target& source, std::chrono::steady_clock::time_point due, bool interpolated, float fraction) {
     size_t free = kShownImages;
     for (size_t i = 0; i < kShownImages && free == kShownImages; i++) {
         if (std::find(g_show_queue.begin(), g_show_queue.end(), i) == g_show_queue.end()) {
@@ -4900,6 +4905,8 @@ bool queue_image(const Target& source, std::chrono::steady_clock::time_point due
     copy_image(*source.image, *image.target.image);
     image.due = due;
     image.interpolated = interpolated;
+    image.labels = g_labels;
+    image.fraction = fraction;
     g_show_queue.push_back(free);
     return true;
 }
@@ -5031,6 +5038,7 @@ void service_deferred() {
     size_t skipped = ready > 2 ? ready - 2 : 0;
     ready = skipped + 1;
     const ShownImage& image = g_shown[g_show_queue[ready - 1]];
+    ghosts::showing(image.labels, image.fraction);
     if (present_image(g_present_window, g_present_aspect, image.target.image) && image.interpolated) {
         g_interpolated_frames++;
     }
@@ -5439,8 +5447,12 @@ bool present_frame(void* window_handle, double aspect) {
     static uint64_t queued_frame = 0;
     bool fresh = queued_frame != g_frame;
     queued_frame = g_frame;
+    if (fresh) {
+        g_labels = ghosts::freeze();
+    }
     bool presented = true;
     if (g_interpolated_ready == 0 && g_show_queue.empty()) {
+        ghosts::showing(g_labels, 1.0f);
         static const char* const repeat_setting = std::getenv("WP_VK_REPEAT_PRESENTS");
         static const bool repeat = repeat_setting && std::atoi(repeat_setting) != 0;
         if (fresh || gx::veil_moving() || (!g_recording && (repeat || !overlays_unchanged(window)))) {
@@ -5465,13 +5477,13 @@ bool present_frame(void* window_handle, double aspect) {
         auto step = std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(g_slot));
         auto slot = std::max(now, last + step);
         for (uint32_t i = 0; i < g_interpolated_ready; i++) {
-            if (queue_image(g_device.interpolated[i], slot, true)) {
+            if (queue_image(g_device.interpolated[i], slot, true, g_between_fractions[i])) {
                 slot += step;
             }
         }
         g_interpolated_ready = 0;
         if (g_show_real) {
-            queue_image(g_device.frame, slot, false);
+            queue_image(g_device.frame, slot, false, 1.0f);
         } else {
             g_hidden_frames++;
         }

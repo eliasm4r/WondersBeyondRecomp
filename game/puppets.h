@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+
 #include "wp/cpu.h"
 #include "wp/hle.h"
 
@@ -14,5 +16,6 @@ void puppets_skip_in_search(Cpu& c, HleFunction original);
 uint32_t puppets_model_object(Cpu& c, uint32_t accessor);
 void puppets_scene_change(Cpu& c);
 void puppets_visibility_step(Cpu& c, HleFunction original);
+bool puppets_position(uint32_t peer, std::array<float, 3>& position);
 
 }

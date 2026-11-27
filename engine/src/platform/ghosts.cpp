@@ -59,7 +59,19 @@ struct PanelBox {
     const std::vector<Line>* lines = nullptr;
 };
 
+struct Frozen {
+    uint64_t serial = 0;
+    View view{};
+    std::vector<Marker> markers;
+};
+
+constexpr size_t kFrozenFrames = 6;
+
 std::mutex g_mutex;
+Frozen g_frozen[kFrozenFrames];
+uint64_t g_frozen_serial = 0;
+uint64_t g_showing_serial = 0;
+float g_showing_fraction = 1.0f;
 std::atomic<bool> g_active{false};
 Projection g_projection;
 bool g_have_projection = false;
@@ -217,11 +229,30 @@ options::Image render(options::Rect& placed, bool show_markers) {
     int right = g_picture.x;
     int bottom = g_picture.y;
     static const std::vector<Marker> kNoMarkers;
-    for (const Marker& marker : show_markers && g_have_projection ? g_markers : kNoMarkers) {
+    const Frozen* now = nullptr;
+    const Frozen* before = nullptr;
+    for (const Frozen& frozen : g_frozen) {
+        if (g_showing_serial != 0 && frozen.serial == g_showing_serial) {
+            now = &frozen;
+        } else if (g_showing_serial > 1 && frozen.serial == g_showing_serial - 1) {
+            before = &frozen;
+        }
+    }
+    const View& view = now ? now->view : g_view;
+    for (const Marker& marker : show_markers && g_have_projection ? (now ? now->markers : g_markers) : kNoMarkers) {
         float u = 0.0f;
         float v = 0.0f;
-        if (!to_picture(g_projection, g_view, marker.position, u, v)) {
+        if (!to_picture(g_projection, view, marker.position, u, v)) {
             continue;
+        }
+        if (before && g_showing_fraction < 1.0f) {
+            auto earlier = std::find_if(before->markers.begin(), before->markers.end(), [&](const Marker& other) { return other.name == marker.name; });
+            float earlier_u = 0.0f;
+            float earlier_v = 0.0f;
+            if (earlier != before->markers.end() && to_picture(g_projection, before->view, earlier->position, earlier_u, earlier_v)) {
+                u = earlier_u + (u - earlier_u) * g_showing_fraction;
+                v = earlier_v + (v - earlier_v) * g_showing_fraction;
+            }
         }
         int width = std::min(g_picture.width, static_cast<int>(std::ceil(canvas::text_width(face, marker.name))) + padding * 2);
         int tip_x = g_picture.x + static_cast<int>(u * g_picture.width);
@@ -379,6 +410,27 @@ bool take(uint64_t& version, options::Image& image, bool& visible) {
     version = g_version;
     visible = g_shown;
     return true;
+}
+
+uint64_t freeze() {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    Frozen& slot = g_frozen[++g_frozen_serial % kFrozenFrames];
+    slot.serial = g_frozen_serial;
+    slot.view = g_view;
+    slot.markers = g_markers;
+    return g_frozen_serial;
+}
+
+void showing(uint64_t serial, float fraction) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (serial == g_showing_serial && fraction == g_showing_fraction) {
+        return;
+    }
+    g_showing_serial = serial;
+    g_showing_fraction = fraction;
+    if (!g_markers.empty()) {
+        g_dirty = true;
+    }
 }
 
 options::Rect place() {
