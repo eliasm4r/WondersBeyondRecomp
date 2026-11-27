@@ -1465,6 +1465,25 @@ void parallel_for(size_t count, const Body& body) {
     pool->done.wait(lock, [&] { return pool->working == 0; });
 }
 
+constexpr uint32_t kCopyCandidates = 8;
+
+float draw_gap(const RecordedDraw& before, const RecordedDraw& draw) {
+    if (before.positions != draw.positions || draw.positions == 0) {
+        return 1e30f;
+    }
+    float gap = 0.0f;
+    uint32_t samples[3] = {0, draw.positions / 2, draw.positions - 1};
+    for (uint32_t i : samples) {
+        const std::array<float, 4>& a = g_previous.positions[before.first_position + i];
+        const std::array<float, 4>& b = g_record.positions[draw.first_position + i];
+        if (std::isnan(a[0]) || std::isnan(b[0]) || a[3] <= 0.0f || b[3] <= 0.0f) {
+            return 1e29f;
+        }
+        gap += std::fabs(a[0] / a[3] - b[0] / b[3]) + std::fabs(a[1] / a[3] - b[1] / b[3]);
+    }
+    return gap;
+}
+
 void match_by(uint64_t RecordedDraw::*key, std::vector<uint32_t>& partner, std::vector<uint8_t>& taken, std::vector<uint8_t>& kind,
               uint32_t& moved_too_far) {
     static std::vector<std::pair<uint32_t, uint32_t>> candidates;
@@ -1492,6 +1511,8 @@ void match_by(uint64_t RecordedDraw::*key, std::vector<uint32_t>& partner, std::
         return table[i];
     };
     next_same.assign(g_previous.draws.size(), ~0u);
+    static std::vector<uint8_t> claimed;
+    claimed.assign(g_previous.draws.size(), 0);
     for (size_t i = g_previous.draws.size(); i-- > 0;) {
         uint64_t value = g_previous.draws[i].*key;
         if (value == 0 || taken[i]) {
@@ -1513,11 +1534,29 @@ void match_by(uint64_t RecordedDraw::*key, std::vector<uint32_t>& partner, std::
             continue;
         }
         Slot& entry = slot(draw.*key);
+        while (entry.next != ~0u && claimed[entry.next]) {
+            entry.next = next_same[entry.next];
+        }
         uint32_t p = entry.next;
         if (p == ~0u) {
             continue;
         }
-        entry.next = next_same[p];
+        if (entry.before > 1) {
+            float best = draw_gap(g_previous.draws[p], draw);
+            uint32_t looked = 1;
+            for (uint32_t other = next_same[p]; other != ~0u && looked < kCopyCandidates && best > 0.0f; other = next_same[other]) {
+                if (claimed[other]) {
+                    continue;
+                }
+                looked++;
+                float gap = draw_gap(g_previous.draws[other], draw);
+                if (gap < best) {
+                    best = gap;
+                    p = other;
+                }
+            }
+        }
+        claimed[p] = 1;
         kind[d] = entry.before != entry.now ? kCountChanged : (entry.now == 1 ? kOnly : kSameCount);
         const RecordedDraw& before = g_previous.draws[p];
         if (before.positions != draw.positions || draw.vertices == 0) {
