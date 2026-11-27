@@ -93,6 +93,7 @@ constexpr size_t kKeptSnapshots = 32;
 constexpr float kTeleport = 30.0f;
 constexpr float kRunning = 0.06f;
 constexpr float kGroundLift = 0.5f;
+constexpr float kBaseAgree = 0.5f;
 constexpr float kModelOff = 3.0f;
 constexpr uint32_t kNameSpace = 0x200;
 constexpr uint32_t kHitSlot = 0x68;
@@ -187,6 +188,7 @@ struct Puppet {
     std::array<float, 3> position{};
     uint32_t accessor = 0;
     std::array<float, 3> base{};
+    std::array<float, 3> pending_base{};
     bool base_known = false;
     int unstepped = 0;
     int off_logged = 0;
@@ -623,10 +625,19 @@ void follow(Cpu& c, Puppet& puppet, const presence::Peer& peer, uint32_t frame) 
             puppet.seen_world[r] = world[r];
         }
         if (fresh && recomputed && (world[0] != 0.0f || world[1] != 0.0f || world[2] != 0.0f) && (world[0] != local[0] || world[1] != local[1] || world[2] != local[2])) {
+            std::array<float, 3> sample{};
+            float change = 0.0f;
+            float agree = 0.0f;
             for (uint32_t r = 0; r < 3; r++) {
-                puppet.base[r] = world[r] - local[r];
+                sample[r] = world[r] - local[r];
+                change += std::fabs(sample[r] - puppet.base[r]);
+                agree += std::fabs(sample[r] - puppet.pending_base[r]);
             }
-            puppet.base_known = true;
+            if (!puppet.base_known || change <= kBaseAgree || agree <= kBaseAgree) {
+                puppet.base = sample;
+                puppet.base_known = true;
+            }
+            puppet.pending_base = sample;
         }
         puppet.model_object = model_object;
         puppet.last_local = puppet.seen_local;
