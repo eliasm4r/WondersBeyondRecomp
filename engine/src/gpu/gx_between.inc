@@ -920,6 +920,65 @@ constexpr float kFarthestStep = 0.1f;
 constexpr float kTeleportStep = 0.75f;
 constexpr uint32_t kMostCopies = 4;
 
+constexpr uint32_t kShiftCopies = 16;
+constexpr float kSameShift = 1e-3f;
+constexpr float kRunShiftShare = 0.25f;
+
+bool screen_point(const std::array<float, 4>& p, float* out) {
+    if (std::isnan(p[0]) || !(p[3] > 0.0f)) {
+        return false;
+    }
+    out[0] = p[0] / p[3];
+    out[1] = p[1] / p[3];
+    return true;
+}
+
+template <typename NowOf, typename BeforeOf>
+bool shared_shift(uint32_t now_count, NowOf now_at, uint32_t before_count, BeforeOf before_at, float tolerance, int axes, float (&shift)[3]) {
+    float now[kShiftCopies][3];
+    float before[kShiftCopies][3];
+    uint32_t n = 0;
+    uint32_t m = 0;
+    for (uint32_t i = 0; i < now_count && n < kShiftCopies; i++) {
+        n += now_at(i, now[n]);
+    }
+    for (uint32_t i = 0; i < before_count && m < kShiftCopies; i++) {
+        m += before_at(i, before[m]);
+    }
+    if (n < 2 || m < 2) {
+        return false;
+    }
+    uint32_t best = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        for (uint32_t j = 0; j < m; j++) {
+            float delta[3] = {};
+            for (int a = 0; a < axes; a++) {
+                delta[a] = now[i][a] - before[j][a];
+            }
+            uint32_t support = 0;
+            for (uint32_t k = 0; k < n; k++) {
+                for (uint32_t l = 0; l < m; l++) {
+                    bool fits = true;
+                    for (int a = 0; a < axes && fits; a++) {
+                        fits = std::fabs(now[k][a] - before[l][a] - delta[a]) <= tolerance;
+                    }
+                    if (fits) {
+                        support++;
+                        break;
+                    }
+                }
+            }
+            if (support > best) {
+                best = support;
+                std::copy(delta, delta + 3, shift);
+            }
+        }
+    }
+    return best >= 2 && best * 2 > std::min(n, m);
+}
+
+std::vector<std::array<float, 3>> g_run_shift;
+
 float run_distance(const RecordedRun& before, const RecordedRun& run, bool with_camera = true) {
     const Row* a = &g_previous.rows[before.draw.matrix];
     const Row* b = &g_record.rows[run.draw.matrix];
@@ -930,8 +989,10 @@ float run_distance(const RecordedRun& before, const RecordedRun& run, bool with_
             distance += std::fabs(r[0] * a[0][3] + r[1] * a[1][3] + r[2] * a[2][3] + r[3] - b[i][3]);
         }
     } else {
+        size_t index = static_cast<size_t>(&run - g_record.runs.data());
+        const float* shift = with_camera && index < g_run_shift.size() ? g_run_shift[index].data() : nullptr;
         for (int i = 0; i < 3; i++) {
-            distance += std::fabs(b[i][3] - a[i][3]);
+            distance += std::fabs(b[i][3] - a[i][3] - (shift ? shift[i] : 0.0f));
         }
     }
     return std::isfinite(distance) ? distance : 1e30f;
@@ -1103,6 +1164,48 @@ void pair_runs() {
     g_copy_notes.clear();
     find_run_camera(unique);
     prepare_turn();
+    g_run_shift.assign(runs.size(), {0.0f, 0.0f, 0.0f});
+    for (size_t i = 0; i < runs.size(); i++) {
+        uint64_t key = runs[i].draw.key;
+        size_t slot = key != 0 ? slot_of(key) : 0;
+        if (key == 0 || keys[slot] != key || last[slot] != i || later[i] == kUnmatched || head[slot] == kUnmatched || next[head[slot]] == kUnmatched) {
+            continue;
+        }
+        if (g_run_camera.valid && run_perspective(g_record, runs[i])) {
+            continue;
+        }
+        uint32_t nows[kShiftCopies];
+        uint32_t thens[kShiftCopies];
+        uint32_t n = 0;
+        uint32_t m = 0;
+        for (uint32_t k = static_cast<uint32_t>(i); k != kUnmatched && n < kShiftCopies; k = later[k]) {
+            nows[n++] = k;
+        }
+        for (uint32_t k = head[slot]; k != kUnmatched && m < kShiftCopies; k = next[k]) {
+            thens[m++] = k;
+        }
+        float spacing = 1e30f;
+        for (uint32_t a = 0; a < n; a++) {
+            for (uint32_t b = a + 1; b < n; b++) {
+                spacing = std::min(spacing, now_apart(runs[nows[a]], runs[nows[b]]));
+            }
+        }
+        auto place = [](const FrameRecord& record, const RecordedRun& run, float (&out)[3]) {
+            const Row* r = &record.rows[run.draw.matrix];
+            for (int a = 0; a < 3; a++) {
+                out[a] = r[a][3];
+            }
+            return std::isfinite(out[0]) && std::isfinite(out[1]) && std::isfinite(out[2]);
+        };
+        float found[3] = {};
+        if (spacing > 0.0f && shared_shift(
+                                  n, [&](uint32_t k, float (&out)[3]) { return place(g_record, runs[nows[k]], out); }, m,
+                                  [&](uint32_t k, float (&out)[3]) { return place(g_previous, before[thens[k]], out); }, kRunShiftShare * spacing, 3, found)) {
+            for (uint32_t k = 0; k < n; k++) {
+                g_run_shift[nows[k]] = {found[0], found[1], found[2]};
+            }
+        }
+    }
     uint32_t paired = 0;
     uint32_t rejected = 0;
     static std::vector<uint8_t> settled;
@@ -1500,7 +1603,7 @@ void parallel_for(size_t count, const Body& body) {
 
 constexpr uint32_t kCopyCandidates = 8;
 
-float draw_gap(const RecordedDraw& before, const RecordedDraw& draw) {
+float draw_gap(const RecordedDraw& before, const RecordedDraw& draw, const float (&shift)[2] = {0.0f, 0.0f}) {
     if (before.positions != draw.positions || draw.positions == 0) {
         return 1e30f;
     }
@@ -1512,7 +1615,7 @@ float draw_gap(const RecordedDraw& before, const RecordedDraw& draw) {
         if (std::isnan(a[0]) || std::isnan(b[0]) || a[3] <= 0.0f || b[3] <= 0.0f) {
             return 1e29f;
         }
-        gap += std::fabs(a[0] / a[3] - b[0] / b[3]) + std::fabs(a[1] / a[3] - b[1] / b[3]);
+        gap += std::fabs(a[0] / a[3] + shift[0] - b[0] / b[3]) + std::fabs(a[1] / a[3] + shift[1] - b[1] / b[3]);
     }
     return gap;
 }
@@ -1528,6 +1631,8 @@ void match_by(uint64_t RecordedDraw::*key, std::vector<uint32_t>& partner, std::
         uint32_t before = 0;
         uint32_t now = 0;
         uint32_t first_now = ~0u;
+        bool looked = false;
+        float shift[2] = {};
     };
     static std::vector<Slot> table;
     static std::vector<uint32_t> next_now;
@@ -1580,15 +1685,38 @@ void match_by(uint64_t RecordedDraw::*key, std::vector<uint32_t>& partner, std::
         if (p == ~0u) {
             continue;
         }
+        if ((entry.before > 1 || entry.now > 1) && !entry.looked) {
+            entry.looked = true;
+            uint32_t nows[kShiftCopies];
+            uint32_t thens[kShiftCopies];
+            uint32_t n = 0;
+            uint32_t m = 0;
+            for (uint32_t other = entry.first_now; other != ~0u && n < kShiftCopies; other = next_now[other]) {
+                nows[n++] = other;
+            }
+            for (uint32_t other = p; other != ~0u && m < kShiftCopies; other = next_same[other]) {
+                if (!claimed[other]) {
+                    thens[m++] = other;
+                }
+            }
+            float found[3] = {};
+            if (shared_shift(
+                    n, [&](uint32_t i, float (&out)[3]) { return g_record.draws[nows[i]].positions != 0 && screen_point(g_record.positions[g_record.draws[nows[i]].first_position], out); },
+                    m, [&](uint32_t i, float (&out)[3]) { return g_previous.draws[thens[i]].positions != 0 && screen_point(g_previous.positions[g_previous.draws[thens[i]].first_position], out); },
+                    kSameShift, 2, found)) {
+                entry.shift[0] = found[0];
+                entry.shift[1] = found[1];
+            }
+        }
         if (entry.before > 1 || entry.now > 1) {
-            float best = draw_gap(g_previous.draws[p], draw);
+            float best = draw_gap(g_previous.draws[p], draw, entry.shift);
             uint32_t looked = 1;
             for (uint32_t other = next_same[p]; other != ~0u && looked < kCopyCandidates && best > 0.0f; other = next_same[other]) {
                 if (claimed[other]) {
                     continue;
                 }
                 looked++;
-                float gap = draw_gap(g_previous.draws[other], draw);
+                float gap = draw_gap(g_previous.draws[other], draw, entry.shift);
                 if (gap < best) {
                     best = gap;
                     p = other;
@@ -1596,7 +1724,7 @@ void match_by(uint64_t RecordedDraw::*key, std::vector<uint32_t>& partner, std::
             }
         }
         if (entry.now > 1) {
-            float mine = draw_gap(g_previous.draws[p], draw);
+            float mine = draw_gap(g_previous.draws[p], draw, entry.shift);
             bool closer = false;
             uint32_t looked = 0;
             for (uint32_t other = entry.first_now; other != ~0u && !closer && looked < kCopyCandidates; other = next_now[other]) {
@@ -1604,7 +1732,7 @@ void match_by(uint64_t RecordedDraw::*key, std::vector<uint32_t>& partner, std::
                     continue;
                 }
                 looked++;
-                closer = draw_gap(g_previous.draws[p], g_record.draws[other]) < mine;
+                closer = draw_gap(g_previous.draws[p], g_record.draws[other], entry.shift) < mine;
             }
             if (closer) {
                 note_copy(" | free %04x left alone, gap %.3f", static_cast<unsigned>(draw.*key & 0xFFFF), mine);
@@ -1941,6 +2069,40 @@ void pair_frame() {
         }
     });
     follow_decals(partner, kind, column, target);
+    if (g_pair_notes_wanted) {
+        std::string& note = g_pair_notes[g_frame % g_pair_notes.size()];
+        char part[200];
+        for (size_t k = 0; k < kMaxCameras; k++) {
+            const CameraMotion& camera = g_cameras[k];
+            if (camera.known) {
+                std::snprintf(part, sizeof part, " | camera %zu id %u reach %.4f second %d moves %.4f %.4f", k, camera.id, camera.reach, camera.is_second, camera.back[0][3], camera.back[1][3]);
+                note += part;
+            }
+        }
+        for (size_t d = 0; d < partner.size() && note.size() < 14000; d++) {
+            const RecordedDraw& draw = g_record.draws[d];
+            if (draw.positions != 4) {
+                continue;
+            }
+            const std::array<float, 4>& b = g_record.positions[draw.first_position];
+            if (!(b[3] > 0.0f) || std::fabs(b[0] / b[3]) > 1.2f || std::fabs(b[1] / b[3]) > 1.2f) {
+                continue;
+            }
+            float ax = NAN;
+            float ay = NAN;
+            if (partner[d] < kRejected) {
+                const std::array<float, 4>& a = g_previous.positions[g_previous.draws[partner[d]].first_position];
+                ax = a[0] / a[3];
+                ay = a[1] / a[3];
+                if (ax == b[0] / b[3] && ay == b[1] / b[3]) {
+                    continue;
+                }
+            }
+            std::snprintf(part, sizeof part, " | quad %zu %04x cam %u kind %u partner %d column %u world %u moving %u at %.3f %.3f from %.3f %.3f", d, static_cast<unsigned>(draw.key & 0xFFFF),
+                          draw.camera, kind[d], partner[d] < kRejected ? static_cast<int>(partner[d]) : -1, column[d], g_world_camera[d], g_world_moving[d], b[0] / b[3], b[1] / b[3], ax, ay);
+            note += part;
+        }
+    }
     g_matches.clear();
     for (size_t d = 0; d < partner.size(); d++) {
         if (column[d] == kNoDraw) {
