@@ -39,7 +39,6 @@ constexpr double kDirectSeconds = 3600.0;
 constexpr auto kLostPatience = std::chrono::seconds(30);
 constexpr auto kWatchEvery = std::chrono::milliseconds(250);
 constexpr size_t kMostNotices = 16;
-constexpr std::array<uint32_t, 4> kPlayerColors = {0xFFD23F, 0x4FC3F7, 0x81E67B, 0xFF8A80};
 constexpr std::array<uint32_t, 9> kChosenColors = {0, 0xFFD23F, 0x4FC3F7, 0x81E67B, 0xFF8A80, 0xB39DDB, 0xFFB74D, 0xF48FB1, 0xFFFFFF};
 static_assert(std::size(kColorNames) == kChosenColors.size());
 
@@ -721,19 +720,43 @@ void say_goodbye() {
 
 uint32_t player_color(uint32_t id) {
     std::lock_guard<std::mutex> lock(g_mutex);
-    if (id == g_own_id && g_pose.color != 0 && g_pose.color < kChosenColors.size()) {
-        return kChosenColors[g_pose.color];
+    std::vector<std::pair<uint32_t, uint32_t>> players;
+    if (g_own_id != 0) {
+        players.push_back({g_own_id, g_pose.color});
     }
     for (const presence::Peer& peer : g_peers) {
-        if (peer.id == id && peer.pose.color != 0 && peer.pose.color < kChosenColors.size()) {
-            return kChosenColors[peer.pose.color];
+        players.push_back({peer.id, peer.pose.color});
+    }
+    if (std::none_of(players.begin(), players.end(), [&](const auto& player) { return player.first == id; })) {
+        players.push_back({id, 0});
+    }
+    std::sort(players.begin(), players.end());
+    bool taken[kChosenColors.size()] = {};
+    std::vector<uint32_t> given(players.size(), 0);
+    for (size_t i = 0; i < players.size(); i++) {
+        uint32_t wanted = players[i].second;
+        if (wanted != 0 && wanted < kChosenColors.size() && !taken[wanted]) {
+            taken[wanted] = true;
+            given[i] = wanted;
         }
     }
-    size_t rank = id > g_own_id && g_own_id != 0 ? 1 : 0;
-    for (const presence::Peer& peer : g_peers) {
-        rank += peer.id < id ? 1 : 0;
+    for (size_t i = 0; i < players.size(); i++) {
+        if (given[i] != 0) {
+            continue;
+        }
+        uint32_t free = 1;
+        while (free + 1 < kChosenColors.size() && taken[free]) {
+            free++;
+        }
+        taken[free] = true;
+        given[i] = free;
     }
-    return kPlayerColors[rank % kPlayerColors.size()];
+    for (size_t i = 0; i < players.size(); i++) {
+        if (players[i].first == id) {
+            return kChosenColors[given[i]];
+        }
+    }
+    return kChosenColors[1];
 }
 
 uint32_t own_id() {
